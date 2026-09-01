@@ -1,0 +1,218 @@
+"""Post rules.
+
+Shape mirrors the automation builder: trigger on some posts, when a comment
+contains any of several keywords, optionally send an opening DM with a button,
+then the main DM with link buttons.
+"""
+
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+MatchMode = Literal["exact", "contains", "word"]
+# "specific" = the listed posts. "any" = every post, including future ones.
+RuleScope = Literal["specific", "any"]
+
+MAX_KEYWORDS = 20
+MAX_BUTTONS = 3
+
+
+class Limits(BaseModel):
+    """Application-side safety controls, not Meta's limits (§31)."""
+
+    per_minute: int = Field(default=10, ge=1, le=1000)
+    per_hour: int = Field(default=100, ge=1, le=10000)
+    per_day: int = Field(default=500, ge=1, le=100000)
+
+
+class LinkButton(BaseModel):
+    """A web_url button on the DM. Meta caps the title at 20 characters."""
+
+    title: str = Field(min_length=1, max_length=20)
+    url: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("url")
+    @classmethod
+    def must_be_https(cls, value: str) -> str:
+        # Meta rejects non-HTTPS web_url buttons.
+        if not value.startswith("https://"):
+            raise ValueError("button url must start with https://")
+        return value
+
+
+class OpeningDm(BaseModel):
+    """First message, sent as the private reply.
+
+    A private reply may be one message only, so the link cannot follow in the
+    same breath. The button tap is a user-initiated interaction, which opens the
+    24-hour window the main DM is sent in.
+    """
+
+    enabled: bool = False
+    message: str = Field(default="", max_length=200)
+    button_text: str = Field(default="Send me the link", max_length=20)
+
+
+class PublicReply(BaseModel):
+    """Optional public comment reply, to boost engagement (docs §4b)."""
+
+    enabled: bool = False
+    message: str = Field(default="", max_length=300)
+
+
+class FollowGate(BaseModel):
+    """Require the commenter to follow before the link is sent.
+
+    Uses the Messaging User Profile API's `is_user_follow_business` — the
+    officially supported check.
+    """
+
+    enabled: bool = False
+    prompt: str = Field(
+        default="Follow me first and comment again — then I'll send the link!",
+        max_length=300,
+    )
+
+
+class EmailGate(BaseModel):
+    """Ask for an email in the DM before sending the payoff."""
+
+    enabled: bool = False
+    prompt: str = Field(
+        default="What's your email? I'll send it straight over.", max_length=300
+    )
+
+
+class AiMatching(BaseModel):
+    """Fall back to intent classification when no keyword matched.
+
+    Deliberately opt-in per rule as well as globally: turning the model on
+    account-wide should not silently widen every existing rule.
+    """
+
+    enabled: bool = False
+    intents: list[str] = Field(default_factory=list)
+    # None falls back to AI_MIN_CONFIDENCE.
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @field_validator("intents")
+    @classmethod
+    def known_intents(cls, values: list[str]) -> list[str]:
+        from app.services.ai.classifier import INTENTS
+
+        unknown = [v for v in values if v not in INTENTS]
+        if unknown:
+            raise ValueError(f"unknown intent(s): {', '.join(unknown)}")
+        return values
+
+
+class RuleBase(BaseModel):
+    name: str = Field(default="", max_length=120)
+    scope: RuleScope = "specific"
+    instagram_media_ids: list[str] = Field(default_factory=list)
+
+    keywords: list[str] = Field(default_factory=list)
+    any_word: bool = False
+    match_mode: MatchMode = "contains"
+    case_sensitive: bool = False
+
+    opening_dm: OpeningDm = Field(default_factory=OpeningDm)
+    message: str = Field(min_length=1, max_length=1000)
+    buttons: list[LinkButton] = Field(default_factory=list)
+
+    ai: AiMatching = Field(default_factory=AiMatching)
+    public_reply: PublicReply = Field(default_factory=PublicReply)
+    require_follow: FollowGate = Field(default_factory=FollowGate)
+    collect_email: EmailGate = Field(default_factory=EmailGate)
+
+    # "Only send this DM once per person" — prevents the same commenter being
+    # DMed twice by this rule, however many times they comment.
+    once_per_person: bool = True
+    enabled: bool = True
+    priority: int = Field(default=100, ge=0, le=10000)
+    limits: Limits = Field(default_factory=Limits)
+
+    @field_validator("keywords")
+    @classmethod
+    def clean_keywords(cls, values: list[str]) -> list[str]:
+        # Blank keywords normalise to "" and would match nothing, which is a
+        # silent misconfiguration rather than a useful trigger.
+        cleaned = [v.strip() for v in values if v and v.strip()]
+        if len(cleaned) > MAX_KEYWORDS:
+            raise ValueError(f"at most {MAX_KEYWORDS} keywords")
+        return cleaned
+
+    @field_validator("buttons")
+    @classmethod
+    def limit_buttons(cls, values: list[LinkButton]) -> list[LinkButton]:
+        if len(values) > MAX_BUTTONS:
+            raise ValueError(f"at most {MAX_BUTTONS} buttons")
+        return values
+
+
+class RuleCreate(RuleBase):
+    @field_validator("instagram_media_ids")
+    @classmethod
+    def specific_needs_posts(cls, values: list[str]) -> list[str]:
+        return values
+
+
+class RuleUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    scope: RuleScope | None = None
+    instagram_media_ids: list[str] | None = None
+    keywords: list[str] | None = None
+    any_word: bool | None = None
+    match_mode: MatchMode | None = None
+    case_sensitive: bool | None = None
+    opening_dm: OpeningDm | None = None
+    message: str | None = Field(default=None, min_length=1, max_length=1000)
+    buttons: list[LinkButton] | None = None
+    ai: AiMatching | None = None
+    public_reply: PublicReply | None = None
+    require_follow: FollowGate | None = None
+    collect_email: EmailGate | None = None
+    once_per_person: bool | None = None
+    enabled: bool | None = None
+    priority: int | None = Field(default=None, ge=0, le=10000)
+    limits: Limits | None = None
+
+
+class MessagePreviewRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+    username: str = "john123"
+    comment: str = "LINK please!"
+    post_caption: str = "5 AI tools every developer should know"
+
+
+class PostPublic(BaseModel):
+    """A synced Instagram post, with how many rules are armed on it."""
+
+    id: str
+    instagram_media_id: str
+    media_type: str | None = None
+    media_product_type: str | None = None
+    caption: str | None = None
+    permalink: str | None = None
+    thumbnail_url: str | None = None
+    published_at: datetime | None = None
+    like_count: int | None = None
+    comments_count: int | None = None
+    rule_count: int = 0
+
+    @classmethod
+    def from_document(cls, document: dict, rule_count: int = 0) -> "PostPublic":
+        return cls(
+            id=str(document["_id"]),
+            instagram_media_id=str(document.get("instagram_media_id", "")),
+            media_type=document.get("media_type"),
+            media_product_type=document.get("media_product_type"),
+            caption=document.get("caption"),
+            permalink=document.get("permalink"),
+            thumbnail_url=document.get("thumbnail_url"),
+            published_at=document.get("published_at"),
+            like_count=document.get("like_count"),
+            comments_count=document.get("comments_count"),
+            rule_count=rule_count,
+        )

@@ -1,0 +1,54 @@
+# Tailscale Funnel terminates TLS at the tailnet edge and forwards plain HTTP
+# here, so this file must NOT contain TLS directives or a public hostname.
+# For a domain-based deployment with Caddy-managed certs, see docs/deployment.md.
+
+:8080 {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /webhooks/* {
+		reverse_proxy api:8000
+	}
+
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# Public pages Meta requires to publish the app.
+	handle /privacy {
+		reverse_proxy api:8000
+	}
+
+	handle /data-deletion {
+		reverse_proxy api:8000
+	}
+
+	# Trackable link redirects.
+	handle /r/* {
+		reverse_proxy api:8000
+	}
+
+	handle /ready {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		# The dashboard loads no third-party code. img-src allows https so
+		# Instagram post thumbnails render; they are served from Meta's CDN.
+		Content-Security-Policy "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		# Tailscale terminates TLS, so HSTS is set here rather than by Caddy's
+		# own TLS handling.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}

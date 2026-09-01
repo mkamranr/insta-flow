@@ -1,0 +1,106 @@
+import os
+
+import httpx
+import pytest
+from pymongo import AsyncMongoClient
+
+from app.api.deps import get_db
+from app.config import get_settings
+from app.db.indexes import create_indexes
+from app.db.repositories import UsersRepository
+from app.main import app
+from app.services.security.passwords import hash_password
+
+# Tests must never inherit a real database name from a developer's shell.
+os.environ.setdefault("MONGO_DATABASE", "instaflow_test")
+
+MONGO_URL = os.environ.get("MONGO_URL", "mongodb://mongodb:27017")
+TEST_DB = "instaflow_test"
+
+TEST_PASSWORD = "correct-horse-battery-staple"
+
+
+@pytest.fixture
+async def database():
+    """A clean test database, or skip when MongoDB is unreachable."""
+    client = AsyncMongoClient(MONGO_URL, tz_aware=True, serverSelectionTimeoutMS=1500)
+    try:
+        await client.admin.command("ping")
+    except Exception:
+        pytest.skip(f"MongoDB not reachable at {MONGO_URL}")
+    await client.drop_database(TEST_DB)
+    db = client[TEST_DB]
+    await create_indexes(db)
+    try:
+        yield db
+    finally:
+        await client.drop_database(TEST_DB)
+        await client.close()
+
+
+class FakeRedis:
+    """Enough of the Redis surface for throttling and OAuth state."""
+
+    def __init__(self) -> None:
+        self.counts: dict[str, int] = {}
+        self.store: dict[str, str] = {}
+        self.expiries: dict[str, int] = {}
+
+    async def incr(self, key):
+        self.counts[key] = self.counts.get(key, 0) + 1
+        return self.counts[key]
+
+    async def expire(self, key, seconds):
+        self.expiries[key] = seconds
+
+    async def set(self, key, value, ex=None):
+        self.store[key] = value
+
+    async def delete(self, key):
+        removed = self.counts.pop(key, None), self.store.pop(key, None)
+        return 1 if any(v is not None for v in removed) else 0
+
+
+@pytest.fixture(autouse=True)
+def redis(monkeypatch):
+    """Every test gets a working Redis: login throttling touches it on each
+    attempt, so an unpatched pool breaks tests unrelated to throttling."""
+    fake = FakeRedis()
+    monkeypatch.setattr("app.queue.get_pool", lambda: fake)
+    return fake
+
+
+@pytest.fixture
+async def api(database):
+    """HTTP client bound to the app, with the test database injected.
+
+    ASGITransport skips the lifespan, so `get_db` is overridden rather than
+    relying on a real startup connection.
+    """
+    app.dependency_overrides[get_db] = lambda: database
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+async def admin(database):
+    """A known, active admin user."""
+    users = UsersRepository(database)
+    return await users.create("admin@example.com", hash_password(TEST_PASSWORD))
+
+
+@pytest.fixture
+async def signed_in(api, admin):
+    """An API client carrying a valid session cookie."""
+    response = await api.post(
+        "/api/auth/login", json={"email": admin["email"], "password": TEST_PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+    return api
+
+
+@pytest.fixture
+def settings():
+    return get_settings()

@@ -1,0 +1,309 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { ApiError } from '../../api/client'
+import { useQuery } from '@tanstack/react-query'
+import { createRule, getIntents, patchRule, type Post, type Rule } from '../../api/rules'
+import { KeywordInput } from './KeywordInput'
+
+const BLANK: Partial<Rule> = {
+  name: '',
+  scope: 'specific',
+  keywords: [],
+  any_word: false,
+  match_mode: 'contains',
+  case_sensitive: false,
+  opening_dm: { enabled: false, message: '', button_text: 'Send me the link' },
+  message: '',
+  buttons: [],
+  public_reply: { enabled: false, message: '' },
+  require_follow: { enabled: false, prompt: '' },
+  collect_email: { enabled: false, prompt: '' },
+  ai: { enabled: false, intents: [], min_confidence: null },
+  once_per_person: true,
+  enabled: true,
+  priority: 100,
+}
+
+export function RuleEditor({
+  post,
+  initial,
+  editingId,
+  onClose,
+}: {
+  post: Post
+  initial?: Partial<Rule>
+  /** When set, saving updates that rule instead of creating a new one. */
+  editingId?: string
+  onClose: () => void
+}) {
+  const [draft, setDraft] = useState<Partial<Rule>>({ ...BLANK, ...initial })
+  const queryClient = useQueryClient()
+  const set = (changes: Partial<Rule>) => setDraft((d) => ({ ...d, ...changes }))
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        ...draft,
+        scope: 'specific' as const,
+        instagram_media_ids: [post.instagram_media_id],
+      }
+      // `id` is server-owned; sending it back would be rejected.
+      delete (payload as Partial<Rule>).id
+      return editingId ? patchRule(editingId, payload) : createRule(payload)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['posts'] })
+      queryClient.invalidateQueries({ queryKey: ['rules'] })
+      onClose()
+    },
+  })
+
+  const { data: intentInfo } = useQuery({ queryKey: ['intents'], queryFn: getIntents })
+  const buttons = draft.buttons ?? []
+  const opening = draft.opening_dm!
+  const ai = draft.ai!
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <header className="modal-head">
+          <div>
+            <h2>{editingId ? 'Edit automation' : 'New automation'}</h2>
+            <p className="muted small">{post.caption?.slice(0, 70) || post.instagram_media_id}</p>
+          </div>
+          <button className="link" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </header>
+
+        <div className="modal-body">
+          <section className="step">
+            <div className="step-head"><span className="step-num">1</span><h3>When someone comments</h3></div>
+            <label>Keywords</label>
+            <KeywordInput keywords={draft.keywords ?? []} onChange={(k) => set({ keywords: k })} />
+
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={draft.any_word ?? false}
+                onChange={(e) => set({ any_word: e.target.checked })}
+              />
+              Any word — reply to every comment on this post
+            </label>
+
+            <label htmlFor="match">Match</label>
+            <select
+              id="match"
+              value={draft.match_mode}
+              onChange={(e) => set({ match_mode: e.target.value as Rule['match_mode'] })}
+            >
+              <option value="contains">Contains the keyword</option>
+              <option value="word">Whole word only</option>
+              <option value="exact">Exactly the keyword</option>
+            </select>
+          </section>
+
+          <section className="step">
+            <div className="step-head"><span className="step-num">2</span><h3>They optionally get an opening DM</h3></div>
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={opening.enabled}
+                onChange={(e) => set({ opening_dm: { ...opening, enabled: e.target.checked } })}
+              />
+              Send an opening message with a button first
+            </label>
+            {opening.enabled && (
+              <>
+                <textarea
+                  rows={3}
+                  maxLength={160}
+                  value={opening.message}
+                  placeholder="Hey! So happy you're here 😊 Tap below and I'll send the link."
+                  onChange={(e) => set({ opening_dm: { ...opening, message: e.target.value } })}
+                />
+                <p className="muted small">
+                  {opening.message.length}/160 — Instagram caps a message carrying a button at
+                  160 characters, so the link follows once they tap.
+                </p>
+                <label htmlFor="btn">Button text</label>
+                <input
+                  id="btn"
+                  maxLength={20}
+                  value={opening.button_text}
+                  onChange={(e) => set({ opening_dm: { ...opening, button_text: e.target.value } })}
+                />
+              </>
+            )}
+          </section>
+
+          <section className="step">
+            <div className="step-head"><span className="step-num">3</span><h3>And they get a DM with</h3></div>
+            <textarea
+              rows={4}
+              maxLength={1000}
+              value={draft.message}
+              placeholder="Leave a star on the repo if you find it helpful. Cheers 😊"
+              onChange={(e) => set({ message: e.target.value })}
+            />
+            <p className="muted small">{(draft.message ?? '').length}/1000 characters</p>
+
+            <label>Link buttons</label>
+            {buttons.map((button, index) => (
+              <div className="row" key={index}>
+                <input
+                  placeholder="Button text"
+                  maxLength={20}
+                  value={button.title}
+                  onChange={(e) => {
+                    const next = [...buttons]
+                    next[index] = { ...button, title: e.target.value }
+                    set({ buttons: next })
+                  }}
+                />
+                <input
+                  placeholder="https://…"
+                  value={button.url}
+                  onChange={(e) => {
+                    const next = [...buttons]
+                    next[index] = { ...button, url: e.target.value }
+                    set({ buttons: next })
+                  }}
+                />
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => set({ buttons: buttons.filter((_, i) => i !== index) })}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            {buttons.length < 3 && (
+              <button
+                type="button"
+                className="link"
+                onClick={() => set({ buttons: [...buttons, { title: 'Open', url: 'https://' }] })}
+              >
+                + Add link
+              </button>
+            )}
+          </section>
+
+          {intentInfo?.ai_enabled && (
+            <section className="step">
+              <div className="step-head"><span className="step-num">AI</span><h3>Match by meaning</h3></div>
+              <p className="muted small">
+                Only consulted when no keyword matched. Runs on {intentInfo.model} locally.
+              </p>
+              <label className="inline">
+                <input
+                  type="checkbox"
+                  checked={ai.enabled}
+                  onChange={(e) => set({ ai: { ...ai, enabled: e.target.checked } })}
+                />
+                Also match by what the comment means
+              </label>
+              {ai.enabled && (
+                <>
+                  <label>Intents that should trigger this automation</label>
+                  <div className="chips">
+                    {intentInfo.intents.map((intent) => {
+                      const on = ai.intents.includes(intent)
+                      return (
+                        <button
+                          type="button"
+                          key={intent}
+                          className={on ? 'chip chip-on' : 'chip'}
+                          onClick={() =>
+                            set({
+                              ai: {
+                                ...ai,
+                                intents: on
+                                  ? ai.intents.filter((i) => i !== intent)
+                                  : [...ai.intents, intent],
+                              },
+                            })
+                          }
+                        >
+                          {intent.replace(/_/g, ' ')}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
+          <section className="step">
+            <h3>Advanced</h3>
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={draft.once_per_person ?? true}
+                onChange={(e) => set({ once_per_person: e.target.checked })}
+              />
+              Only send this DM once per person
+            </label>
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={draft.require_follow?.enabled ?? false}
+                onChange={(e) =>
+                  set({
+                    require_follow: {
+                      enabled: e.target.checked,
+                      prompt:
+                        draft.require_follow?.prompt || 'Follow me first, then comment again!',
+                    },
+                  })
+                }
+              />
+              Require them to follow you first
+            </label>
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={draft.public_reply?.enabled ?? false}
+                onChange={(e) =>
+                  set({
+                    public_reply: {
+                      enabled: e.target.checked,
+                      message: draft.public_reply?.message || 'Just sent you a DM! 📩',
+                    },
+                  })
+                }
+              />
+              Also reply publicly under the comment
+            </label>
+            {draft.public_reply?.enabled && (
+              <input
+                value={draft.public_reply.message}
+                maxLength={300}
+                onChange={(e) =>
+                  set({ public_reply: { ...draft.public_reply!, message: e.target.value } })
+                }
+              />
+            )}
+          </section>
+
+          {save.isError && <p className="err">{(save.error as ApiError).message}</p>}
+        </div>
+
+        <footer className="modal-foot">
+          <button className="link" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="cta"
+            onClick={() => save.mutate()}
+            disabled={save.isPending || !draft.message?.trim()}
+          >
+            {save.isPending ? 'Saving…' : editingId ? 'Save changes' : 'Create automation'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
