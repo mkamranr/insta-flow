@@ -1,5 +1,6 @@
-# Internal planning notes, not part of the product
+# Internal planning and assistant notes, not part of the product
 project-plan.md
+CLAUDE.md
 
 # Secrets — must never be committed
 .env
