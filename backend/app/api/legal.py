@@ -37,10 +37,10 @@ async def privacy_policy(settings: SettingsDep) -> HTMLResponse:
     """Privacy policy. Describes what this deployment actually does — it is a
     self-hosted, single-operator tool, not a service with users."""
     return _page(
-        "Privacy Policy — InstaFlow",
+        "Privacy Policy — Social Flow",
         f"""
 <h1>Privacy Policy</h1>
-<p>InstaFlow is self-hosted software. This instance runs on hardware controlled by its
+<p>Social Flow is self-hosted software. This instance runs on hardware controlled by its
 operator. There is no company behind it, no shared service, and no third party receives data
 from it.</p>
 
@@ -80,7 +80,7 @@ commenters are never given a cookie. There is no tracking or advertising cookie 
 <p>Links sent in automated replies pass through this instance so the operator can count clicks.
 The click count and time are recorded; the destination is a URL the operator chose.</p>
 
-<footer>Served by this InstaFlow instance at <code>{settings.public_base_url}</code>.</footer>
+<footer>Served by this Social Flow instance at <code>{settings.public_base_url}</code>.</footer>
 """,
     )
 
@@ -90,10 +90,10 @@ async def data_deletion_instructions(settings: SettingsDep) -> HTMLResponse:
     """Human-readable deletion instructions. Meta's programmatic callback lives
     at /api/auth/instagram/data-deletion; this page is for people."""
     return _page(
-        "Data Deletion — InstaFlow",
+        "Data Deletion — Social Flow",
         f"""
 <h1>Data Deletion</h1>
-<p>InstaFlow is self-hosted software operated by one person for their own Instagram account.
+<p>Social Flow is self-hosted software operated by one person for their own Instagram account.
 There is no central service holding your data.</p>
 
 <h2>If you commented on a post</h2>
@@ -111,6 +111,6 @@ token. To remove everything, including comments, replies and contacts:</p>
 <p>Meta's data deletion callback is accepted at
 <code>{settings.public_base_url.rstrip('/')}/api/auth/instagram/data-deletion</code>.</p>
 
-<footer>Served by this InstaFlow instance.</footer>
+<footer>Served by this Social Flow instance.</footer>
 """,
     )

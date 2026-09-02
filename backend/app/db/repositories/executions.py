@@ -4,6 +4,12 @@ from pymongo.errors import DuplicateKeyError
 
 from .base import BaseRepository, Document, to_object_id, utcnow
 
+# Mirrors app.services.campaigns.policy.NOT_FOLLOWING. Duplicated rather than
+# imported so the repository layer stays free of service imports; a test asserts
+# the two never drift apart.
+NOT_FOLLOWING = "not_following"
+AWAITING_FOLLOW = "awaiting_follow"
+
 # §62 state machine. An execution never leaves this set.
 STATUSES = (
     "queued",
@@ -104,25 +110,58 @@ class ExecutionsRepository(BaseRepository[Any]):
             sort=[("created_at", -1)],
         )
 
+    async def claim_awaiting_follow(self, execution_id: Any) -> Document | None:
+        """Take exclusive ownership of an execution parked at `awaiting_follow`.
+
+        Two things can reach the same parked row at once: the scheduled re-check,
+        and the person tapping the button a second time after following. Whoever
+        flips it out of `awaiting_follow` first owns the send; the loser gets
+        `None` and stops. Check-then-write here would DM the link twice (§5).
+        """
+        return await self.collection.find_one_and_update(
+            {"_id": to_object_id(execution_id), "status": AWAITING_FOLLOW},
+            {"$set": {"status": "processing", "updated_at": utcnow()}},
+            return_document=True,
+        )
+
+    async def repark_awaiting_follow(self, execution_id: Any) -> None:
+        """Hand a claimed execution back, so a later attempt can pick it up."""
+        await self.collection.update_one(
+            {"_id": to_object_id(execution_id)},
+            {"$set": {"status": AWAITING_FOLLOW, "updated_at": utcnow()}},
+        )
+
     async def already_sent_to(self, rule_id: Any, instagram_user_id: str) -> bool:
         """Has this rule already DMed this person?
 
         Backs "only send this DM once per person": however many times someone
         comments, this rule messages them once.
+
+        With one exception. If their run ended at the follow gate, the opener
+        went out but the payoff never did -- and we told them to follow. Counting
+        that as "already messaged" would lock out the very person who did what we
+        asked, so an unresolved follow block re-opens the door.
         """
         if not instagram_user_id:
             return False
-        return (
-            await self.collection.count_documents(
-                {
-                    "rule_id": to_object_id(rule_id),
-                    "instagram_user_id": instagram_user_id,
-                    "status": {"$in": ["success", "dry_run"]},
-                },
-                limit=1,
-            )
-            > 0
+        scope: Document = {
+            "rule_id": to_object_id(rule_id),
+            "instagram_user_id": instagram_user_id,
+        }
+        sent = await self.collection.count_documents(
+            {**scope, "status": {"$in": ["success", "dry_run"]}}, limit=1
         )
+        if not sent:
+            return False
+        outstanding_block = await self.collection.count_documents(
+            {
+                **scope,
+                "policy_decision": NOT_FOLLOWING,
+                "status": {"$in": ["skipped", "awaiting_follow"]},
+            },
+            limit=1,
+        )
+        return not outstanding_block
 
     async def complete(
         self,
@@ -154,6 +193,16 @@ class ExecutionsRepository(BaseRepository[Any]):
         await self.collection.update_one(
             {"_id": to_object_id(execution_id)},
             {"$inc": {"attempts": 1}, "$set": {"updated_at": utcnow()}},
+        )
+
+    async def triggered_comment_ids(self, instagram_account_id: Any) -> list[Any]:
+        """Comments that actually caused a rule to fire, for trigger-rate reporting.
+
+        Distinct on `comment_id`, so the two-step flow (opener then payoff) counts
+        the comment once rather than twice.
+        """
+        return await self.collection.distinct(
+            "comment_id", {"instagram_account_id": to_object_id(instagram_account_id)}
         )
 
     async def count_by_status(self, query: Document | None = None) -> dict[str, int]:

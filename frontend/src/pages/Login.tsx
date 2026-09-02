@@ -22,7 +22,8 @@ export function Login() {
           signIn.mutate()
         }}
       >
-        <h1>InstaFlow</h1>
+        <img className="auth-logo" src="/logo.png" alt="" width="56" height="56" />
+        <h1>Social Flow</h1>
         <p className="muted">Sign in to continue.</p>
 
         <label htmlFor="email">Email</label>

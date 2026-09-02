@@ -25,11 +25,21 @@ COLLECTIONS = [
     "webhook_events",
     "ai_classifications",
     "audit_logs",
+    "account_snapshots",
 ]
 
 INDEXES: dict[str, list[IndexModel]] = {
     "users": [
         IndexModel([("email", ASCENDING)], unique=True, name="uq_email"),
+    ],
+    "account_snapshots": [
+        # One row per account per calendar day. The uniqueness is what makes the
+        # daily job idempotent under retry or a double run (§5).
+        IndexModel(
+            [("instagram_account_id", ASCENDING), ("day", ASCENDING)],
+            unique=True,
+            name="uq_account_day",
+        ),
     ],
     "instagram_accounts": [
         IndexModel(

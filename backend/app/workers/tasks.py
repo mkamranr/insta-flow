@@ -13,6 +13,7 @@ from typing import Any
 from arq.worker import Retry
 
 from app.db.repositories import (
+    AccountSnapshotsRepository,
     AiClassificationsRepository,
     CommentsRepository,
     ContactsRepository,
@@ -37,7 +38,7 @@ from app.services.campaigns import (
     select_rule,
     select_rule_by_intent,
 )
-from app.services.campaigns.policy import DRY_RUN
+from app.services.campaigns.policy import DRY_RUN, NOT_FOLLOWING
 from app.services.contacts import extract_email
 from app.services.links import is_safe_target, new_token, tracking_url
 from app.services.meta import auth as meta_auth
@@ -212,18 +213,14 @@ async def process_comment_event(
     )
 
     # Rules are scoped to the post the comment was left on.
-    rules = await RulesRepository(db).list_for_media(
-        account["_id"], parsed.instagram_media_id
-    )
+    rules = await RulesRepository(db).list_for_media(account["_id"], parsed.instagram_media_id)
     rule = select_rule(context, rules)
 
     # AI is a fallback, never a replacement: the deterministic matcher runs
     # first, and the model is only consulted when it found nothing and some rule
     # on this post actually asked for intent matching (§56).
     if rule is None and settings.ai_enabled and rules_wanting_ai(rules):
-        rule = await _classify_and_match(
-            ctx, db, settings, rules, comment_doc, parsed.text, log
-        )
+        rule = await _classify_and_match(ctx, db, settings, rules, comment_doc, parsed.text, log)
 
     if rule is None:
         # No execution row: there is no rule to key one on. The Comments page
@@ -241,7 +238,6 @@ async def process_comment_event(
 
     executions = ExecutionsRepository(db)
     now = datetime.now(UTC)
-
 
     decision = evaluate(
         PolicyContext(
@@ -263,6 +259,22 @@ async def process_comment_event(
                 await executions.already_sent_to(rule["_id"], parsed.instagram_user_id)
                 if rule.get("once_per_person", True)
                 else False
+            ),
+            # Only looked up when a rule actually gates on it -- it costs a Meta
+            # round trip per comment. `None` (unknown) is allowed through; the
+            # link-bearing payoff is gated again at the postback, where a DM
+            # thread exists and Meta is far more likely to answer.
+            # Only gate here when the link rides in this very message. If the
+            # rule opens with a button DM, that opener carries no link and is
+            # the only thing that can open a messaging window -- blocking it
+            # would strand the person with a promise we cannot keep, since a
+            # comment allows exactly one private reply and no window is open
+            # yet. The postback gate does the real enforcement (§4, §5).
+            is_following=(
+                await lookup_is_following(client, settings, account, parsed.instagram_user_id, log)
+                if (rule.get("require_follow") or {}).get("enabled")
+                and not uses_opening_dm(rule)
+                else None
             ),
             now=now,
         )
@@ -292,6 +304,29 @@ async def process_comment_event(
     await executions.increment_attempts(execution["_id"])
 
     if not decision.allowed:
+        # A follow-gated block is the one denial worth explaining. The rule's own
+        # prompt says what to do about it ("follow me and comment again"), and
+        # silence would leave the person with no idea why nothing arrived. Every
+        # other denial stays quiet on purpose -- rate limits and duplicates are
+        # our problem, not theirs.
+        if decision.reason == NOT_FOLLOWING and not settings.dry_run:
+            prompt = ((rule.get("require_follow") or {}).get("prompt") or "").strip()
+            if prompt:
+                try:
+                    access_token = decrypt(
+                        account.get("access_token_encrypted", ""), settings.encryption_key
+                    )
+                    await client.send_private_reply(
+                        access_token,
+                        account["instagram_user_id"],
+                        parsed.instagram_comment_id,
+                        prompt,
+                    )
+                    logger.info("follow_prompt_sent", extra=log)
+                except (MetaAPIError, EncryptionError) as exc:
+                    # The link is withheld either way; only the explanation failed.
+                    logger.warning("follow_prompt_failed", extra={**log, "error": str(exc)})
+
         await executions.complete(
             execution["_id"], status="skipped", policy_decision=decision.reason
         )
@@ -332,9 +367,7 @@ async def process_comment_event(
         return {"status": "dry_run", "execution_id": str(execution["_id"])}
 
     try:
-        access_token = decrypt(
-            account.get("access_token_encrypted", ""), settings.encryption_key
-        )
+        access_token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
     except EncryptionError as exc:
         # Wrong ENCRYPTION_KEY or corrupt storage. Retrying cannot help, and the
         # account must be reconnected.
@@ -461,6 +494,28 @@ async def _maybe_public_reply(
         logger.warning("public_reply_failed", extra={**log, "error": str(exc)})
 
 
+AWAITING_FOLLOW = "awaiting_follow"
+
+# Meta publishes no "user followed you" webhook (docs/meta-api.md §5.4), so the
+# only way to notice is to ask. Tight early so the link feels immediate, then
+# sparse -- most people who follow do it within a minute of being asked.
+FOLLOW_RECHECK_DELAYS = (15, 30, 60, 120, 180, 300, 600, 900, 1800, 3600)
+# The postback tap opened a 24-hour window; stop an hour short of the edge so a
+# send never races the expiry.
+FOLLOW_WATCH_WINDOW = timedelta(hours=23)
+
+
+async def _schedule_follow_recheck(ctx: dict[str, Any], execution_id: Any, attempt: int) -> None:
+    """Queue the next follow check, backing off as hope fades."""
+    delay = FOLLOW_RECHECK_DELAYS[min(attempt, len(FOLLOW_RECHECK_DELAYS) - 1)]
+    redis = ctx.get("redis")
+    if redis is None:  # pragma: no cover - only in tests that drive tasks directly
+        return
+    await redis.enqueue_job(
+        "recheck_follow", str(execution_id), attempt + 1, _defer_by=timedelta(seconds=delay)
+    )
+
+
 async def process_postback_event(
     ctx: dict[str, Any],
     webhook_event_id: str,
@@ -502,9 +557,7 @@ async def process_postback_event(
         return {"status": "skipped", "reason": "rule_missing"}
 
     comments = CommentsRepository(db)
-    comment_doc = await comments.get_by_instagram_comment_id(
-        account["_id"], instagram_comment_id
-    )
+    comment_doc = await comments.get_by_instagram_comment_id(account["_id"], instagram_comment_id)
     if comment_doc is None:
         return {"status": "skipped", "reason": "comment_missing"}
 
@@ -521,10 +574,31 @@ async def process_postback_event(
         existing = await executions.find_reservation(
             comment_doc["_id"], rule["_id"], ACTION_PRIVATE_REPLY
         )
-        if existing is None or existing.get("status") in TERMINAL_STATUSES:
+        blocked_on_follow = (
+            existing is not None
+            and existing.get("status") == "skipped"
+            and existing.get("policy_decision") == NOT_FOLLOWING
+        )
+        if existing is None or (
+            existing.get("status") in TERMINAL_STATUSES and not blocked_on_follow
+        ):
             logger.info("duplicate_postback_ignored", extra=log)
             return {"status": "duplicate"}
         execution = existing
+        if blocked_on_follow:
+            # Withheld, not delivered. Tapping again is how someone says "I have
+            # followed now", and the fresh tap opens a new 24-hour window, so
+            # the link can still be handed over.
+            await executions.update(existing["_id"], {"status": "processing"})
+            logger.info("postback_retry_after_follow_block", extra=log)
+        if existing.get("status") == AWAITING_FOLLOW:
+            # They tapped again, probably having just followed. A scheduled
+            # re-check may be mid-flight on this same row, so claim it first.
+            claimed = await executions.claim_awaiting_follow(existing["_id"])
+            if claimed is None:
+                logger.info("duplicate_postback_ignored", extra=log)
+                return {"status": "duplicate"}
+            execution = claimed
 
     log["execution_id"] = str(execution["_id"])
     await executions.increment_attempts(execution["_id"])
@@ -540,6 +614,45 @@ async def process_postback_event(
     except TemplateError as exc:
         await executions.complete(execution["_id"], status="failed", error=str(exc))
         return {"status": "failed", "reason": "template_error"}
+
+    # Follow gate, enforced here rather than only at the comment. This message
+    # carries the link, so this is the moment that actually matters -- and a DM
+    # thread now exists, which is when Meta is most willing to answer the
+    # profile lookup. `None` (Meta would not say) is allowed through by design.
+    gates_on_follow = (rule.get("require_follow") or {}).get("enabled") and not settings.dry_run
+    if (
+        gates_on_follow
+        and await lookup_is_following(client, settings, account, sender_id, log) is False
+    ):
+        prompt = (rule["require_follow"].get("prompt") or "").strip() or (
+            "Follow me and I'll send the link straight over -- no need to comment again."
+        )
+        try:
+            access_token = decrypt(
+                account.get("access_token_encrypted", ""), settings.encryption_key
+            )
+            await client.send_direct_message(
+                access_token, account["instagram_user_id"], sender_id, prompt
+            )
+        except (MetaAPIError, EncryptionError) as exc:
+            # The link is still withheld; only the explanation failed.
+            logger.warning("follow_prompt_failed", extra={**log, "error": str(exc)})
+        # Park rather than finish. Tapping the button opened a 24-hour messaging
+        # window (§5), so the link can still be delivered inside it without a
+        # second comment -- we just have to notice the follow ourselves, because
+        # Meta publishes no follow webhook (§5.4).
+        deadline = datetime.now(UTC) + FOLLOW_WATCH_WINDOW
+        await executions.update(
+            execution["_id"],
+            {
+                "status": AWAITING_FOLLOW,
+                "policy_decision": NOT_FOLLOWING,
+                "follow_deadline": deadline,
+            },
+        )
+        await _schedule_follow_recheck(ctx, execution["_id"], 0)
+        logger.info("awaiting_follow", extra={**log, "deadline": deadline.isoformat()})
+        return {"status": AWAITING_FOLLOW, "execution_id": str(execution["_id"])}
 
     gate = rule.get("collect_email") or {}
     if gate.get("enabled") and not settings.dry_run:
@@ -571,9 +684,7 @@ async def process_postback_event(
         return {"status": "dry_run", "execution_id": str(execution["_id"])}
 
     try:
-        access_token = decrypt(
-            account.get("access_token_encrypted", ""), settings.encryption_key
-        )
+        access_token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
         result = await client.send_direct_message(
             access_token,
             account["instagram_user_id"],
@@ -644,6 +755,197 @@ async def refresh_expiring_tokens(ctx: dict[str, Any]) -> dict[str, int]:
     return {"refreshed": refreshed, "failed": failed}
 
 
+async def lookup_is_following(
+    client: Any,
+    settings: Any,
+    account: dict[str, Any],
+    instagram_user_id: str,
+    log: dict[str, Any] | None = None,
+) -> bool | None:
+    """Does this person follow the account? `None` means Meta would not say.
+
+    Uses the Messaging User Profile API's `is_user_follow_business` -- the
+    officially supported way to gate on following (docs/meta-api.md §4b). Meta
+    answers for most commenters even with no prior DM thread, but refuses some
+    with "User consent is required to access user profile".
+
+    `None` is deliberately fail-open: the policy blocks on `False` only, so an
+    unanswerable lookup lets the message through rather than silently dropping a
+    legitimate follower. Verified against live accounts 2026-09-02.
+    """
+    try:
+        token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+        profile = await client.get_user_profile(token, instagram_user_id)
+    except (MetaAPIError, EncryptionError) as exc:
+        logger.info(
+            "follow_check_unavailable",
+            extra={**(log or {}), "instagram_user_id": instagram_user_id, "error": str(exc)},
+        )
+        return None
+    return profile.is_user_follow_business
+
+
+async def snapshot_account_metrics(ctx: dict[str, Any]) -> dict[str, int]:
+    """Record today's follower counters for every connected account.
+
+    Meta exposes `followers_count` as a point in time and no history at all
+    (docs/meta-api.md §2b), so growth is only knowable if we write it down daily.
+    A missed day leaves a gap rather than corrupting anything: growth is computed
+    between the rows that exist, never assumed to be contiguous.
+
+    Read-only against Meta, so this runs regardless of DRY_RUN.
+    """
+    db = ctx["db"]
+    settings = ctx["settings"]
+    client = ctx["client"]
+
+    accounts = InstagramAccountsRepository(db)
+    snapshots = AccountSnapshotsRepository(db)
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
+
+    recorded = failed = 0
+    for account in await accounts.list({"status": "connected"}):
+        try:
+            token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+            profile = await client.get_account(token)
+        except (MetaAPIError, EncryptionError) as exc:
+            failed += 1
+            logger.warning(
+                "account_snapshot_failed",
+                extra={"account_id": str(account["_id"]), "error": str(exc)},
+            )
+            continue
+
+        await snapshots.record(
+            account["_id"],
+            day,
+            followers_count=profile.followers_count,
+            follows_count=profile.follows_count,
+            media_count=profile.media_count,
+        )
+        # Keep the account document current too, so the UI has a live number
+        # without waiting for a reconnect.
+        await accounts.update(
+            account["_id"],
+            {
+                "followers_count": profile.followers_count,
+                "follows_count": profile.follows_count,
+                "media_count": profile.media_count,
+            },
+        )
+        recorded += 1
+        logger.info(
+            "account_snapshot_recorded",
+            extra={"account_id": str(account["_id"]), "day": day},
+        )
+
+    return {"recorded": recorded, "failed": failed}
+
+
+async def recheck_follow(ctx: dict[str, Any], execution_id: str, attempt: int) -> dict[str, Any]:
+    """Has the person followed yet? If so, send the link they were promised.
+
+    Meta has no follow webhook, so this polls. It only runs for executions parked
+    at `awaiting_follow` by the postback gate, and only inside the 24-hour
+    messaging window that their button tap opened.
+
+    An *unknown* answer keeps waiting rather than sending. Elsewhere unknown
+    fails open, but here we hold positive evidence the person was not following,
+    so treating a refused lookup as permission would hand over the link the gate
+    just withheld.
+    """
+    db = ctx["db"]
+    settings = ctx["settings"]
+    client = ctx["client"]
+
+    executions = ExecutionsRepository(db)
+    try:
+        execution = await executions.get(execution_id)
+    except ValueError:
+        return {"status": "skipped", "reason": "bad_execution_id"}
+    # Anything but `awaiting_follow` means it already resolved -- delivered, or
+    # expired, or superseded by a fresh comment. A stale timer must not resend.
+    if execution is None or execution.get("status") != AWAITING_FOLLOW:
+        return {"status": "skipped", "reason": "not_awaiting"}
+
+    log = {"execution_id": str(execution["_id"]), "attempt": attempt}
+
+    accounts = InstagramAccountsRepository(db)
+    account = await accounts.get(execution["instagram_account_id"])
+    rule = await RulesRepository(db).get(execution["rule_id"])
+    comment_doc = await CommentsRepository(db).get(execution["comment_id"])
+    if account is None or rule is None or comment_doc is None:
+        await executions.complete(execution["_id"], status="skipped", policy_decision=NOT_FOLLOWING)
+        return {"status": "skipped", "reason": "missing_context"}
+
+    recipient = str(
+        execution.get("instagram_user_id") or comment_doc.get("instagram_user_id") or ""
+    )
+    is_following = await lookup_is_following(client, settings, account, recipient, log)
+
+    if is_following is not True:
+        deadline = execution.get("follow_deadline")
+        if deadline is not None and datetime.now(UTC) >= deadline:
+            await executions.complete(
+                execution["_id"], status="skipped", policy_decision=NOT_FOLLOWING
+            )
+            logger.info("follow_watch_expired", extra=log)
+            return {"status": "skipped", "reason": "follow_watch_expired"}
+        await _schedule_follow_recheck(ctx, execution["_id"], attempt)
+        return {"status": AWAITING_FOLLOW, "reason": "still_not_following"}
+
+    # They followed. Claim the row before sending -- a second button tap can be
+    # racing this exact moment.
+    if await executions.claim_awaiting_follow(execution["_id"]) is None:
+        return {"status": "skipped", "reason": "claimed_elsewhere"}
+
+    context = CommentContext(
+        text=comment_doc.get("text", ""),
+        username=comment_doc.get("username", ""),
+        instagram_comment_id=comment_doc.get("instagram_comment_id", ""),
+        instagram_user_id=recipient,
+    )
+    try:
+        message = render(rule["message"], build_render_context(context, rule))
+    except TemplateError as exc:
+        await executions.complete(execution["_id"], status="failed", error=str(exc))
+        return {"status": "failed", "reason": "template_error"}
+
+    try:
+        access_token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+        result = await client.send_direct_message(
+            access_token,
+            account["instagram_user_id"],
+            recipient,
+            message,
+            await tracked_buttons(db, settings, rule, account, execution["_id"], recipient),
+        )
+    except MetaTokenError as exc:
+        await accounts.set_status(account["_id"], "token_error", str(exc))
+        await executions.complete(execution["_id"], status="failed", error=str(exc))
+        return {"status": "failed", "reason": "token_error"}
+    except (MetaAPIError, EncryptionError) as exc:
+        # The window may simply have closed. One more try if there is time left.
+        deadline = execution.get("follow_deadline")
+        if getattr(exc, "retryable", False) and deadline and datetime.now(UTC) < deadline:
+            await executions.repark_awaiting_follow(execution["_id"])
+            await _schedule_follow_recheck(ctx, execution["_id"], attempt)
+            return {"status": AWAITING_FOLLOW, "reason": "send_retry"}
+        await executions.complete(execution["_id"], status="failed", error=str(exc))
+        return {"status": "failed", "reason": "meta_error"}
+
+    await executions.complete(
+        execution["_id"],
+        status="success",
+        message_text=message,
+        meta_message_id=result.message_id,
+        meta_recipient_id=result.recipient_id,
+        policy_decision="delivered_after_follow",
+    )
+    logger.info("link_delivered_after_follow", extra=log)
+    return {"status": "success", "execution_id": str(execution["_id"])}
+
+
 async def process_message_event(
     ctx: dict[str, Any],
     webhook_event_id: str,
@@ -654,7 +956,7 @@ async def process_message_event(
     """An inbound DM. Used to complete the "collect email" flow.
 
     Only acts when an execution for this person is parked at `awaiting_email`;
-    every other message is ignored, because InstaFlow is not a chatbot and must
+    every other message is ignored, because Social Flow is not a chatbot and must
     not respond to unrelated conversation.
     """
     db = ctx["db"]
@@ -701,9 +1003,7 @@ async def process_message_event(
     context = CommentContext(text="", username="", instagram_user_id=sender_id)
     try:
         message = render(rule["message"], build_render_context(context, rule))
-        access_token = decrypt(
-            account.get("access_token_encrypted", ""), settings.encryption_key
-        )
+        access_token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
         result = await client.send_direct_message(
             access_token,
             account["instagram_user_id"],

@@ -13,8 +13,20 @@ def index_named(collection: str, name: str) -> dict:
 
 
 def test_every_specified_collection_is_present():
-    assert len(COLLECTIONS) == 11
+    assert len(COLLECTIONS) == 12
     assert set(INDEXES) <= set(COLLECTIONS)
+    assert "account_snapshots" in COLLECTIONS
+
+
+def test_account_snapshot_index_is_unique_per_day():
+    """One row per account per day is what makes the daily job idempotent (§5).
+
+    Without uniqueness a retry would append a second row for the same day and
+    quietly turn a growth delta into zero.
+    """
+    doc = index_named("account_snapshots", "uq_account_day")
+    assert doc["unique"] is True
+    assert list(doc["key"]) == ["instagram_account_id", "day"]
 
 
 def test_webhook_idempotency_index_is_unique():

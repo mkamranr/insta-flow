@@ -30,7 +30,7 @@ const TOP = [
 const MY_CONTENT = [{ to: '/posts', label: 'Posts & Reels' }]
 
 const ANALYTICS = [
-  { to: '/activity', label: 'Activity log' },
+  { to: '/analytics', label: 'Overview' },
   { to: '/insights', label: 'Audience insights' },
 ]
 
@@ -70,7 +70,10 @@ export function Layout() {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand">INSTAFLOW</div>
+        <div className="brand">
+          <img src="/logo.png" alt="" width="22" height="22" />
+          <span>SOCIAL FLOW</span>
+        </div>
 
         <div className="workspace">
           <div className="workspace-avatar">

@@ -1,4 +1,4 @@
-/* InstaFlow — light theme with a lime accent, following the reference UI. */
+/* Social Flow — light theme with a lime accent, following the reference UI. */
 
 :root {
   --bg: #ffffff;
@@ -71,9 +71,11 @@ p { margin: 0 0 10px; }
 }
 
 .brand {
+  display: flex; align-items: center; gap: 9px;
   font-weight: 800; font-size: 15px; letter-spacing: 0.04em;
   padding: 0 8px 20px;
 }
+.brand img { border-radius: 6px; flex: none; }
 
 .workspace {
   display: flex; align-items: center; gap: 10px;
@@ -360,7 +362,9 @@ button.filter.active { background: var(--dark); color: #fff; border-color: var(-
 
 .centered { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
 .auth-card { width: 100%; max-width: 370px; }
-.auth-card h1 { font-size: 24px; margin-bottom: 2px; }
+.auth-card h1 { font-size: 24px; margin-bottom: 2px; text-align: center; }
+.auth-logo { display: block; margin: 0 auto 12px; border-radius: 13px; }
+.auth-card .muted { text-align: center; }
 .auth-card button { width: 100%; margin-top: 18px; }
 
 code {
@@ -569,3 +573,129 @@ button.nav-toggle:hover { background: var(--surface-alt); color: var(--text); }
   padding: 5px 10px; font-size: 11.5px; font-weight: 600; text-align: center;
   align-self: flex-start;
 }
+
+/* -- Analytics ------------------------------------------------------------ */
+
+.page-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+}
+
+.tabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border); margin-bottom: 26px;
+}
+/* Selectors are `button.tab`, not `.tab`: the global `button:hover:not(:disabled)`
+   is specificity (0,2,1) and would otherwise repaint a hovered tab dark. The
+   selected tab is marked by an underline only -- no fill. */
+button.tab {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 10px 14px; margin-bottom: -1px; border-radius: 0;
+  color: var(--muted); font-weight: 600; font-size: 14px; cursor: pointer;
+  /* Buttons are globally nowrap; these hold real prose, so let them wrap. */
+  white-space: normal;
+  transition: color .12s, border-color .12s;
+}
+button.tab:hover:not(:disabled) {
+  background: none; color: var(--text); border-bottom-color: var(--border-strong);
+}
+button.tab.active,
+button.tab.active:hover:not(:disabled) {
+  background: none; color: var(--text); border-bottom-color: var(--dark);
+}
+
+.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.table th.numeric { text-align: right; }
+
+.media-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.media-thumb {
+  width: 34px; height: 34px; flex: none;
+  border-radius: var(--radius-sm); object-fit: cover; background: var(--surface-alt);
+}
+
+/* Explicit height: aspect-ratio loses to flex sizing in a column container. */
+.spark { display: block; width: 100%; height: 132px; overflow: visible; }
+.spark-label { fill: var(--faint); font-size: 11px; font-weight: 600; }
+
+/* -- Automation performance cards ---------------------------------------- */
+
+.auto-list { padding: 0; overflow: hidden; }
+.auto-list-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 18px 22px; border-bottom: 1px solid var(--border);
+}
+.auto-list-head h2 { margin: 0; font-size: 16px; flex: 1; min-width: 0; }
+
+.select {
+  font: inherit; font-size: 13px; font-weight: 500;
+  padding: 8px 12px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
+  /* The global `input, textarea, select` rule sets width:100%. `flex: none`
+     resolves flex-basis to auto, which then picks that width up -- so the width
+     has to be overridden explicitly, not just the flex behaviour. */
+  flex: none; width: auto; min-width: 168px;
+}
+
+.auto-card + .auto-card { border-top: 1px solid var(--border); }
+
+/* The whole header is the disclosure control, so it must not inherit the
+   global filled-button look. */
+button.auto-head {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  padding: 16px 22px; background: var(--surface); border: none; border-radius: 0;
+  text-align: left; color: var(--text); white-space: normal;
+}
+button.auto-head:hover:not(:disabled) { background: var(--surface-alt); }
+
+.auto-thumb {
+  width: 44px; height: 44px; flex: none;
+  border-radius: 11px; object-fit: cover; background: var(--surface-alt);
+}
+.auto-thumb-empty { border: 1px solid var(--border); }
+
+.auto-id { flex: 1; min-width: 0; }
+.auto-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 700; }
+
+.pill {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  background: var(--dark); color: #fff; font-size: 11px; font-weight: 700;
+}
+.pill-muted { background: var(--surface-alt); color: var(--muted); border: 1px solid var(--border); }
+
+.auto-ctr { text-align: right; flex: none; }
+.auto-ctr-value { font-size: 19px; font-weight: 800; color: var(--ok); line-height: 1.1; }
+/* A green 0% reads as good news. Nothing happened is not success. */
+.auto-ctr-value.zero { color: var(--muted); }
+
+.chev { color: var(--muted); flex: none; display: flex; transition: transform .15s; }
+.chev.open { transform: rotate(180deg); }
+
+.auto-body { padding: 4px 22px 20px; background: var(--surface-alt); }
+.auto-body-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 14px 0 12px;
+}
+
+.link-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.link-row + .link-row { margin-top: 8px; }
+.link-id { min-width: 0; }
+.link-title { font-weight: 700; }
+.link-url {
+  color: var(--muted); font-size: 13px; text-decoration: none;
+  display: block; max-width: 460px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.link-url:hover { color: var(--text); text-decoration: underline; }
+
+.link-metrics { display: flex; align-items: center; gap: 6px; flex: none; }
+.link-metric {
+  min-width: 74px; text-align: center; padding: 6px 10px; border-radius: var(--radius-sm);
+}
+.link-metric-value { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.link-metric.emphasis { background: var(--ok-bg); }
+.link-metric.emphasis .link-metric-value { color: var(--ok); }

@@ -163,7 +163,7 @@ async def test_a_reply_without_an_email_leaves_the_execution_parked(database, pa
 
 
 async def test_messages_from_people_with_nothing_pending_are_ignored(database, parked):
-    """InstaFlow is not a chatbot; it must not answer unrelated conversation."""
+    """Social Flow is not a chatbot; it must not answer unrelated conversation."""
     client = MockInstagramClient()
     result = await process_message_event(
         ctx(database, client), "evt", ACCOUNT_IG_ID, "someone-else", "hello@example.com"

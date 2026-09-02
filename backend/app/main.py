@@ -13,7 +13,7 @@ from app.api import analytics, auth, instagram, legal, links, rules, webhooks
 from app.config import get_settings
 from app.db import mongodb
 from app.db.indexes import create_indexes
-from app.errors import InstaFlowError
+from app.errors import SocialFlowError
 from app.logging import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="InstaFlow",
+    title="Social Flow",
     description="Self-hosted Instagram comment-to-private-reply automation",
     version="0.1.0",
     lifespan=lifespan,
 )
 
 
-@app.exception_handler(InstaFlowError)
-async def instaflow_error_handler(request: Request, exc: InstaFlowError) -> JSONResponse:
+@app.exception_handler(SocialFlowError)
+async def social_flow_error_handler(request: Request, exc: SocialFlowError) -> JSONResponse:
     """Map application errors to HTTP (§53).
 
     Only `message` and `code` cross the boundary — never a stack trace or the
@@ -89,10 +89,10 @@ app.include_router(legal.router)
 async def health() -> dict[str, str]:
     """Process liveness. Never touches Mongo, Redis, or Meta (§67).
 
-    `service` lets `make funnel` confirm it is about to expose InstaFlow and not
+    `service` lets `make funnel` confirm it is about to expose Social Flow and not
     some other process that happens to hold the port.
     """
-    return {"status": "ok", "service": "instaflow"}
+    return {"status": "ok", "service": "social-flow"}
 
 
 @app.get("/ready", tags=["health"])

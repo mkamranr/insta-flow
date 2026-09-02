@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class AiUnavailable(Exception):
     """The model could not be reached or did not answer usefully.
 
-    Deliberately not an InstaFlowError: AI is optional, and its failure must
+    Deliberately not an SocialFlowError: AI is optional, and its failure must
     never surface as an HTTP error or stop the deterministic path (§57).
     """
 

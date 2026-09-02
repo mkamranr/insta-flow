@@ -1,4 +1,4 @@
-# InstaFlow
+# Social Flow
 
 **Self-hosted Instagram comment-to-DM automation.** Someone comments a keyword on your post,
 they get a direct message with your link. Runs entirely on your own hardware, using Meta's
@@ -22,7 +22,7 @@ quotas, and they hold your audience's data on their servers.
 The same mechanic, on infrastructure you control, with no subscription and no quota beyond
 Meta's own rate limits.
 
-| | CreatorFlow / ReplyRush | InstaFlow |
+| | CreatorFlow / ReplyRush | Social Flow |
 | --- | --- | --- |
 | Cost | Monthly subscription | Free |
 | DM limits | Plan quota (e.g. 500/mo) | Meta's own ceiling only |
@@ -122,7 +122,7 @@ granted.
 
 ## Compliance
 
-InstaFlow uses **only** Meta's official, documented APIs. No browser automation, no private
+Social Flow uses **only** Meta's official, documented APIs. No browser automation, no private
 endpoints, no cookie or session scraping, and no attempt to work around Meta's restrictions.
 The private-reply limits — one reply per commenter, within seven days — are enforced in code
 rather than worked around.

@@ -1,6 +1,6 @@
 # Meta Instagram API — Verified Reference
 
-**Verified on: 2026-08-31.** Every fact below was read from official Meta documentation on
+**Verified on: 2026-08-31; §§2, 7, 10 re-verified and corrected 2026-09-02.** Every fact below was read from official Meta documentation on
 that date. Meta changes this platform frequently — before implementing anything not covered
 here, read the official docs and update this file with a new verification date.
 
@@ -32,7 +32,7 @@ Review are all free. App Review costs time, not money.
 | API version in current docs | `v25.0` — configurable via `META_API_VERSION` |
 | Scopes | `instagram_business_basic`, `instagram_business_manage_comments`, `instagram_business_manage_messages` |
 | Access level needed | **Standard Access** connects your own account |
-| App Review | Unresolved for this use case — Meta's guidance points both ways. See §7 |
+| App Review | **Not required** for your own account — the app must be in **Live** mode. See §7 |
 | Business Verification | **Not required** |
 
 ## 2. Account requirements
@@ -40,8 +40,38 @@ Review are all free. App Review costs time, not money.
 - The Instagram account must be a **Professional** account (Business or Creator). A personal
   account cannot receive comment webhooks.
 - No linked Facebook Page is required for the Instagram Login flow.
-- Under Standard Access, the account must hold a role on the app (Instagram Tester or an
-  admin/developer role).
+- In **Development Mode**, the account must hold a role on the app (Instagram Tester or an
+  admin/developer role) — and role-less users' comment content is withheld entirely (§7).
+- In **Live** mode with Standard Access, comments from accounts with no role are delivered
+  normally. Whether the *connecting* account still needs a role in Live mode was not isolated
+  here: an `Insufficient Developer Role` error was seen in Development Mode and did not recur
+  after the switch to Live, but a Tester role may also have been present. Untested.
+
+## 2b. Account fields — verified live 2026-09-02
+
+`GET /me?fields=...` on `graph.instagram.com`, probed field by field against a live
+Standard Access token (asking for an unsupported field fails the whole request, so each was
+requested alone).
+
+| Field | Result |
+| --- | --- |
+| `username` | ✅ |
+| `account_type` | ✅ (`MEDIA_CREATOR` here) |
+| `followers_count` | ✅ |
+| `follows_count` | ✅ |
+| `media_count` | ✅ |
+| `follower_count` | ❌ HTTP 400 — "Tried accessing nonexisting field" |
+
+**Trap: the two edges spell it differently.**
+
+- Account (`/me`) → **`followers_count`**, plural.
+- Messaging User Profile (`get_user_profile`, for a commenter) → **`follower_count`**, singular.
+
+Using the singular form on `/me` returns HTTP 400 and, because one bad field fails the whole
+request, takes every other field down with it.
+
+**No follower *history* is available from Meta.** `followers_count` is a point-in-time value,
+so growth (new / unfollowed / net) has to be derived from snapshots this app records itself.
 
 ## 3. OAuth
 
@@ -98,7 +128,7 @@ GET https://graph.instagram.com/refresh_access_token
 
 Conditions: the token must be **at least 24 hours old**, still valid, and the user must have
 granted `instagram_business_basic`. **A token not refreshed within 60 days expires** and the
-account must reconnect. InstaFlow runs a scheduled refresh well before that boundary.
+account must reconnect. Social Flow runs a scheduled refresh well before that boundary.
 
 ## 4. Private replies
 
@@ -177,13 +207,38 @@ two-step flow possible:
 Subscribing to `messaging_postbacks` requires `instagram_business_manage_messages`, which we
 already hold.
 
-### "Require follow before sending" — supported
+### "Require follow before sending" — supported, with one hole
 
 The Messaging **User Profile API** exposes `is_user_follow_business` for an IGSID, alongside
 `name`, `username`, `profile_pic`, `follower_count`, and `is_business_follow_user`. That is
 the officially supported way to gate on following — no scraping, no guessing.
 
 Docs: <https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api/user-profile>
+
+**Probed live against four real commenters, 2026-09-02:**
+
+| Commenter | Prior DM thread | Result |
+| --- | --- | --- |
+| A | yes | 200, `is_user_follow_business: true` |
+| B | yes | 200, `is_user_follow_business: false` |
+| C | **none** | 200, `is_user_follow_business: true` |
+| D | none | **HTTP 500** — `User consent is required to access user profile` |
+
+Two things this settles:
+
+1. **A prior DM thread is not required.** Case C was answered with no conversation history.
+2. **The lookup can be refused outright.** Case D returns HTTP 500 with "User consent is
+   required". That is *unknown*, not "not following" — treating it as a negative would block
+   real followers.
+
+**Therefore `None` fails open** in `policy.evaluate`: it blocks on `False` only. A gate that
+silently dropped every DM whose lookup failed would be worse than a gate with a narrow hole.
+
+**Enforce at the postback, not only at the comment.** The opener carries no link; the payoff
+does. Checking again at the postback means the decision is made at the moment the link
+actually changes hands, and by then a thread exists — which is when Meta is most willing to
+answer. `follower_count` here is the *commenter's* follower count, and is spelled singular,
+unlike the account edge (§2b).
 
 ### "Collect email before sending" — no API blocker
 
@@ -222,7 +277,7 @@ POST https://graph.instagram.com/<API_VERSION>/me/subscribed_apps
 ```
 
 Response: `{"success": true}`. `/me` resolves to the app user's Instagram professional
-account. InstaFlow subscribes to `comments` only; `messages` is not needed for the MVP.
+account. Social Flow subscribes to `comments` only; `messages` is not needed for the MVP.
 
 ### 5.4 Fields available with Instagram Login
 
@@ -270,7 +325,7 @@ account. InstaFlow subscribes to `comments` only; `messages` is not needed for t
 3. **Every field is optional.** `parent_id`, `ad_id`, `ad_title`, and `original_media_id`
    appear only when applicable. Never index blindly.
 4. **Skip self-comments.** The connected account's own comments and replies also fire this
-   webhook. Drop any event whose `value.from.id` is the connected account, or InstaFlow will
+   webhook. Drop any event whose `value.from.id` is the connected account, or Social Flow will
    trigger on its own replies.
 
 ## 6. Rate limits (platform-wide)
@@ -283,9 +338,16 @@ account. InstaFlow subscribes to `comments` only; `messages` is not needed for t
 | Send API — media | 10 calls/second |
 | Conversations API | 2 calls/second per account |
 
-InstaFlow's per-campaign limits are **application safety controls**, unrelated to these.
+Social Flow's per-campaign limits are **application safety controls**, unrelated to these.
 
 ## 7. Access levels
+
+> **RESOLVED 2026-09-02 — the earlier conclusion in this section was wrong.**
+> Comment content from an account with **no role on the app** is delivered normally once the
+> app is in **Live** mode. No App Review, no Business Verification. The blocker was
+> Development Mode, not the access level. The investigation below is kept as a record of what
+> was tested; read "Live mode is the unlock" at the end for the current truth.
+
 
 | | Standard Access | Advanced Access |
 | --- | --- | --- |
@@ -420,21 +482,84 @@ What was ruled out along the way, each independently verified:
 The edge returns HTTP 200 with paging cursors and an empty array, which is filtering rather
 than absence or error.
 
-**The only remaining route is Advanced Access to `instagram_business_manage_comments`, which
-requires App Review, which requires verification.** No code change affects this, and nothing
-further is worth testing without that access.
+### Live mode is the unlock — 2026-09-02
 
-This is also why the paid tools work: they hold Advanced Access. The approval is the moat, not
-the software.
+**Everything above was measured with the app in Development Mode.** That was the confound. The
+app was rebuilt and switched to **Live**, and the same test now passes.
+
+A comment from `kamranrafi` — an account holding **no role on the app**: not an admin, not a
+developer, not an Instagram Tester — was delivered in full and answered automatically.
+
+Webhook, from the stored `raw_payload`:
+
+```json
+{ "from": { "id": "27962242703427275", "username": "kamranrafi" },
+  "media": { "id": "18077914607704323", "media_product_type": "REELS" },
+  "id": "18100884581570393",
+  "text": "link" }
+```
+
+Read API, the same media, the path that previously returned an empty array:
+
+```
+GET /<MEDIA_ID>?fields=comments_count   →  {"comments_count": 1}
+GET /<MEDIA_ID>/comments                →  {"data": [{"id": "18100884581570393",
+                                                      "text": "link", ...}], "paging": {...}}
+```
+
+Both Meta sends returned HTTP 200: `opening_dm` at 15:56:44, `private_reply` at 15:57:17 after
+the postback. Full pipeline, comment to payoff.
+
+| Path | Development Mode (2026-08-31 / 09-01) | Live Mode (2026-09-02) |
+| --- | --- | --- |
+| `comments` webhook, role-less commenter | no event | ✅ delivered with text |
+| `comments` webhook, accepted Tester | no event | — |
+| `GET /<media>/comments` | `{"data": []}` with cursors | ✅ comment returned |
+| `POST /<ig-user-id>/messages` private reply | never reached | ✅ 200, message id returned |
+
+### What changed — observation, and the probable cause
+
+Four things changed at once, so the cause is **not isolated**:
+
+1. A **new app**, created as *Other → Business*.
+2. The app was switched from Development Mode to **Live**. ← most probable cause
+3. It was linked to a **Meta Business Portfolio** (free; no business verification performed).
+4. *App Settings → Basic* was completed: Privacy Policy URL, Terms of Service URL, App Icon,
+   Data Deletion Instructions URL, Category. Live mode requires these, which is why they
+   travel together.
+
+**Live mode is the probable cause**, and it fits Meta's documented model: Standard Access
+serves accounts you own or manage, and **Development Mode is what restricts data to people
+holding a role on the app**. The dashboard string quoted earlier — "data owned or managed by
+people who do not have a role on your app... must have been approved in App Review" — was read
+here as governing this use case. It governs **Advanced Access**, i.e. serving *third-party*
+accounts. Serving your own account needs neither.
+
+This is stated as the probable cause, not a demonstrated one. Isolating it would mean toggling
+the app back to Development Mode and re-commenting. Not worth doing on a working deployment.
+
+### Corrected requirements
 
 | Goal | What you need |
 | --- | --- |
-| Connect your own Instagram account | Standard Access — already done |
-| Test the pipeline end to end today | An Instagram Tester account, invite accepted |
-| React to comments from real followers | Unknown until step 3 above is run |
+| Connect your own Instagram account | Standard Access |
+| React to comments from real followers on your own account | Standard Access + app in **Live** mode |
+| Serve *other people's* Instagram accounts (SaaS) | Advanced Access → App Review → Business Verification |
 
-If App Review does turn out to be required, it is **free** — it costs time, not money, so the
-no-paid-services constraint holds either way.
+**App Review and Business Verification are not required for this deployment.** The earlier
+claim that they were — and that "the approval is the moat" — was wrong. The moat was a
+dashboard toggle.
+
+### Why the original investigation reached the wrong answer
+
+Every individual observation in it was accurate. The error was in the *explanation*: an
+untested variable (Development Mode) was held constant across every experiment, so it could
+never show up as a difference. Ruling out seven hypotheses that all shared one confound
+produced high confidence in a wrong conclusion.
+
+The lesson is the one already in the ground rules: state observations as observations. "No
+webhook arrived" was solid. "Therefore Advanced Access is required" was an inference that was
+never tested, and it parked the project for two days.
 
 ---
 
@@ -478,7 +603,7 @@ account* → Business or Creator. Free. A personal account cannot receive commen
 
 ### 3. Create the app
 
-*My Apps → Create App* → name it `InstaFlow` → select the use case
+*My Apps → Create App* → name it `Social Flow` → select the use case
 **"Manage messaging and content on Instagram"**.
 
 - A Business portfolio is **optional**. You can defer it.
@@ -653,7 +778,7 @@ The dashboard also has a **Client OAuth Settings** panel — *Client OAuth login
 login*, *Enforce HTTPS*, *Use Strict Mode for redirect URIs*, and so on. That panel belongs to
 **Facebook Login for Business**, a separate flow with its own redirect URI list.
 
-InstaFlow does not use it. Our flow calls `https://www.instagram.com/oauth/authorize` and reads
+Social Flow does not use it. Our flow calls `https://www.instagram.com/oauth/authorize` and reads
 its redirect URIs from *Instagram business login settings* (step 7). Nothing in the Client OAuth
 Settings panel can fix or cause an `Invalid redirect_uri` from our flow.
 
@@ -682,9 +807,9 @@ already be running — that is why this step follows Milestone 3.
 > | Level | Where | Set by |
 > | --- | --- | --- |
 > | App | Meta dashboard → Configure webhooks → field list | you, by clicking Subscribe |
-> | Account | `POST /me/subscribed_apps` | InstaFlow, via *Subscribe webhooks* |
+> | Account | `POST /me/subscribed_apps` | Social Flow, via *Subscribe webhooks* |
 >
-> The Instagram page in InstaFlow reads the **account** level back from Meta, so it can show
+> The Instagram page in Social Flow reads the **account** level back from Meta, so it can show
 > `subscribed (comments)` while the app level is still missing it. If comments are not arriving
 > and that page looks correct, the app level is what to check.
 
@@ -718,12 +843,12 @@ OAuth fails for an account that looks correctly configured. Testers need a role 
 
 ### 10. Connect
 
-In InstaFlow: *Instagram → Connect Instagram*, and consent to the three scopes.
+In Social Flow: *Instagram → Connect Instagram*, and consent to the three scopes.
 
-**Business Verification is not required.** Whether **App Review** is required before comments
-from people without an app role reach the webhook is unresolved — Meta's own guidance points
-both ways. See §7 for the two statements and the experiment that settles it. Testing with an
-Instagram Tester account works regardless.
+**Neither Business Verification nor App Review is required** for automating your own account.
+The app must be in **Live** mode — in Development Mode, comment content from anyone without a
+role on the app is withheld, which is what parked this project for two days. Verified
+2026-09-02; see §7.
 
 ---
 

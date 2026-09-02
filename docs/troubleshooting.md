@@ -19,7 +19,7 @@ status`) and that `/webhooks/instagram` is the saved Callback URL.
 subscribed at the *app* level. There are two independent subscriptions:
 
 ```bash
-# Account level - what InstaFlow set. Should list "comments".
+# Account level - what Social Flow set. Should list "comments".
 docker compose exec -T api python -c "
 import asyncio, httpx
 from app.config import get_settings
@@ -75,7 +75,7 @@ Facebook app secret was used instead of the Instagram one.
 **3. Was it a self-comment?**
 
 `webhook_self_comment_skipped`. Your own comments and replies fire the same
-webhook; they are skipped deliberately, or InstaFlow would answer itself.
+webhook; they are skipped deliberately, or Social Flow would answer itself.
 
 **4. Did a rule match?**
 
@@ -119,7 +119,7 @@ Tailscale Funnel proxies to IPv4 `127.0.0.1:<port>`. Docker's default
 the same port wins the funnel while `curl localhost:8080` still looks right.
 
 `make funnel` refuses to expose a port unless `/health` reports
-`"service":"instaflow"`. If it refuses, it prints what answered instead. Change
+`"service":"social-flow"`. If it refuses, it prints what answered instead. Change
 `HOST_PORT` in `.env` if something else holds the port.
 
 ## Token errors

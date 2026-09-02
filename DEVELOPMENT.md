@@ -88,7 +88,7 @@ key error means another worker already has it — skip, do not send.
 - Long-lived token lasts 60 days; refresh needs the token to be ≥24h old.
 - Retry 429/5xx/timeout with backoff+jitter. Never retry other 4xx. A 401 pauses the account.
 - Skip webhook events where `value.from.id` is the connected account (self-comment loop),
-  or InstaFlow will reply to its own replies.
+  or Social Flow will reply to its own replies.
 - The comment id arrives as `value.comment_id` **or** `value.id` — Meta's own docs disagree.
   Accept either.
 

@@ -25,7 +25,10 @@ from app.services.meta.messages import build_messages
 
 logger = logging.getLogger(__name__)
 
-ACCOUNT_FIELDS = "user_id,username,account_type,name,profile_picture_url"
+ACCOUNT_FIELDS = (
+    "user_id,username,account_type,name,profile_picture_url,"
+    "followers_count,follows_count,media_count"
+)
 PROFILE_FIELDS = (
     "name,username,profile_pic,follower_count,"
     "is_user_follow_business,is_business_follow_user"
@@ -116,6 +119,9 @@ class MetaInstagramClient:
             account_type=str(body.get("account_type", "")),
             name=body.get("name"),
             profile_picture_url=body.get("profile_picture_url"),
+            followers_count=_int_or_none(body.get("followers_count")),
+            follows_count=_int_or_none(body.get("follows_count")),
+            media_count=_int_or_none(body.get("media_count")),
             raw=body,
         )
 
@@ -288,6 +294,14 @@ def _media_from(item: dict[str, Any]) -> MetaMedia:
         comments_count=item.get("comments_count"),
         raw=item,
     )
+
+
+def _int_or_none(value: Any) -> int | None:
+    """Counters are absent on some account types; a missing count is not a zero."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_timestamp(value: Any) -> datetime | None:

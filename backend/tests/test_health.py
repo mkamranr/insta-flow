@@ -17,7 +17,7 @@ async def test_health_is_ok_without_any_dependency(client):
     async with client as c:
         response = await c.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "instaflow"}
+    assert response.json() == {"status": "ok", "service": "social-flow"}
 
 
 async def test_ready_reports_503_when_dependencies_are_down(client):

@@ -16,13 +16,13 @@ from typing import Final
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from app.errors import InstaFlowError
+from app.errors import SocialFlowError
 
 VERSION: Final = "v1"
 NONCE_BYTES: Final = 12  # 96 bits, the size AES-GCM is specified for.
 
 
-class EncryptionError(InstaFlowError):
+class EncryptionError(SocialFlowError):
     code = "encryption_error"
 
 

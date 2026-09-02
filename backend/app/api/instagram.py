@@ -125,6 +125,9 @@ async def callback(
             "username": profile.username,
             "display_name": profile.name,
             "account_type": profile.account_type,
+            "followers_count": profile.followers_count,
+            "follows_count": profile.follows_count,
+            "media_count": profile.media_count,
             "permissions": list(short.permissions) or list(meta_auth.SCOPES),
             "status": "connected",
             "status_error": None,
@@ -312,7 +315,7 @@ async def subscription_status(
     """Ask Meta what this account is actually subscribed to.
 
     Read from Meta rather than trusting our stored flag: a subscription can be
-    removed in the app dashboard without InstaFlow ever hearing about it.
+    removed in the app dashboard without Social Flow ever hearing about it.
     """
     account = await _load(accounts, account_id, user)
     try:

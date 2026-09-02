@@ -20,6 +20,7 @@ from app.api.deps import (
     LinkClicksRepo,
     MediaRepo,
     RulesRepo,
+    SnapshotsRepo,
 )
 from app.db.repositories import serialise_required
 
@@ -105,15 +106,33 @@ async def rule_performance(
             {"rule_id": rule["_id"], "status": "success", "action": {"$in": list(SENT_ACTIONS)}}
         )
         clicks = clicks_by_rule.get(rule_id, 0)
+        destinations = await links.by_destination_for_rule(rule["_id"])
         out.append(
             {
                 "id": rule_id,
                 "name": rule.get("name") or "Comment → DM",
                 "keywords": rule.get("keywords") or [],
                 "enabled": rule.get("enabled", True),
+                "instagram_media_ids": rule.get("instagram_media_ids") or [],
                 "dms_sent": sent,
                 "link_clicks": clicks,
                 "click_through_rate": round(clicks / sent * 100, 1) if sent else 0.0,
+                "links": [
+                    {
+                        **dest,
+                        "last_clicked_at": (
+                            dest["last_clicked_at"].isoformat()
+                            if dest.get("last_clicked_at")
+                            else None
+                        ),
+                        # Per-destination CTR shares the rule's denominator: how
+                        # many DMs went out, not how many links were minted.
+                        "click_through_rate": (
+                            round(dest["clicks"] / sent * 100, 1) if sent else 0.0
+                        ),
+                    }
+                    for dest in destinations
+                ],
             }
         )
 
@@ -197,22 +216,110 @@ async def top_commenters(
     ]
 
 
+@router.get("/account")
+async def account_performance(
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    snapshots: SnapshotsRepo,
+    days: int = Query(7, ge=1, le=90),
+) -> dict[str, Any]:
+    """Follower totals and growth, from snapshots this app records itself.
+
+    §59 governs what is reportable here. Meta returns `followers_count` as a
+    single total and no history (docs/meta-api.md §2b), so:
+
+    * **net growth** is derivable -- it is the difference between two snapshots;
+    * **new followers and unfollowers are not.** A day that gained 5 and lost 3
+      is indistinguishable from one that gained 2 and lost none. Reporting a
+      gross number would be inventing it, so this endpoint does not.
+    """
+    found = await accounts.list({"user_id": user["_id"]})
+    if not found:
+        return {"connected": False}
+    account = found[0]
+
+    since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d")
+    rows = await snapshots.history(account["_id"], since)
+    # (day, followers) pairs keep the arithmetic on plain ints; the wire shape is
+    # built from them afterwards.
+    points: list[tuple[str, int]] = [
+        (str(r["day"]), int(r["followers_count"]))
+        for r in rows
+        if r.get("followers_count") is not None
+    ]
+    series = [{"day": day, "followers_count": count} for day, count in points]
+
+    net_growth: int | None = None
+    best_day: tuple[str, int] | None = None
+    worst_day: tuple[str, int] | None = None
+    if len(points) >= 2:
+        net_growth = points[-1][1] - points[0][1]
+        deltas = [(points[i][0], points[i][1] - points[i - 1][1]) for i in range(1, len(points))]
+        best_day = max(deltas, key=lambda d: d[1])
+        worst_day = min(deltas, key=lambda d: d[1])
+
+    return {
+        "connected": True,
+        "username": account.get("username"),
+        "account_type": account.get("account_type"),
+        "followers_count": account.get("followers_count"),
+        "follows_count": account.get("follows_count"),
+        "media_count": account.get("media_count"),
+        "days": days,
+        "collecting_since": await snapshots.earliest_day(account["_id"]),
+        "snapshot_count": len(series),
+        # None, not 0 -- one snapshot cannot express a change, and a zero here
+        # would read as "flat" rather than "not known yet".
+        "net_growth": net_growth,
+        "best_day": {"day": best_day[0], "change": best_day[1]} if best_day else None,
+        "worst_day": {"day": worst_day[0], "change": worst_day[1]} if worst_day else None,
+        "series": series,
+        "gross_growth_available": False,
+        "gross_growth_note": (
+            "Meta reports a follower total only, with no history. Net change between "
+            "days is exact; new followers and unfollowers cannot be separated from it."
+        ),
+        "webhook_subscribed": account.get("webhook_subscribed", False),
+        "subscribed_fields": account.get("subscribed_fields") or [],
+    }
+
+
 @router.get("/posts")
 async def post_performance(
-    user: CurrentUser, accounts: AccountsRepo, media: MediaRepo, comments: CommentsRepo
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    media: MediaRepo,
+    comments: CommentsRepo,
+    executions: ExecutionsRepo,
 ) -> list[dict[str, Any]]:
+    """Per-post comments and how many of them actually triggered a rule.
+
+    "Triggered" is measured from executions rather than by re-running the keyword
+    matcher here: what fired is a fact on record, whereas re-matching would only
+    report what *would* fire under today's rules, which is a different question
+    and would silently change history when a rule is edited.
+    """
     account_id = await _account_id(accounts, user)
     if account_id is None:
         return []
 
+    triggered_ids = await executions.triggered_comment_ids(account_id)
+
     out = []
     for post in await media.list({"instagram_account_id": account_id}, sort_field="published_at"):
+        media_id = post.get("instagram_media_id")
+        total = await comments.count({"instagram_media_id": media_id})
+        triggered = (
+            await comments.count({"instagram_media_id": media_id, "_id": {"$in": triggered_ids}})
+            if triggered_ids
+            else 0
+        )
         out.append(
             {
                 **serialise_required(post),
-                "comments": await comments.count(
-                    {"instagram_media_id": post.get("instagram_media_id")}
-                ),
+                "comments": total,
+                "keyword_comments": triggered,
+                "trigger_rate": round(triggered / total * 100, 1) if total else 0.0,
             }
         )
     return out

@@ -79,7 +79,7 @@ class ParsedComment:
         """Did the connected account write this comment?
 
         The account's own comments and replies fire the same webhook, so without
-        this InstaFlow would trigger on its own replies (§5.6).
+        this Social Flow would trigger on its own replies (§5.6).
         """
         return bool(self.instagram_user_id) and (
             self.instagram_user_id == self.instagram_account_id

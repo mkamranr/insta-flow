@@ -4,7 +4,7 @@ Reviewed 2026-08-31 against the checklist in project-plan.md §50 and §89.
 
 ## Threat model
 
-InstaFlow holds one thing worth stealing: a long-lived Meta access token that
+Social Flow holds one thing worth stealing: a long-lived Meta access token that
 can send DMs as the connected Instagram account. Everything below is arranged
 around not losing it, and around not sending messages the operator did not
 intend.

@@ -26,7 +26,7 @@ make funnel-off      # stop exposing
 >
 > Two guards: Caddy is published on `127.0.0.1:${HOST_PORT:-8090}` explicitly, and
 > `make funnel` runs `funnel-preflight`, which refuses to expose the port unless
-> `/health` reports `"service":"instaflow"`. Change `HOST_PORT` in `.env` if 8090 is
+> `/health` reports `"service":"social-flow"`. Change `HOST_PORT` in `.env` if 8090 is
 > taken.
 
 **First run only — enable Funnel on the tailnet.** Funnel is off by default and is a

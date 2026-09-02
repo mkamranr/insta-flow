@@ -11,6 +11,7 @@ from fastapi import Depends, Request
 from app.config import Settings, get_settings
 from app.db import mongodb
 from app.db.repositories import (
+    AccountSnapshotsRepository,
     AuditLogsRepository,
     CommentsRepository,
     ContactsRepository,
@@ -47,6 +48,10 @@ def media_repo(db: DbDep) -> MediaRepository:
     return MediaRepository(db)
 
 
+def account_snapshots_repo(db: DbDep) -> AccountSnapshotsRepository:
+    return AccountSnapshotsRepository(db)
+
+
 def contacts_repo(db: DbDep) -> ContactsRepository:
     return ContactsRepository(db)
 
@@ -78,6 +83,7 @@ def audit_repo(db: DbDep) -> AuditLogsRepository:
 UsersRepo = Annotated[UsersRepository, Depends(users_repo)]
 AccountsRepo = Annotated[InstagramAccountsRepository, Depends(accounts_repo)]
 MediaRepo = Annotated[MediaRepository, Depends(media_repo)]
+SnapshotsRepo = Annotated[AccountSnapshotsRepository, Depends(account_snapshots_repo)]
 RulesRepo = Annotated[RulesRepository, Depends(rules_repo)]
 LinkClicksRepo = Annotated[LinkClicksRepository, Depends(link_clicks_repo)]
 ContactsRepo = Annotated[ContactsRepository, Depends(contacts_repo)]

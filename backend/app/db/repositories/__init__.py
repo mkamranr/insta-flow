@@ -1,5 +1,6 @@
 """Repository layer. All MongoDB access goes through these classes."""
 
+from .account_snapshots import AccountSnapshotsRepository
 from .ai_classifications import AiClassificationsRepository
 from .audit_logs import AuditLogsRepository
 from .base import BaseRepository, serialise, serialise_required, to_object_id, utcnow
@@ -14,6 +15,7 @@ from .users import UsersRepository
 from .webhook_events import WebhookEventsRepository, event_hash
 
 __all__ = [
+    "AccountSnapshotsRepository",
     "AiClassificationsRepository",
     "AuditLogsRepository",
     "BaseRepository",

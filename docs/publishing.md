@@ -29,7 +29,7 @@ make tunnel-status
 
 | Field | Value |
 | --- | --- |
-| Display name | `InstaFlow` (or anything not implying Meta endorsement) |
+| Display name | `Social Flow` (or anything not implying Meta endorsement) |
 | App contact email | your email |
 | Privacy Policy URL | `<base>/privacy` |
 | User Data Deletion | *Data Deletion Instructions URL* → `<base>/data-deletion` |

@@ -18,7 +18,9 @@ from app.workers.tasks import (
     process_comment_event,
     process_message_event,
     process_postback_event,
+    recheck_follow,
     refresh_expiring_tokens,
+    snapshot_account_metrics,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,10 +68,18 @@ class WorkerSettings:
         process_comment_event,
         process_postback_event,
         process_message_event,
+        recheck_follow,
         refresh_expiring_tokens,
+        snapshot_account_metrics,
     ]
-    # Daily token check. Meta kills a token not refreshed within 60 days.
-    cron_jobs = [cron(refresh_expiring_tokens, hour=3, minute=0)]
+    cron_jobs = [
+        # Daily token check. Meta kills a token not refreshed within 60 days.
+        cron(refresh_expiring_tokens, hour=3, minute=0),
+        # Just after midnight UTC, so a snapshot lands squarely inside the day it
+        # is labelled with. Meta keeps no follower history, so a day not written
+        # here is a day of growth that can never be recovered (§2b).
+        cron(snapshot_account_metrics, hour=0, minute=15),
+    ]
     on_startup = startup
     on_shutdown = shutdown
     # Retry scheduling is explicit in the task (§64); this is the ceiling.

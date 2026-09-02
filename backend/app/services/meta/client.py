@@ -14,7 +14,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from app.errors import MetaAPIError, MetaRateLimitError, MetaTokenError
 
-# Fields InstaFlow subscribes to. `messaging_postbacks` carries the button tap
+# Fields Social Flow subscribes to. `messaging_postbacks` carries the button tap
 # that opens the 24-hour window for the follow-up DM (docs/meta-api.md §4b).
 DEFAULT_WEBHOOK_FIELDS = ("comments", "messaging_postbacks", "messages")
 
@@ -26,6 +26,12 @@ class MetaAccount:
     account_type: str = "BUSINESS"
     name: str | None = None
     profile_picture_url: str | None = None
+    # `followers_count` is plural on this edge. The Messaging User Profile edge
+    # spells the same idea `follower_count`, and the singular form 400s here --
+    # see docs/meta-api.md §2b. Meta returns a point in time, never a history.
+    followers_count: int | None = None
+    follows_count: int | None = None
+    media_count: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -95,7 +101,7 @@ def error_for_status(status: int, message: str = "", **kwargs: Any) -> MetaAPIEr
 
 @runtime_checkable
 class InstagramClient(Protocol):
-    """The complete set of Meta operations InstaFlow performs."""
+    """The complete set of Meta operations Social Flow performs."""
 
     async def get_account(self, access_token: str) -> MetaAccount:
         """Look up the Instagram professional account the token belongs to."""

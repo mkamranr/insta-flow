@@ -56,14 +56,14 @@ funnel: funnel-preflight ## Expose Caddy publicly over Tailscale Funnel
 	tailscale funnel --bg $(FUNNEL_PORT)
 	@$(MAKE) --no-print-directory tunnel-status
 
-funnel-preflight: ## Verify InstaFlow -- not another local service -- holds the funnel port
+funnel-preflight: ## Verify Social Flow -- not another local service -- holds the funnel port
 	@# Funnel proxies to IPv4 127.0.0.1. Check that exact address, not
 	@# localhost, which may resolve to ::1 and reach a different listener.
-	@if curl -sf --max-time 5 http://127.0.0.1:$(FUNNEL_PORT)/health | grep -q '"service":"instaflow"'; then \
-		echo "preflight ok: InstaFlow is on 127.0.0.1:$(FUNNEL_PORT)"; \
+	@if curl -sf --max-time 5 http://127.0.0.1:$(FUNNEL_PORT)/health | grep -q '"service":"social-flow"'; then \
+		echo "preflight ok: Social Flow is on 127.0.0.1:$(FUNNEL_PORT)"; \
 	else \
 		echo "REFUSING TO EXPOSE PORT $(FUNNEL_PORT)."; \
-		echo "127.0.0.1:$(FUNNEL_PORT) is not InstaFlow. It answered:"; \
+		echo "127.0.0.1:$(FUNNEL_PORT) is not Social Flow. It answered:"; \
 		curl -s --max-time 5 http://127.0.0.1:$(FUNNEL_PORT)/health | head -c 300; echo; \
 		echo "Run 'make up', or change HOST_PORT in .env if another service holds this port."; \
 		exit 1; \

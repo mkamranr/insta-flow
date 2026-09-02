@@ -1,7 +1,7 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { RequireAuth } from '../components/common/RequireAuth'
 import { Layout } from '../components/layout/Layout'
-import { Activity } from '../pages/Activity'
+import { Analytics } from '../pages/Analytics'
 import { Automations } from '../pages/Automations'
 import { Contacts } from '../pages/Contacts'
 import { Dashboard } from '../pages/Dashboard'
@@ -26,7 +26,12 @@ export function Router() {
           <Route path="automations" element={<Automations />} />
           <Route path="templates" element={<Templates />} />
           <Route path="posts" element={<Posts />} />
-          <Route path="activity" element={<Activity />} />
+          <Route path="analytics" element={<Analytics />} />
+          {/* The activity log became a tab; keep old links and bookmarks working. */}
+          <Route
+            path="activity"
+            element={<Navigate to="/analytics?tab=activity" replace />}
+          />
           <Route path="insights" element={<Insights />} />
           <Route path="contacts" element={<Contacts />} />
           <Route path="instagram" element={<Instagram />} />

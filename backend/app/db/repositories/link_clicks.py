@@ -46,6 +46,43 @@ class LinkClicksRepository(BaseRepository[Any]):
             return int(doc["n"])
         return 0
 
+    async def by_destination_for_rule(self, rule_id: Any) -> list[Document]:
+        """Per-destination totals for one rule.
+
+        Grouped by target URL, not by token: a token is minted per recipient, so
+        grouping on it would report one "link" per person instead of one row per
+        destination.
+
+        `unique` counts tokens with at least one click. Since a token belongs to
+        exactly one recipient, that is the number of distinct people who clicked
+        -- not the number of clicks, which repeat taps inflate.
+        """
+        pipeline: list[Document] = [
+            {"$match": {"rule_id": to_object_id(rule_id)}},
+            {
+                "$group": {
+                    "_id": {"url": "$target_url", "title": "$button_title"},
+                    "clicks": {"$sum": "$click_count"},
+                    "delivered": {"$sum": 1},
+                    "unique": {"$sum": {"$cond": [{"$gt": ["$click_count", 0]}, 1, 0]}},
+                    "last_clicked_at": {"$max": "$last_clicked_at"},
+                }
+            },
+            {"$sort": {"clicks": -1}},
+        ]
+        cursor = await self.collection.aggregate(pipeline)
+        return [
+            {
+                "target_url": doc["_id"].get("url") or "",
+                "title": doc["_id"].get("title") or "Open",
+                "clicks": int(doc.get("clicks") or 0),
+                "delivered": int(doc.get("delivered") or 0),
+                "unique": int(doc.get("unique") or 0),
+                "last_clicked_at": doc.get("last_clicked_at"),
+            }
+            async for doc in cursor
+        ]
+
     async def clicks_by_rule(self, instagram_account_id: Any) -> dict[str, int]:
         pipeline: list[Document] = [
             {"$match": {"instagram_account_id": to_object_id(instagram_account_id)}},

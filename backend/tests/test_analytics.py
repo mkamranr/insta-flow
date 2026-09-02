@@ -189,3 +189,95 @@ async def test_top_commenters_ranks_by_count(signed_in, database, admin):
 async def test_analytics_requires_a_session(api):
     for path in ("/summary", "/rules", "/activity", "/top-commenters"):
         assert (await api.get(f"/api/analytics{path}")).status_code == 401
+
+
+# -- content performance ----------------------------------------------------
+
+
+async def _post_with_comments(database, account_id, media_id, *, total, triggered):
+    """A post with `total` comments, `triggered` of which fired a rule."""
+    now = datetime.now(UTC)
+    await database["media"].insert_one(
+        {
+            "instagram_account_id": account_id,
+            "instagram_media_id": media_id,
+            "caption": f"post {media_id}",
+            "published_at": now,
+        }
+    )
+    for i in range(total):
+        comment_id = (
+            await database["comments"].insert_one(
+                {
+                    "instagram_account_id": account_id,
+                    "instagram_media_id": media_id,
+                    "instagram_comment_id": str(ObjectId()),
+                    "username": f"u{i}",
+                    "text": "link",
+                    "commented_at": now,
+                    "created_at": now,
+                }
+            )
+        ).inserted_id
+        if i < triggered:
+            await database["executions"].insert_one(
+                {
+                    "instagram_account_id": account_id,
+                    "comment_id": comment_id,
+                    "rule_id": ObjectId(),
+                    "action": "private_reply",
+                    "status": "success",
+                    "created_at": now,
+                }
+            )
+
+
+async def test_post_performance_reports_trigger_rate(signed_in, database, admin):
+    account_id = await seed(database, admin)
+    await _post_with_comments(database, account_id, "media_a", total=4, triggered=1)
+
+    body = (await signed_in.get("/api/analytics/posts")).json()
+    post = next(p for p in body if p["instagram_media_id"] == "media_a")
+
+    assert post["comments"] == 4
+    assert post["keyword_comments"] == 1
+    assert post["trigger_rate"] == 25.0
+
+
+async def test_post_with_no_comments_has_a_zero_trigger_rate(signed_in, database, admin):
+    """Not a division by zero, and not "100% of nothing"."""
+    account_id = await seed(database, admin)
+    await _post_with_comments(database, account_id, "media_b", total=0, triggered=0)
+
+    body = (await signed_in.get("/api/analytics/posts")).json()
+    post = next(p for p in body if p["instagram_media_id"] == "media_b")
+
+    assert post["comments"] == 0
+    assert post["trigger_rate"] == 0.0
+
+
+async def test_the_two_step_flow_counts_a_comment_once(signed_in, database, admin):
+    """opening_dm + private_reply are two executions for one comment.
+
+    Counting executions instead of distinct comments would report a 200% trigger
+    rate on a post where every commenter was answered exactly once.
+    """
+    account_id = await seed(database, admin)
+    await _post_with_comments(database, account_id, "media_c", total=2, triggered=2)
+    comment = await database["comments"].find_one({"instagram_media_id": "media_c"})
+    await database["executions"].insert_one(
+        {
+            "instagram_account_id": account_id,
+            "comment_id": comment["_id"],
+            "rule_id": ObjectId(),
+            "action": "opening_dm",
+            "status": "success",
+            "created_at": datetime.now(UTC),
+        }
+    )
+
+    body = (await signed_in.get("/api/analytics/posts")).json()
+    post = next(p for p in body if p["instagram_media_id"] == "media_c")
+
+    assert post["keyword_comments"] == 2
+    assert post["trigger_rate"] == 100.0

@@ -5,7 +5,7 @@ never has to guess a status code and internal detail never leaks to the browser.
 """
 
 
-class InstaFlowError(Exception):
+class SocialFlowError(Exception):
     """Base class. `status_code` is what the API layer returns."""
 
     status_code = 500
@@ -17,37 +17,37 @@ class InstaFlowError(Exception):
         self.context = context
 
 
-class ValidationError(InstaFlowError):
+class ValidationError(SocialFlowError):
     status_code = 422
     code = "validation_error"
 
 
-class AuthenticationError(InstaFlowError):
+class AuthenticationError(SocialFlowError):
     status_code = 401
     code = "authentication_error"
 
 
-class AuthorizationError(InstaFlowError):
+class AuthorizationError(SocialFlowError):
     status_code = 403
     code = "authorization_error"
 
 
-class NotFoundError(InstaFlowError):
+class NotFoundError(SocialFlowError):
     status_code = 404
     code = "not_found"
 
 
-class ConflictError(InstaFlowError):
+class ConflictError(SocialFlowError):
     status_code = 409
     code = "conflict"
 
 
-class RateLimitedError(InstaFlowError):
+class RateLimitedError(SocialFlowError):
     status_code = 429
     code = "rate_limited"
 
 
-class MetaAPIError(InstaFlowError):
+class MetaAPIError(SocialFlowError):
     status_code = 502
     code = "meta_api_error"
 
@@ -81,21 +81,21 @@ class MetaTokenError(MetaAPIError):
     code = "meta_token_error"
 
 
-class WebhookValidationError(InstaFlowError):
+class WebhookValidationError(SocialFlowError):
     status_code = 403
     code = "webhook_validation_error"
 
 
-class CampaignError(InstaFlowError):
+class CampaignError(SocialFlowError):
     status_code = 400
     code = "campaign_error"
 
 
-class TemplateError(InstaFlowError):
+class TemplateError(SocialFlowError):
     status_code = 400
     code = "template_error"
 
 
-class QueueError(InstaFlowError):
+class QueueError(SocialFlowError):
     status_code = 503
     code = "queue_error"

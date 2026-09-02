@@ -22,7 +22,7 @@ export function Contacts() {
         {contacts && contacts.length > 0 && (
           <a
             href={`data:text/csv;charset=utf-8,${encodeURIComponent(asCsv())}`}
-            download="instaflow-contacts.csv"
+            download="social-flow-contacts.csv"
           >
             <button className="secondary">Download CSV</button>
           </a>

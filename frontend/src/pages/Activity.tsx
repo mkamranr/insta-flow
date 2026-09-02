@@ -31,7 +31,8 @@ const REASONS: Record<string, string> = {
   rate_limited_day: 'Rate limit (per day)',
 }
 
-export function Activity() {
+/** The Activity Log tab. Rendered inside Analytics, so it carries no page heading. */
+export function ActivityLog() {
   const [status, setStatus] = useState('')
   const { data: rows, isLoading } = useQuery({
     queryKey: ['activity', status],
@@ -41,8 +42,10 @@ export function Activity() {
 
   return (
     <>
-      <h1>Activity</h1>
-      <p className="muted">Every comment that triggered an automation, and what happened.</p>
+      <p className="muted">
+        Every comment that triggered an automation, and what happened. Hover a skipped row to
+        see why it was skipped.
+      </p>
 
       <div className="filters">
         {FILTERS.map((filter) => (
