@@ -696,6 +696,37 @@ Expect `"status": "ready"` and no `missing_config` key.
 
 ---
 
+### 5b. Switch the app to Live mode — the step that actually unlocks comments
+
+**Do not skip this, and do not spend a day debugging webhooks before doing it.**
+
+In Development Mode, Meta withholds comment content authored by anyone without a role on the
+app. Not "delays" — withholds. The webhook never fires and `GET /<media>/comments` returns an
+empty array *with paging cursors* beside a non-zero `comments_count`. Every symptom points at a
+broken tunnel or a missing subscription, and none of those is the cause. This cost two days
+here; §7 records the whole investigation.
+
+Live mode requires **App Settings → Basic** to be complete first:
+
+| Field | Notes |
+| --- | --- |
+| Privacy Policy URL | `https://<your-host>/api/auth/instagram/data-deletion` serves a page, or host your own |
+| Terms of Service URL | Any reachable page you control |
+| App Icon | 1024×1024 PNG — `frontend/public/icon-1024.png` is generated at the right size |
+| Data Deletion Instructions URL | `https://<your-host>/api/auth/instagram/data-deletion` |
+| Category | Pick anything reasonable, e.g. Business and Pages |
+
+Then flip the toggle at the top of the App Dashboard from **Development** to **Live**.
+
+**What Live mode does not require:** App Review, Business Verification, a registered company,
+or a paid plan. Those are for **Advanced Access**, which you only need to serve *other people's*
+Instagram accounts. Automating an account you own needs Standard Access in Live mode, and
+nothing else.
+
+A Meta Business Portfolio may be linked. Creating one is free and involves no verification.
+
+---
+
 ## At Milestone 4 — the server must be running and publicly reachable
 
 ### 6. Start the tunnel
@@ -846,9 +877,12 @@ OAuth fails for an account that looks correctly configured. Testers need a role 
 In Social Flow: *Instagram → Connect Instagram*, and consent to the three scopes.
 
 **Neither Business Verification nor App Review is required** for automating your own account.
-The app must be in **Live** mode — in Development Mode, comment content from anyone without a
-role on the app is withheld, which is what parked this project for two days. Verified
+The app must be in **Live** mode (step 5b) — in Development Mode, comment content from anyone
+without a role on the app is withheld, which is what parked this project for two days. Verified
 2026-09-02; see §7.
+
+If a real follower comments and nothing arrives, check the app mode before anything else. Every
+other symptom looks identical.
 
 ---
 

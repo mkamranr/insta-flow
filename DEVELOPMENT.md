@@ -92,6 +92,26 @@ key error means another worker already has it — skip, do not send.
 - The comment id arrives as `value.comment_id` **or** `value.id` — Meta's own docs disagree.
   Accept either.
 
+## Known gaps
+
+**The rule engine is comment-driven.** A rule matches keywords in a comment on a specific post,
+and nothing else. Two trigger types are therefore not available, and the templates gallery
+deliberately omits them rather than shipping automations that would silently never fire:
+
+| Wanted | Blocked by |
+| --- | --- |
+| Send link on **story reaction** | No story-reaction trigger. The `messages` webhook carries story replies, but `select_rule` only ever runs against a `CommentContext`. |
+| **Auto-reply to DMs** on a keyword | `process_message_event` only resumes an execution parked at `awaiting_email`; there is no general inbound-DM matcher. Deliberate — the app is not a chatbot. |
+| Thank **story reactors** | Same as the first row. |
+
+Adding either means a trigger discriminator on the rule model and a second matcher path. Until
+then, a template promising them would create a rule that never fires, which is worse than not
+offering it.
+
+**Follower history is only what we recorded.** Instagram exposes a follower total and no
+history, so growth begins the day the account was connected, and gross new-vs-unfollowed is not
+derivable from a total at all — only net change is.
+
 ## Environment
 
 macOS + Docker Compose. Public HTTPS via Tailscale Funnel →

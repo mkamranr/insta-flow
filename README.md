@@ -38,7 +38,11 @@ Meta's own rate limits.
 - **Public auto-reply** under the comment, to boost engagement
 - **Follow gate** — require the commenter to follow first, using Meta's official follow check
 - **Email capture** — ask for an address in the DM before sending the link, exportable as CSV
-- **Click tracking** with honest click-through numbers
+- **Deferred delivery** — a gated non-follower who follows later gets the link automatically,
+  inside the 24-hour messaging window their button tap opened
+- **Click tracking** with honest click-through numbers, per link destination
+- **Analytics** — performance, activity log, and follower growth recorded daily
+- **17 starter templates** across five categories, pre-filled and ready to customise
 - "Only send once per person", per-rule rate limits, and a full activity log
 - **Optional local AI** — classify comments by intent with Ollama or vLLM when no keyword matches
 - **Dry-run mode** that exercises the entire pipeline without sending anything
@@ -88,24 +92,28 @@ app, and connect your account from the Instagram page.
 `DRY_RUN=true` is the default. The whole pipeline runs and records executions, but no message
 is ever sent, until you deliberately turn it off.
 
-## Important: Meta requires Advanced Access
+## Important: put the app in Live mode
 
-**Read this before investing time.**
+**Read this before you start.**
 
-Meta does not deliver comment data — by webhook or by API — for comments authored by people
-who do not hold a role on your app. This is a platform restriction, not a limitation of this
-software, and it applies even to accounts you add as Instagram Testers.
+In **Development Mode**, Meta withholds comment content from anyone who does not hold a role on
+your app — through webhooks *and* the read API, even for accounts you add as Instagram Testers.
+`comments_count` goes up and the comment list comes back empty. It looks exactly like a broken
+webhook, and it is not.
 
-Serving comments from your real audience therefore requires **Advanced Access** to
-`instagram_business_manage_comments`, which requires App Review, which requires business
-verification.
+Switching the app to **Live** fixes it. Comments from ordinary followers are then delivered in
+full. **No App Review and no Business Verification are required** to automate an account you own.
 
-The investigation behind that conclusion — every hypothesis tested and how each was ruled out
-— is recorded in [`docs/meta-api.md`](docs/meta-api.md) §7. It is worth reading first if you
-are considering deploying this.
+Live mode requires *App Settings → Basic* to be complete: Privacy Policy URL, Terms of Service
+URL, App Icon, and Data Deletion Instructions URL.
 
-Everything else works and is fully tested. The software is ready the day that access is
-granted.
+An earlier version of this project concluded that Advanced Access was required. That was wrong —
+Development Mode was a confound held constant across every experiment. The full investigation,
+the correction, and a Development-vs-Live comparison are in
+[`docs/meta-api.md`](docs/meta-api.md) §7.
+
+Advanced Access is only needed to serve *other people's* Instagram accounts, i.e. to run this as
+a service for clients.
 
 ## Documentation
 
@@ -129,9 +137,10 @@ rather than worked around.
 
 ## Tests
 
-449 tests covering keyword matching, template rendering, policy decisions, webhook signature
+494 tests covering keyword matching, template rendering, policy decisions, webhook signature
 validation, idempotency under concurrency, token encryption, retry semantics, and the AI
-classifier's prompt-injection resistance. Meta is never contacted in tests.
+classifier's prompt-injection resistance, the follow gate, and deferred delivery after a
+follow. Meta is never contacted in tests.
 
 ```bash
 make test    # backend suite
@@ -140,7 +149,11 @@ make lint    # ruff + mypy
 
 ## Status
 
-Feature-complete and tested. Parked pending Meta Advanced Access — see the section above.
+**Working end to end against real traffic.** Comments from accounts with no role on the app are
+delivered, matched, and answered; the follow gate holds; links are tracked.
+
+Known gap: story reactions and inbound-DM keywords are not triggers yet — the rule engine is
+comment-driven. See [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 ## License
 

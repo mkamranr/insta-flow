@@ -1,27 +1,46 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { listPosts, STARTER_TEMPLATES, TEMPLATE_GROUPS, type Post, type Rule } from '../api/rules'
+import { Avatar } from '../components/common/Avatar'
 import { RuleEditor } from '../components/rules/RuleEditor'
 
 const BLURB: Record<string, string> = {
   Popular: 'The templates most creators start with.',
   'Sell & earn': 'Send links to products you sell or promote.',
   'Engage audience': 'Say thanks and start conversations.',
+  'Capture leads': 'Collect emails and share free guides.',
+  'Book clients': 'Send booking links and portfolios.',
 }
 
 export function Templates() {
   const { data: posts } = useQuery({ queryKey: ['posts'], queryFn: listPosts, retry: false })
   const [chosen, setChosen] = useState<Partial<Rule> | null>(null)
   const [target, setTarget] = useState<Post | null>(null)
+  const [filter, setFilter] = useState<string>('All')
+
+  const groups = TEMPLATE_GROUPS.filter((g) => filter === 'All' || g === filter)
 
   return (
     <>
-      <h1>Templates</h1>
+      <h1>Automation templates</h1>
       <p className="muted">
-        Start from a proven setup, then change the keywords and message to suit you.
+        Pre-filled automations to get you started. Pick one, customise the message and link,
+        then go live.
       </p>
 
-      {TEMPLATE_GROUPS.map((group) => (
+      <div className="filters" style={{ marginTop: 18 }}>
+        {['All', ...TEMPLATE_GROUPS].map((name) => (
+          <button
+            key={name}
+            className={filter === name ? 'filter active' : 'filter'}
+            onClick={() => setFilter(name)}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+
+      {groups.map((group) => (
         <section className="section" key={group}>
           <h2>{group}</h2>
           <p className="muted small" style={{ marginBottom: 14 }}>
@@ -35,12 +54,15 @@ export function Templates() {
                 onClick={() => setChosen(template.rule)}
               >
                 <strong>{template.title}</strong>
-                <span className="muted small">{template.blurb}</span>
+                <span className="muted small tpl-blurb">{template.blurb}</span>
 
                 <span className="tpl-preview">
                   <span className="tpl-comment">
-                    <span className="tpl-avatar" />
-                    {template.example.comment}
+                    <Avatar name={template.example.username} size={26} />
+                    <span className="tpl-comment-text">
+                      <span className="tpl-handle">{template.example.username}</span>
+                      <span>{template.example.comment}</span>
+                    </span>
                   </span>
                   <span className="tpl-reply">
                     {template.example.reply}

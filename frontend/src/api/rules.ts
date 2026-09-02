@@ -87,13 +87,19 @@ export interface StarterTemplate {
   id: string
   title: string
   blurb: string
-  group: 'Popular' | 'Sell & earn' | 'Engage audience'
+  group: (typeof TEMPLATE_GROUPS)[number]
   /** The example exchange shown in the gallery. */
-  example: { comment: string; reply: string; button?: string }
+  example: { username: string; comment: string; reply: string; button?: string }
   rule: Partial<Rule>
 }
 
-export const TEMPLATE_GROUPS = ['Popular', 'Sell & earn', 'Engage audience'] as const
+export const TEMPLATE_GROUPS = [
+  'Popular',
+  'Sell & earn',
+  'Engage audience',
+  'Capture leads',
+  'Book clients',
+] as const
 
 export const STARTER_TEMPLATES: StarterTemplate[] = [
   {
@@ -101,7 +107,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Send link on keyword',
     blurb: 'Someone comments "LINK" → they get your link in DMs.',
     group: 'Popular',
-    example: { comment: 'Need the LINK please!', reply: "Here's your link!", button: 'Shop the look' },
+    example: { username: 'mia.styles', comment: 'Need the LINK please!', reply: "Here's your link!", button: 'Shop the look' },
     rule: {
       name: 'Send link on keyword',
       keywords: ['link'],
@@ -114,7 +120,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Require follow before link',
     blurb: 'Ask them to follow you first. Grow your audience with every link.',
     group: 'Popular',
-    example: { comment: 'LINK please!', reply: 'Follow me first!', button: "I'm following" },
+    example: { username: 'alex.fits', comment: 'LINK please!', reply: 'Follow me first!', button: "I'm following" },
     rule: {
       name: 'Require follow before link',
       keywords: ['link'],
@@ -131,7 +137,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Two-step with an opening DM',
     blurb: 'Send a friendly opener with a button, then the link once they tap.',
     group: 'Popular',
-    example: { comment: 'LINK', reply: "So happy you're here 😊", button: 'Send me the link' },
+    example: { username: 'new.follower', comment: 'LINK', reply: "So happy you're here 😊", button: 'Send me the link' },
     rule: {
       name: 'Two-step link',
       keywords: ['link'],
@@ -149,7 +155,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Send discount codes',
     blurb: 'Someone comments "CODE" → they get an exclusive discount in DMs.',
     group: 'Sell & earn',
-    example: { comment: 'Drop the CODE!', reply: "Here's 20% off just for you!", button: 'SAVE20' },
+    example: { username: 'deal.hunter', comment: 'Drop the CODE!', reply: "Here's 20% off just for you!", button: 'SAVE20' },
     rule: {
       name: 'Send discount codes',
       keywords: ['code', 'discount'],
@@ -162,7 +168,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Promote your products',
     blurb: 'Someone comments "BUY" → they get your product page instantly.',
     group: 'Sell & earn',
-    example: { comment: 'How do I BUY this?', reply: "Here's the product page!", button: 'Shop now' },
+    example: { username: 'love.it', comment: 'How do I BUY this?', reply: "Here's the product page!", button: 'Shop now' },
     rule: {
       name: 'Promote your products',
       keywords: ['buy', 'shop'],
@@ -175,7 +181,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Share pricing info',
     blurb: 'Someone comments "PRICE" → they get your rates or packages.',
     group: 'Sell & earn',
-    example: { comment: "What's the PRICE?", reply: 'Here are my packages!', button: 'View pricing' },
+    example: { username: 'curious.client', comment: "What's the PRICE?", reply: 'Here are my packages!', button: 'View pricing' },
     rule: {
       name: 'Share pricing info',
       keywords: ['price', 'pricing', 'rates'],
@@ -188,7 +194,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Share affiliate links',
     blurb: 'Auto-send your LTK, Amazon, or ShopMy links on a keyword.',
     group: 'Sell & earn',
-    example: { comment: "Where's the LINK?", reply: "Here's my LTK link!", button: 'Shop on LTK' },
+    example: { username: 'shopper.sam', comment: "Where's the LINK?", reply: "Here's my LTK link!", button: 'Shop on LTK' },
     rule: {
       name: 'Share affiliate links',
       keywords: ['link', 'where'],
@@ -201,7 +207,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Thank commenters',
     blurb: 'Someone comments a keyword → send a thank you DM automatically.',
     group: 'Engage audience',
-    example: { comment: 'Love this! AMAZING content!', reply: 'Thanks so much! Means a lot 😊' },
+    example: { username: 'fan.account', comment: 'Love this! AMAZING content!', reply: 'Thanks so much! Means a lot 😊' },
     rule: {
       name: 'Thank commenters',
       keywords: ['love', 'amazing'],
@@ -213,13 +219,157 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     title: 'Reply publicly too',
     blurb: 'Answer in the comments as well as the DM, to boost engagement.',
     group: 'Engage audience',
-    example: { comment: 'LINK!', reply: 'Just sent you a DM! 📩' },
+    example: { username: 'public.pam', comment: 'LINK!', reply: 'Just sent you a DM! 📩' },
     rule: {
       name: 'DM plus public reply',
       keywords: ['link'],
       message: "Here's the link!",
       buttons: [{ title: 'Open', url: 'https://example.com' }],
       public_reply: { enabled: true, message: 'Just sent you a DM! 📩' },
+    },
+  },
+  {
+    id: 'start-conversations',
+    title: 'Start conversations',
+    blurb: 'Someone comments a keyword → start a real conversation in DMs.',
+    group: 'Engage audience',
+    example: {
+      username: 'curious.chris',
+      comment: 'Tell me MORE about this!',
+      reply: 'Hey! What would you like to know?',
+      button: 'Chat',
+    },
+    rule: {
+      name: 'Start conversations',
+      keywords: ['more', 'info', 'tell me'],
+      message: 'Hey! What would you like to know? Just reply here and I will get back to you.',
+    },
+  },
+  {
+    id: 'lead-magnet',
+    title: 'Deliver lead magnets',
+    blurb: 'Someone comments "FREE" → they get your PDF, checklist, or guide.',
+    group: 'Capture leads',
+    example: {
+      username: 'fitcoach.mike',
+      comment: 'I need the FREE guide!',
+      reply: 'Your free guide is ready!',
+      button: 'Download PDF',
+    },
+    rule: {
+      name: 'Deliver lead magnets',
+      keywords: ['free', 'guide', 'checklist'],
+      message: 'Your free guide is ready — grab it below!',
+      buttons: [{ title: 'Download PDF', url: 'https://example.com/guide.pdf' }],
+    },
+  },
+  {
+    id: 'collect-emails',
+    title: 'Collect emails first',
+    blurb: 'Someone comments "GUIDE" → ask for their email, then send the content.',
+    group: 'Capture leads',
+    example: {
+      username: 'eager.emma',
+      comment: 'Send me the GUIDE!',
+      reply: "Drop your email and I'll send it!",
+      button: 'Send email',
+    },
+    rule: {
+      name: 'Collect emails first',
+      keywords: ['guide'],
+      message: 'Thanks! Here is the guide you asked for.',
+      buttons: [{ title: 'Open guide', url: 'https://example.com/guide' }],
+      collect_email: { enabled: true, prompt: "Drop your email and I'll send it straight over!" },
+    },
+  },
+  {
+    id: 'waitlist',
+    title: 'Grow your waitlist',
+    blurb: 'Someone comments "WAITLIST" → they get your signup link.',
+    group: 'Capture leads',
+    example: {
+      username: 'hyped.hannah',
+      comment: 'Add me to the WAITLIST!',
+      reply: "You're in! Here's the waitlist:",
+      button: 'Join waitlist',
+    },
+    rule: {
+      name: 'Grow your waitlist',
+      keywords: ['waitlist', 'early access'],
+      message: "You're in! Join the waitlist here and I'll let you know the moment it opens.",
+      buttons: [{ title: 'Join waitlist', url: 'https://example.com/waitlist' }],
+    },
+  },
+  {
+    id: 'booking-links',
+    title: 'Send booking links',
+    blurb: 'Someone comments "BOOK" → they get your Calendly or booking page.',
+    group: 'Book clients',
+    example: {
+      username: 'busy.brand',
+      comment: 'Can I BOOK a call?',
+      reply: 'Pick a time that works!',
+      button: 'Book now',
+    },
+    rule: {
+      name: 'Send booking links',
+      keywords: ['book', 'call', 'consult'],
+      message: 'Pick a time that works for you and I will see you there.',
+      buttons: [{ title: 'Book now', url: 'https://calendly.com/example' }],
+    },
+  },
+  {
+    id: 'portfolio',
+    title: 'Share your portfolio',
+    blurb: 'Someone comments "WORK" → they get your portfolio link in DMs.',
+    group: 'Book clients',
+    example: {
+      username: 'potential.client',
+      comment: 'Show me your WORK!',
+      reply: "Here's my portfolio!",
+      button: 'View portfolio',
+    },
+    rule: {
+      name: 'Share your portfolio',
+      keywords: ['work', 'portfolio'],
+      message: "Here's my portfolio — have a look and tell me what you think!",
+      buttons: [{ title: 'View portfolio', url: 'https://example.com/portfolio' }],
+    },
+  },
+  {
+    id: 'webinars',
+    title: 'Promote webinars',
+    blurb: 'Someone comments "REGISTER" → they get your webinar signup link.',
+    group: 'Book clients',
+    example: {
+      username: 'want.to.learn',
+      comment: 'I want to REGISTER!',
+      reply: "You're in! Here's the link:",
+      button: 'Register now',
+    },
+    rule: {
+      name: 'Promote webinars',
+      keywords: ['register', 'webinar'],
+      message: "You're in! Register here and I'll send the reminder.",
+      buttons: [{ title: 'Register now', url: 'https://example.com/webinar' }],
+    },
+  },
+  {
+    id: 'share-content',
+    title: 'Share your content',
+    blurb: 'Someone comments "VIDEO" → they get your YouTube or podcast link.',
+    group: 'Book clients',
+    example: {
+      username: 'viewer.vic',
+      comment: 'Send me the VIDEO!',
+      reply: "Here's the full video!",
+      button: 'Watch on YouTube',
+    },
+    rule: {
+      name: 'Share your content',
+      keywords: ['video', 'episode', 'podcast'],
+      message: "Here's the full version — enjoy!",
+      buttons: [{ title: 'Watch now', url: 'https://youtube.com/@example' }],
     },
   },
 ]

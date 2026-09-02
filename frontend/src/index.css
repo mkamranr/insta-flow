@@ -319,12 +319,19 @@ button.chip.chip-on { background: var(--accent); color: var(--accent-text); font
 
 /* ---------- templates ---------- */
 
-.template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 12px; }
+.template-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(235px, 1fr)); gap: 12px;
+  /* Every card the same height, not just the ones sharing a row. Without this
+     a two-line blurb makes its whole row taller than the next one. */
+  grid-auto-rows: 1fr;
+}
 .template-card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 15px; text-align: left;
+  border-radius: var(--radius); padding: 16px; text-align: left;
   display: flex; flex-direction: column; gap: 6px;
   color: var(--text); font-weight: 400;
+  /* Cards hold real prose; the global button nowrap would keep it on one line. */
+  white-space: normal; height: 100%;
   /* These cards are <button>s, and the global button rule sets nowrap — which
      makes the blurb run straight out of the card. */
   white-space: normal;
@@ -551,17 +558,27 @@ button.nav-toggle:hover { background: var(--surface-alt); color: var(--text); }
 /* ---------- template previews ---------- */
 .tpl-preview {
   display: flex; flex-direction: column; gap: 7px;
-  margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border);
+  /* Pin the example to the bottom so the previews line up across a row. */
+  margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);
 }
 .tpl-comment {
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 7px 10px;
   font-size: 12px; color: var(--muted); min-width: 0;
 }
 .tpl-comment { overflow-wrap: anywhere; }
-.tpl-avatar {
-  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
-  background: linear-gradient(135deg, #f9ce34, #ee2a7b, #6228d7);
+.avatar { flex: none; border-radius: 50%; display: block; }
+
+/* Two lines of blurb, always. Clamping is what actually equalises the cards --
+   grid-auto-rows alone would just stretch the short ones. */
+.tpl-blurb {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; min-height: 2.9em; line-height: 1.45;
 }
+
+.tpl-comment-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tpl-handle { font-weight: 700; color: var(--text); }
 .tpl-reply {
   align-self: flex-start; margin-left: 16px; max-width: calc(100% - 16px);
   background: var(--surface-alt); border: 1px solid var(--border);
