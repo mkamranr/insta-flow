@@ -1,4 +1,5 @@
 import { AccountAvatar } from '../common/AccountAvatar'
+import { ThemeToggle } from '../common/ThemeToggle'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
@@ -193,6 +194,7 @@ export function Layout() {
             </div>
           </div>
 
+          <ThemeToggle />
           <button className="link full" onClick={() => signOut.mutate()}>
             Sign out
           </button>
