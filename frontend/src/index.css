@@ -1394,3 +1394,15 @@ button.start-card:hover:not(:disabled) {
 .sketch-line.short { width: 55%; }
 
 .start-foot { justify-content: center; }
+
+/* -- Disclosure preview ---------------------------------------------------- */
+
+/* Shows the blank-line separation the worker actually inserts, so the wording
+   is judged in place rather than as a bare input value. */
+.disclosure-preview {
+  display: flex; flex-direction: column; gap: 10px;
+  margin: 12px 0; padding: 12px 14px;
+  background: var(--surface-alt); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 13px;
+}
+.disclosure-line { color: var(--text); }

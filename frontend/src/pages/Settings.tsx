@@ -15,6 +15,97 @@ function Row({ label, value, hint }: { label: string; value: React.ReactNode; hi
   )
 }
 
+interface DisclosureSettings {
+  enabled: boolean
+  text: string
+}
+
+function DisclosureCard() {
+  const queryClient = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['disclosure'],
+    queryFn: () => apiGet<DisclosureSettings>('/api/settings/disclosure'),
+  })
+  const [draft, setDraft] = useState<DisclosureSettings | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  // The server is the source of truth until the operator types; seeding state
+  // from `data` in an effect would fight the query on every refetch.
+  const current = draft ?? data ?? { enabled: true, text: '' }
+  const dirty = draft !== null && data !== undefined &&
+    (draft.enabled !== data.enabled || draft.text !== data.text)
+
+  const edit = (patch: Partial<DisclosureSettings>) => {
+    setSaved(false)
+    setDraft({ ...current, ...patch })
+  }
+
+  const save = useMutation({
+    mutationFn: () => apiPut('/api/settings/disclosure', current),
+    onSuccess: () => {
+      setDraft(null)
+      setSaved(true)
+      queryClient.invalidateQueries({ queryKey: ['disclosure'] })
+    },
+  })
+
+  return (
+    <div className="card">
+      <h2>Automated-experience disclosure</h2>
+      <p className="muted small">
+        Meta requires telling people in California and Germany that they are talking to
+        automation. The obligation is yours, so the wording is too — but silence is the wrong
+        default, so this starts switched on.
+      </p>
+
+      <label className="inline">
+        <input
+          type="checkbox"
+          checked={current.enabled}
+          onChange={(e) => edit({ enabled: e.target.checked })}
+        />
+        Add a disclosure line to automated replies
+      </label>
+
+      <label htmlFor="disclosure-text">Wording</label>
+      <input
+        id="disclosure-text"
+        maxLength={200}
+        value={current.text}
+        disabled={!current.enabled}
+        placeholder="Automated reply."
+        onChange={(e) => edit({ text: e.target.value })}
+      />
+      <p className="muted small">
+        {current.text.length}/200 · Appended after a blank line. Leaving it empty uses
+        &ldquo;Automated reply.&rdquo;
+      </p>
+
+      {current.enabled && (
+        <div className="disclosure-preview">
+          <span className="muted small">Your message</span>
+          <span className="disclosure-line">{current.text.trim() || 'Automated reply.'}</span>
+        </div>
+      )}
+
+      <p className="muted small">
+        Applied to story-reply and DM-keyword replies. Replies to comments do not carry it: a
+        private reply is one message capped at 160 characters when it has buttons, so appending
+        a line there could split a send Meta only allows once.
+      </p>
+
+      <div className="row">
+        <button disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
+          {save.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+
+      {save.error && <p className="err small">{(save.error as Error).message}</p>}
+      {saved && !save.error && <p className="ok small">Saved.</p>}
+    </div>
+  )
+}
+
 interface GeoIpStatus {
   configured: boolean
   account_id?: string | null
@@ -183,6 +274,8 @@ export function Settings() {
           up — Compose reads <code>env_file</code> when a container is created, not restarted.
         </p>
       </div>
+
+      <DisclosureCard />
 
       <div className="card">
         <h2>Services</h2>
