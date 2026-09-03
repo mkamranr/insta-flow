@@ -10,6 +10,7 @@ import type { ReadyResponse } from '../../types/health'
 import {
   ActivityIcon,
   AnalyticsIcon,
+  ChevronDownIcon,
   AutomationIcon,
   ContactsIcon,
   HomeIcon,
@@ -116,7 +117,9 @@ export function Layout() {
                 <PostsIcon />
               </span>
               My content
-              <span className="nav-chevron">{contentOpen ? '▾' : '▸'}</span>
+              <span className={contentOpen ? 'nav-chevron open' : 'nav-chevron'}>
+                <ChevronDownIcon />
+              </span>
             </button>
             {contentOpen && (
               <div className="nav-sub">
@@ -139,7 +142,9 @@ export function Layout() {
                 <ActivityIcon />
               </span>
               Analytics
-              <span className="nav-chevron">{analyticsNavOpen ? '▾' : '▸'}</span>
+              <span className={analyticsNavOpen ? 'nav-chevron open' : 'nav-chevron'}>
+                <ChevronDownIcon />
+              </span>
             </button>
             {analyticsNavOpen && (
               <div className="nav-sub">

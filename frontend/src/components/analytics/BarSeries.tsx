@@ -31,7 +31,11 @@ export function BarSeries({
 }) {
   const [hovered, setHovered] = useState<Bucket | null>(null)
 
-  if (data.length === 0) return <p className="muted small">{emptyNote}</p>
+  // Zero-filled buckets mean `data` is never empty, so "nothing happened" has to
+  // be judged on the total. Reporting "peak 0 at 07 PM" is worse than silence.
+  if (data.length === 0 || data.every((point) => point.count === 0)) {
+    return <p className="muted small">{emptyNote}</p>
+  }
 
   const peak = Math.max(...data.map((point) => point.count), 1)
   const total = data.reduce((sum, point) => sum + point.count, 0)
@@ -54,7 +58,9 @@ export function BarSeries({
             key={point.bucket}
             type="button"
             className={hovered?.bucket === point.bucket ? 'bar hovered' : 'bar'}
-            style={{ height: `${Math.max((point.count / peak) * 100, 2)}%` }}
+            // A zero bucket draws nothing. Giving it a minimum height would
+            // paint a floor of ghost bars across every quiet hour.
+            style={{ height: point.count === 0 ? 0 : `${Math.max((point.count / peak) * 100, 3)}%` }}
             onMouseEnter={() => setHovered(point)}
             onFocus={() => setHovered(point)}
             aria-label={`${label(point.bucket, byHour)}: ${point.count}`}

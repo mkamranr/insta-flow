@@ -281,3 +281,39 @@ async def test_the_two_step_flow_counts_a_comment_once(signed_in, database, admi
 
     assert post["keyword_comments"] == 2
     assert post["trigger_rate"] == 100.0
+
+
+# -- trend buckets -----------------------------------------------------------
+
+
+def test_the_trend_series_fills_in_empty_buckets():
+    """Six busy hours across two days must not render as six adjacent bars.
+
+    `$group` only emits buckets that have data. Charted raw, scattered activity
+    looks like one continuous run — the axis stops meaning anything.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.api.analytics import _densify
+
+    since = datetime.now(UTC) - timedelta(hours=5)
+    sparse = [{"bucket": since.strftime("%Y-%m-%dT%H:00"), "count": 3}]
+
+    filled = _densify(sparse, since, by_hour=True)
+
+    assert len(filled) >= 5, "every hour in the window is present"
+    assert filled[0]["count"] == 3
+    assert all(row["count"] == 0 for row in filled[1:]), "quiet hours are zeros, not gaps"
+    assert [row["bucket"] for row in filled] == sorted(row["bucket"] for row in filled)
+
+
+def test_densify_handles_a_completely_empty_series():
+    from datetime import UTC, datetime, timedelta
+
+    from app.api.analytics import _densify
+
+    since = datetime.now(UTC) - timedelta(days=2)
+    filled = _densify([], since, by_hour=False)
+
+    assert len(filled) >= 2
+    assert all(row["count"] == 0 for row in filled)

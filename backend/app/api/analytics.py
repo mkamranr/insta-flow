@@ -253,6 +253,31 @@ async def top_commenters(
     ]
 
 
+def _densify(rows: list[dict[str, Any]], since: datetime, by_hour: bool) -> list[dict[str, Any]]:
+    """Fill in the buckets that had nothing in them.
+
+    `$group` only emits buckets that exist, so six busy hours spread across two
+    days come back as six rows. Charted as-is they render side by side and read
+    as six continuous periods of activity, which is not what happened. Zero-fill
+    makes the x-axis mean something.
+    """
+    found = {row["bucket"]: row["count"] for row in rows}
+    step = timedelta(hours=1) if by_hour else timedelta(days=1)
+    fmt = "%Y-%m-%dT%H:00" if by_hour else "%Y-%m-%d"
+
+    cursor = since.replace(minute=0, second=0, microsecond=0)
+    if not by_hour:
+        cursor = cursor.replace(hour=0)
+
+    now = datetime.now(UTC)
+    out: list[dict[str, Any]] = []
+    while cursor <= now:
+        key = cursor.strftime(fmt)
+        out.append({"bucket": key, "count": found.get(key, 0)})
+        cursor += step
+    return out
+
+
 @router.get("/trends")
 async def trends(
     user: CurrentUser,
@@ -277,8 +302,14 @@ async def trends(
         "connected": True,
         "days": days,
         "bucket": bucket,
-        "dms": await executions.series(account_id, since, SENT_ACTIONS, by_hour=by_hour),
-        "clicks": await events.series(account_id, since, by_hour=by_hour),
+        "dms": _densify(
+            await executions.series(account_id, since, SENT_ACTIONS, by_hour=by_hour),
+            since,
+            by_hour,
+        ),
+        "clicks": _densify(
+            await events.series(account_id, since, by_hour=by_hour), since, by_hour
+        ),
     }
 
 

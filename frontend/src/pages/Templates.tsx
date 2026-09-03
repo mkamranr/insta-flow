@@ -1,3 +1,4 @@
+import { CloseIcon } from '../components/icons/Icons'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { listPosts, STARTER_TEMPLATES, TEMPLATE_GROUPS, type Post, type Rule } from '../api/rules'
@@ -83,7 +84,7 @@ export function Templates() {
             <header className="modal-head">
               <h2>Which post?</h2>
               <button className="link" onClick={() => setChosen(null)} aria-label="Close">
-                ×
+                <CloseIcon />
               </button>
             </header>
             <div className="modal-body">

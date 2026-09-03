@@ -1,3 +1,4 @@
+import { CloseIcon } from '../icons/Icons'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { getRulePerformance, getSummary } from '../../api/analytics'
@@ -42,7 +43,7 @@ export function AnalyticsDrawer({ open, onClose }: { open: boolean; onClose: () 
             ))}
           </div>
           <button className="link" onClick={onClose} aria-label="Close">
-            ×
+            <CloseIcon />
           </button>
         </header>
 

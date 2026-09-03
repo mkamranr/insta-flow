@@ -1,35 +1,89 @@
 /* Social Flow — light theme with a lime accent, following the reference UI. */
 
 :root {
-  --bg: #ffffff;
-  --page: #ffffff;
-  --surface: #ffffff;
-  --surface-alt: #fafaf9;
-  --border: #e7e7e4;
-  --border-strong: #d8d8d4;
+  /* ---------- neutral ramp ----------
+     One cool-grey ramp everything else is built from, so surfaces, borders and
+     text are steps on a single scale rather than seven unrelated greys. */
+  --n-0:   #ffffff;
+  --n-25:  #fcfcfd;
+  --n-50:  #f7f8f9;
+  --n-100: #eff1f3;
+  --n-200: #e3e6ea;
+  --n-300: #cfd4db;
+  --n-500: #68717f;
+  --n-600: #5b6675;
+  --n-800: #272c34;
+  --n-900: #0d1117;
 
-  --text: #16181d;
-  --muted: #6f7480;
-  --faint: #9ca3af;
+  /* ---------- surfaces ---------- */
+  --bg: var(--n-25);
+  --page: var(--n-25);
+  --surface: var(--n-0);
+  --surface-alt: var(--n-50);
+  --surface-sunken: var(--n-100);
+  --border: var(--n-200);
+  --border-strong: var(--n-300);
 
-  --accent: #d7f24f;          /* lime CTA */
+  /* ---------- text ----------
+     Every value here clears 4.5:1 on both --surface and --surface-alt. The old
+     --faint was 2.54:1 and was carrying chart axes and small labels. */
+  --text: var(--n-900);
+  --muted: var(--n-600);
+  --faint: var(--n-500);
+
+  /* ---------- brand ----------
+     Lime is the identity, but it is 1.26:1 on white — usable as a fill behind
+     dark text and never as text, a border, or a data mark. */
+  --accent: #d7f24f;
   --accent-hover: #cbe93c;
   --accent-text: #16181d;
 
-  --dark: #16181d;            /* primary pill */
-  --dark-hover: #2a2e37;
+  --dark: #1a1d23;
+  --dark-hover: #2b313a;
 
-  --ok: #0f9d58;
-  --ok-bg: #eaf7ef;
-  --warn: #8a6d1a;
-  --warn-bg: #fdf6e3;
-  --warn-border: #f0e2b6;
-  --err: #c5221f;
-  --err-bg: #fdeceb;
+  /* ---------- status ---------- */
+  --ok: #0a7f4f;
+  --ok-bg: #eaf7f0;
+  --warn: #8a5a00;
+  --warn-bg: #fef4e6;
+  --warn-border: #f6e2bd;
+  --err: #b42318;
+  --err-bg: #fdecea;
 
-  --radius: 14px;
+  /* ---------- spacing ----------
+     Dashboard density: a 4px base, capped at 32px. */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+
+  /* ---------- shape ---------- */
+  --radius-xs: 6px;
   --radius-sm: 9px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --radius: 12px;
+  --radius-lg: 16px;
+
+  /* ---------- elevation ----------
+     Two soft layers rather than one hard one: a tight contact shadow plus a
+     wider ambient one is what reads as depth instead of as a border. */
+  --shadow-xs: 0 1px 2px rgba(13, 17, 23, 0.05);
+  --shadow: 0 1px 2px rgba(13, 17, 23, 0.04), 0 2px 6px rgba(13, 17, 23, 0.05);
+  --shadow-md: 0 2px 4px rgba(13, 17, 23, 0.04), 0 8px 20px rgba(13, 17, 23, 0.07);
+  --shadow-lg: 0 8px 16px rgba(13, 17, 23, 0.06), 0 24px 56px rgba(13, 17, 23, 0.12);
+
+  /* ---------- motion ----------
+     Subtle tier: quick enough to feel like feedback, short enough not to queue. */
+  --ease: cubic-bezier(0.2, 0, 0.1, 1);
+  --t-fast: 120ms;
+  --t: 180ms;
+
+  /* ---------- focus ----------
+     A visible ring is an accessibility requirement, not a style choice; the
+     offset keeps it legible against a filled control. */
+  --ring: 0 0 0 2px var(--surface), 0 0 0 4px rgba(26, 29, 35, 0.55);
+
   color-scheme: light;
 }
 
@@ -939,9 +993,16 @@ button.delay-opt.active { background: var(--surface-alt); font-weight: 800; }
 }
 button.bar {
   flex: 1 1 0; min-width: 0; padding: 0; border: none; border-radius: 2px 2px 0 0;
-  background: var(--dark); opacity: 0.82; transition: opacity .1s;
+  background: var(--dark); opacity: 0.78;
+  transition: opacity var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  /* Zero-height bars still occupy their slot, which is what keeps the x-axis
+     evenly spaced; they just draw nothing. */
+  align-self: flex-end;
 }
-button.bar:hover:not(:disabled), button.bar.hovered { background: var(--dark); opacity: 1; }
+button.bar:hover:not(:disabled), button.bar.hovered { opacity: 1; }
+/* A generous invisible hit area: a 2px bar is impossible to point at. */
+.bars-plot { position: relative; }
+button.bar::after { content: ''; position: absolute; inset-block: 0; width: inherit; }
 .bars-axis {
   display: flex; justify-content: space-between;
   font-size: 11px; color: var(--faint); font-weight: 600;
@@ -996,3 +1057,106 @@ button.nav-toggle.open .nav-chevron { opacity: 0.9; }
 }
 .empty-state { text-align: center; padding: 34px 16px; }
 .empty-title { margin: 0 0 4px; font-weight: 600; }
+
+/* ===========================================================================
+   Polish pass
+   Applied against the ui-ux-pro-max pre-delivery checklist: visible focus,
+   smooth 150-300ms hover transitions, no emoji as icons, pointer cursors,
+   reduced-motion honoured, 4.5:1 text contrast.
+   =========================================================================== */
+
+/* ---------- focus ----------
+   `:focus-visible`, not `:focus`, so a mouse click does not leave a ring
+   behind but a keyboard user is never lost. Removing the ring outright is the
+   single most common accessibility regression in a dashboard. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--radius-xs);
+}
+
+/* ---------- motion ----------
+   Honour the OS setting. Anything left is instant rather than removed, so
+   nothing depends on a transition having run. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- typography ----------
+   A real scale. Headings were all near the same size, which left every page
+   reading as one flat list. */
+body { background: var(--page); color: var(--text); line-height: 1.55; }
+h1 { font-size: 25px; line-height: 1.2; letter-spacing: -0.02em; font-weight: 750; }
+h2 { font-size: 17px; line-height: 1.3; letter-spacing: -0.01em; font-weight: 700; }
+h3 { font-size: 14px; line-height: 1.35; font-weight: 700; }
+.small { font-size: 12.5px; }
+.muted { color: var(--muted); }
+
+/* Numbers in a column must line up, or the eye cannot compare them. */
+.stat-value, .link-metric-value, .place-count, .auto-ctr-value, .numeric {
+  font-variant-numeric: tabular-nums;
+}
+.stat-value { font-size: 27px; font-weight: 750; letter-spacing: -0.02em; }
+.stat-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em;
+  text-transform: uppercase; color: var(--faint);
+}
+
+/* ---------- surfaces ---------- */
+.card {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--t) var(--ease);
+}
+.stat {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow var(--t) var(--ease), border-color var(--t) var(--ease);
+}
+.stat:hover { box-shadow: var(--shadow); border-color: var(--border-strong); }
+.modal { border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.modal-foot { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+
+/* ---------- controls ---------- */
+button, .btn { transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease); }
+button:not(:disabled), a, [role="tab"], summary { cursor: pointer; }
+button.cta { box-shadow: var(--shadow-xs); }
+button.cta:hover:not(:disabled) { box-shadow: var(--shadow); }
+
+/* 44x44 is the documented minimum touch target; padding gets these there
+   without changing how they read. */
+button.filter, button.tab { min-height: 36px; }
+@media (pointer: coarse) {
+  button, .btn, .nav a, button.filter, button.tab { min-height: 44px; }
+}
+
+input, textarea, select { transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
+
+/* ---------- tables ----------
+   A hairline header and a hover row are what make a long table scannable. */
+.table th {
+  font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--faint); font-weight: 700;
+}
+.table tbody tr { transition: background var(--t-fast) var(--ease); }
+.table-card { border-radius: var(--radius-lg); }
+
+/* ---------- sidebar ---------- */
+.sidebar { background: var(--surface); border-right: 1px solid var(--border); }
+.nav a, button.nav-toggle { transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+
+/* ---------- chrome ---------- */
+.dm-phone { box-shadow: var(--shadow-md); }
+.auto-card { transition: background var(--t-fast) var(--ease); }
+
+/* SVG chevron rotates rather than swapping a glyph, so the state change is
+   continuous instead of a jump. */
+.nav-chevron { margin-left: auto; display: flex; color: var(--faint); }
+.nav-chevron.open { transform: rotate(180deg); }
+.dm-cta { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.dm-back { display: flex; color: var(--muted); }

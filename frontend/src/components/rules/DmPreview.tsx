@@ -1,3 +1,4 @@
+import { ChevronLeftIcon, GlobeIcon } from '../icons/Icons'
 import { AccountAvatar } from '../common/AccountAvatar'
 import type { Attachment, Rule } from '../../api/rules'
 
@@ -85,7 +86,9 @@ export function DmPreview({
     <div className="dm-preview">
       <div className="dm-phone">
         <header className="dm-head">
-          <span className="dm-back" aria-hidden="true">‹</span>
+          <span className="dm-back" aria-hidden="true">
+            <ChevronLeftIcon />
+          </span>
           <AccountAvatar className="dm-face" url={avatarUrl} name={account} size={22} />
           <strong>{account ?? 'your.account'}</strong>
         </header>
@@ -124,7 +127,8 @@ export function DmPreview({
                 <p>{fill(draft.message)}</p>
                 {buttons.map((button) => (
                   <span className="dm-cta" key={button.url + button.title}>
-                    🌐 {button.title || 'Open'}
+                    <GlobeIcon />
+                    {button.title || 'Open'}
                   </span>
                 ))}
               </div>

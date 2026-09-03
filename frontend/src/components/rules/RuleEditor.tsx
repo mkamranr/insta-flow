@@ -1,3 +1,4 @@
+import { CloseIcon } from '../icons/Icons'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ApiError } from '../../api/client'
@@ -80,7 +81,7 @@ export function RuleEditor({
             <p className="muted small">{post.caption?.slice(0, 70) || post.instagram_media_id}</p>
           </div>
           <button className="link" onClick={onClose} aria-label="Close">
-            ×
+            <CloseIcon />
           </button>
         </header>
 
