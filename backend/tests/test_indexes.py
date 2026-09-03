@@ -42,8 +42,13 @@ def test_comment_idempotency_index_is_unique_and_compound():
 
 
 def test_execution_reservation_index_is_unique_and_compound():
-    """This is what stops two concurrent workers both sending a private reply."""
-    doc = index_named("executions", "uq_comment_rule_action")
+    """This is what stops two concurrent workers both sending a private reply.
+
+    Renamed to _v2 when it gained a partial filter, so that message-triggered
+    executions -- which have no comment -- could be keyed separately instead of
+    all colliding on a null comment_id.
+    """
+    doc = index_named("executions", "uq_comment_rule_action_v2")
     assert doc["unique"] is True
     assert list(doc["key"]) == ["comment_id", "rule_id", "action"]
 
@@ -72,7 +77,7 @@ async def test_a_renamed_index_is_dropped_on_startup(database):
     """
     from pymongo import ASCENDING
 
-    from app.db.indexes import create_indexes, drop_obsolete_indexes
+    from app.db.indexes import drop_obsolete_indexes
 
     await database["executions"].create_index(
         [("comment_id", ASCENDING), ("campaign_id", ASCENDING), ("action", ASCENDING)],
@@ -85,12 +90,80 @@ async def test_a_renamed_index_is_dropped_on_startup(database):
     assert "executions.uq_comment_campaign_action" in dropped
     assert "uq_comment_campaign_action" not in await database["executions"].index_information()
 
-    # The one we actually want survives.
+
+async def test_startup_creates_the_replacement_before_dropping_its_predecessor(database):
+    """Order matters, and the wrong order is invisible.
+
+    create_indexes() used to drop obsolete indexes FIRST, which on every startup
+    left a window with no unique index on executions at all -- and a create that
+    then failed would leave the system running with no duplicate protection and
+    nothing saying so. Dropping last fails safe.
+    """
+    from pymongo import ASCENDING
+
+    from app.db.indexes import create_indexes
+
+    await database["executions"].create_index(
+        [("comment_id", ASCENDING), ("rule_id", ASCENDING), ("action", ASCENDING)],
+        unique=True,
+        name="uq_comment_rule_action",
+    )
+
     await create_indexes(database)
-    assert "uq_comment_rule_action" in await database["executions"].index_information()
+
+    names = set(await database["executions"].index_information())
+    assert "uq_comment_rule_action" not in names
+    assert {"uq_comment_rule_action_v2", "uq_message_rule_action"} <= names
+
+    # Idempotent: a second startup leaves the same end state.
+    await create_indexes(database)
+    names = set(await database["executions"].index_information())
+    assert "uq_comment_rule_action" not in names
+    assert {"uq_comment_rule_action_v2", "uq_message_rule_action"} <= names
 
 
 async def test_the_cleanup_is_idempotent(database):
     from app.db.indexes import drop_obsolete_indexes
 
     assert await drop_obsolete_indexes(database) == []
+
+
+def test_both_execution_reservation_indexes_are_unique_and_partial():
+    """Partial is the load-bearing word.
+
+    A non-partial unique index treats a missing field as null. If the message
+    index were non-partial, every comment-triggered row would index as
+    (null, rule, action) and the second one would collide -- reserve() returns
+    None, nobody is messaged, and it looks like correct duplicate suppression.
+    """
+    comment = index_named("executions", "uq_comment_rule_action_v2")
+    message = index_named("executions", "uq_message_rule_action")
+
+    assert comment["unique"] is True
+    assert message["unique"] is True
+    assert list(comment["key"]) == ["comment_id", "rule_id", "action"]
+    assert list(message["key"]) == ["trigger_message_id", "rule_id", "action"]
+
+
+def test_the_partial_filters_use_type_not_exists():
+    """`$exists: true` also matches an explicit null.
+
+    One stray `trigger_message_id: None` would then put two rows at
+    (null, rule, action) and break reservations for that rule. `$type` cannot.
+    """
+    comment = index_named("executions", "uq_comment_rule_action_v2")
+    message = index_named("executions", "uq_message_rule_action")
+
+    assert comment["partialFilterExpression"] == {"comment_id": {"$type": "objectId"}}
+    assert message["partialFilterExpression"] == {"trigger_message_id": {"$type": "string"}}
+
+
+def test_the_non_partial_predecessor_is_retired():
+    from app.db.indexes import OBSOLETE_INDEXES
+
+    assert "uq_comment_rule_action" in OBSOLETE_INDEXES["executions"]
+
+
+def test_rules_can_be_looked_up_by_trigger():
+    doc = index_named("rules", "ix_account_trigger_enabled")
+    assert list(doc["key"]) == ["instagram_account_id", "trigger", "enabled", "priority"]

@@ -142,3 +142,163 @@ async def test_unknown_execution_status_is_rejected(database):
     )
     with pytest.raises(ValueError):
         await repo.complete(reservation["_id"], status="sent_probably")
+
+
+# -- the reservation key, after the partial-index change ---------------------
+
+
+async def test_existing_comment_executions_survive_the_index_change(database):
+    """No migration was performed, so old rows must still be protected.
+
+    Every row written before this change has a real ObjectId comment_id, which
+    is exactly what the partial filter selects. If that assumption were wrong,
+    a Meta redelivery of an old comment would send a second DM.
+    """
+    from bson import ObjectId
+
+    from app.db.indexes import create_indexes
+    from app.db.repositories import ExecutionsRepository
+
+    account_id, rule_id, comment_id = ObjectId(), ObjectId(), ObjectId()
+    await database["executions"].insert_one(
+        {
+            "instagram_account_id": account_id,
+            "comment_id": comment_id,
+            "rule_id": rule_id,
+            "action": "private_reply",
+            "status": "success",
+        }
+    )
+
+    await create_indexes(database)
+
+    names = set(await database["executions"].index_information())
+    assert "uq_comment_rule_action" not in names, "the non-partial predecessor is gone"
+    assert {"uq_comment_rule_action_v2", "uq_message_rule_action"} <= names
+
+    repo = ExecutionsRepository(database)
+    again = await repo.reserve(
+        instagram_account_id=account_id,
+        comment_id=comment_id,
+        rule_id=rule_id,
+        action="private_reply",
+        dry_run=False,
+    )
+    assert again is None, "a redelivered old comment must not earn a second reservation"
+
+
+async def test_two_different_messages_on_one_rule_both_reserve(database):
+    """The regression the naive design would have shipped.
+
+    Keyed on a null comment_id these would collide, the second person would
+    silently never be DMed, and it would look like duplicate suppression.
+    """
+    from bson import ObjectId
+
+    from app.db.repositories import ExecutionsRepository
+
+    repo = ExecutionsRepository(database)
+    account_id, rule_id = ObjectId(), ObjectId()
+
+    first = await repo.reserve(
+        instagram_account_id=account_id,
+        trigger_message_id="mid_aaa",
+        rule_id=rule_id,
+        action="direct_message",
+        dry_run=False,
+    )
+    second = await repo.reserve(
+        instagram_account_id=account_id,
+        trigger_message_id="mid_bbb",
+        rule_id=rule_id,
+        action="direct_message",
+        dry_run=False,
+    )
+
+    assert first is not None
+    assert second is not None
+
+
+async def test_the_same_message_reserves_only_once(database):
+    from bson import ObjectId
+
+    from app.db.repositories import ExecutionsRepository
+
+    repo = ExecutionsRepository(database)
+    account_id, rule_id = ObjectId(), ObjectId()
+    kwargs = dict(
+        instagram_account_id=account_id,
+        trigger_message_id="mid_same",
+        rule_id=rule_id,
+        action="direct_message",
+        dry_run=False,
+    )
+
+    assert await repo.reserve(**kwargs) is not None
+    assert await repo.reserve(**kwargs) is None
+
+
+async def test_a_comment_and_a_message_reservation_can_coexist(database):
+    """Different domains, different indexes; neither may block the other."""
+    from bson import ObjectId
+
+    from app.db.repositories import ExecutionsRepository
+
+    repo = ExecutionsRepository(database)
+    account_id, rule_id = ObjectId(), ObjectId()
+
+    by_comment = await repo.reserve(
+        instagram_account_id=account_id,
+        comment_id=ObjectId(),
+        rule_id=rule_id,
+        action="direct_message",
+        dry_run=False,
+    )
+    by_message = await repo.reserve(
+        instagram_account_id=account_id,
+        trigger_message_id="mid_ccc",
+        rule_id=rule_id,
+        action="direct_message",
+        dry_run=False,
+    )
+
+    assert by_comment is not None
+    assert by_message is not None
+
+
+async def test_the_absent_key_is_omitted_rather_than_written_as_null(database):
+    """A null would land the row in the other partial index's null bucket."""
+    from bson import ObjectId
+
+    from app.db.repositories import ExecutionsRepository
+
+    repo = ExecutionsRepository(database)
+    reserved = await repo.reserve(
+        instagram_account_id=ObjectId(),
+        trigger_message_id="mid_ddd",
+        rule_id=ObjectId(),
+        action="direct_message",
+        dry_run=False,
+    )
+
+    row = await database["executions"].find_one({"_id": reserved["_id"]})
+    assert "comment_id" not in row
+
+
+async def test_reserving_with_neither_or_both_keys_is_refused(database):
+    """A row in neither unique index has no duplicate protection at all, and
+    nothing would report that. Refuse loudly instead."""
+    import pytest
+    from bson import ObjectId
+
+    from app.db.repositories import ExecutionsRepository
+
+    repo = ExecutionsRepository(database)
+    base = dict(
+        instagram_account_id=ObjectId(), rule_id=ObjectId(), action="direct_message", dry_run=False
+    )
+
+    with pytest.raises(ValueError):
+        await repo.reserve(**base)
+    with pytest.raises(ValueError):
+        await repo.reserve(comment_id=ObjectId(), trigger_message_id="mid_eee", **base)

@@ -29,23 +29,43 @@ class ExecutionsRepository(BaseRepository[Any]):
         self,
         *,
         instagram_account_id: Any,
-        comment_id: Any,
         rule_id: Any,
         action: str,
         dry_run: bool,
+        comment_id: Any = None,
+        trigger_message_id: str = "",
         instagram_user_id: str = "",
     ) -> Document | None:
         """Atomically claim the right to perform this action.
 
         Returns the reservation, or None if another worker already holds it. This
-        MUST be called before any Meta mutation: the unique index on
-        (comment_id, rule_id, action) is the only thing standing between a
-        duplicated job and a duplicated DM (§63).
+        MUST be called before any Meta mutation: the unique indexes are the only
+        thing standing between a duplicated job and a duplicated DM (§63).
+
+        Exactly one key is required. A comment-triggered execution is keyed on
+        its comment row; a story-reply or DM-keyword execution on the Instagram
+        message id, because it has no comment. Supplying neither -- or both --
+        raises: such a row would sit in neither partial unique index and would
+        have no duplicate protection at all, silently.
         """
+        if bool(comment_id) == bool(trigger_message_id):
+            raise ValueError(
+                "reserve() needs exactly one of comment_id or trigger_message_id; "
+                "a row in neither unique index has no duplicate protection."
+            )
+
         now = utcnow()
+        # The unused key is OMITTED, never written as None. An explicit null
+        # would land the row in the other index's null bucket, where the second
+        # such row for a rule would collide and be silently dropped.
+        key: Document = (
+            {"comment_id": to_object_id(comment_id)}
+            if comment_id
+            else {"trigger_message_id": str(trigger_message_id)}
+        )
         document = {
             "instagram_account_id": to_object_id(instagram_account_id),
-            "comment_id": to_object_id(comment_id),
+            **key,
             "rule_id": to_object_id(rule_id),
             "action": action,
             # Denormalised so cooldown is a single query rather than a join.
@@ -70,18 +90,33 @@ class ExecutionsRepository(BaseRepository[Any]):
         except DuplicateKeyError:
             return None
 
-    async def find_reservation(self, comment_id: Any, rule_id: Any, action: str) -> Document | None:
+    async def find_reservation(
+        self,
+        comment_id: Any = None,
+        rule_id: Any = None,
+        action: str = "",
+        *,
+        trigger_message_id: str = "",
+    ) -> Document | None:
         """Fetch the reservation a `reserve()` collision refers to.
 
         A retry of the same job must continue the existing execution, not create
         a second one -- and must not resend if it already reached a terminal state.
+
+        The `$type` predicate is repeated in the query so Mongo can prove the
+        query is a subset of the partial index filter and actually use it;
+        without it the planner may fall back to a collection scan.
         """
+        if bool(comment_id) == bool(trigger_message_id):
+            raise ValueError("find_reservation() needs exactly one key, matching reserve().")
+
+        key: Document = (
+            {"comment_id": {"$eq": to_object_id(comment_id), "$type": "objectId"}}
+            if comment_id
+            else {"trigger_message_id": {"$eq": str(trigger_message_id), "$type": "string"}}
+        )
         return await self.collection.find_one(
-            {
-                "comment_id": to_object_id(comment_id),
-                "rule_id": to_object_id(rule_id),
-                "action": action,
-            }
+            {**key, "rule_id": to_object_id(rule_id), "action": action}
         )
 
     async def count_since(self, rule_id: Any, since: Any, action: str) -> int:
