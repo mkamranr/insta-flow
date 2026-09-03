@@ -1,5 +1,5 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { getRulePerformance, getSummary, getTopCommenters } from '../api/analytics'
 import { listAccounts } from '../api/instagram'
@@ -52,7 +52,38 @@ export function Dashboard() {
     refetchInterval: 30_000,
   })
   const { data: accounts } = useQuery({ queryKey: ['instagram-accounts'], queryFn: listAccounts })
-  const { data: posts } = useQuery({ queryKey: ['posts'], queryFn: listPosts, retry: false })
+  const { data: posts } = useQuery({
+    queryKey: ['posts'],
+    queryFn: () => listPosts(),
+    retry: false,
+  })
+
+  // The rail pages independently of the full list above, so scrolling it does
+  // not refetch everything the other sections already have.
+  const PAGE = 8
+  const rail = useInfiniteQuery({
+    queryKey: ['posts-rail'],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => listPosts(PAGE, pageParam as number),
+    // A short page means the end; there is no total to compare against.
+    getNextPageParam: (last, all) =>
+      last.length < PAGE ? undefined : all.reduce((n, page) => n + page.length, 0),
+    retry: false,
+  })
+  const railPosts = rail.data?.pages.flat() ?? []
+
+  const onRailScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      const el = event.currentTarget
+      // Trigger a screen-width early so the next page is usually already there
+      // by the time the reader reaches the end.
+      const remaining = el.scrollWidth - el.scrollLeft - el.clientWidth
+      if (remaining < el.clientWidth * 0.5 && rail.hasNextPage && !rail.isFetchingNextPage) {
+        rail.fetchNextPage()
+      }
+    },
+    [rail],
+  )
   const { data: rules } = useQuery({ queryKey: ['rule-performance'], queryFn: getRulePerformance })
   const { data: commenters } = useQuery({ queryKey: ['top-commenters'], queryFn: getTopCommenters })
 
@@ -79,7 +110,6 @@ export function Dashboard() {
   if (isLoading) return <p className="muted">Loading…</p>
 
   const withoutRules = posts?.filter((p) => p.rule_count === 0) ?? []
-  const recent = posts?.slice(0, 12) ?? []
 
   return (
     <>
@@ -108,15 +138,15 @@ export function Dashboard() {
           </div>
         </div>
 
-        {recent.length === 0 ? (
+        {railPosts.length === 0 && !rail.isLoading ? (
           <div className="card">
             <p className="muted">
               No posts synced yet. <Link to="/posts">Sync from Instagram</Link> to get started.
             </p>
           </div>
         ) : (
-          <div className="scroller">
-            {recent.map((post) => (
+          <div className="scroller" onScroll={onRailScroll}>
+            {railPosts.map((post) => (
               <PostCard
                 key={post.id}
                 post={post}
@@ -126,6 +156,13 @@ export function Dashboard() {
                 }
               />
             ))}
+
+            {rail.isFetchingNextPage && (
+              <div className="rail-more" role="status">
+                <span className="spinner" aria-hidden="true" />
+                Loading more…
+              </div>
+            )}
           </div>
         )}
       </section>

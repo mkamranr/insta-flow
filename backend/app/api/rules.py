@@ -57,11 +57,28 @@ async def _only_account(accounts: Any, user: dict[str, Any]) -> dict[str, Any]:
 
 @posts_router.get("", response_model=list[PostPublic])
 async def list_posts(
-    user: CurrentUser, accounts: AccountsRepo, media: MediaRepo, rules: RulesRepo
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    media: MediaRepo,
+    rules: RulesRepo,
+    limit: int = Query(0, ge=0, le=200),
+    offset: int = Query(0, ge=0),
 ) -> list[PostPublic]:
+    """Newest first.
+
+    `limit=0` means "as many as the repository will give", which is its own
+    ceiling of 200 -- not literally everything. The pages that render a full
+    grid rely on that; the dashboard rail passes a page size and walks `offset`
+    as it scrolls.
+    """
     account = await _only_account(accounts, user)
     counts = await rules.counts_by_media(account["_id"])
-    posts = await media.list({"instagram_account_id": account["_id"]}, sort_field="published_at")
+    posts = await media.list(
+        {"instagram_account_id": account["_id"]},
+        sort_field="published_at",
+        limit=limit or 200,
+        skip=offset,
+    )
     return [
         PostPublic.from_document(p, counts.get(p.get("instagram_media_id", ""), 0)) for p in posts
     ]

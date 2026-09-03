@@ -14,7 +14,7 @@ const BLURB: Record<string, string> = {
 }
 
 export function Templates() {
-  const { data: posts } = useQuery({ queryKey: ['posts'], queryFn: listPosts, retry: false })
+  const { data: posts } = useQuery({ queryKey: ['posts'], queryFn: () => listPosts(), retry: false })
   const [chosen, setChosen] = useState<Partial<Rule> | null>(null)
   const [target, setTarget] = useState<Post | null>(null)
   const [filter, setFilter] = useState<string>('All')

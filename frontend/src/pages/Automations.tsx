@@ -36,7 +36,7 @@ export function Automations() {
   }
 
   const { data: rules, isLoading } = useQuery({ queryKey: ['rules'], queryFn: () => listRules() })
-  const { data: posts } = useQuery({ queryKey: ['posts'], queryFn: listPosts, retry: false })
+  const { data: posts } = useQuery({ queryKey: ['posts'], queryFn: () => listPosts(), retry: false })
   const { data: performance } = useQuery({
     queryKey: ['rule-performance'],
     queryFn: getRulePerformance,

@@ -16,7 +16,7 @@ export function Posts() {
   const { data: accounts } = useQuery({ queryKey: ['instagram-accounts'], queryFn: listAccounts })
   const { data: posts, isLoading, isError, error } = useQuery({
     queryKey: ['posts'],
-    queryFn: listPosts,
+    queryFn: () => listPosts(),
     retry: false,
   })
 

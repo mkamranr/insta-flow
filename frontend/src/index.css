@@ -1160,3 +1160,33 @@ input, textarea, select { transition: border-color var(--t-fast) var(--ease), bo
 .nav-chevron.open { transform: rotate(180deg); }
 .dm-cta { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .dm-back { display: flex; color: var(--muted); }
+
+/* -- Post rail ------------------------------------------------------------ */
+
+/* Equal-height cards with the CTA pinned to the bottom. Without this the
+   optional "View all N comments" row pushes the button down on some cards and
+   not others, so the row of buttons steps up and down. */
+.scroller { align-items: stretch; }
+.ig-body { flex: 1; }
+.ig-body > button { margin-top: auto; }
+
+/* Two lines reserved whether the caption fills them or not, so the block below
+   starts at the same place on every card. */
+.ig-caption { min-height: 2.8em; }
+
+.rail-more {
+  flex: 0 0 132px; align-self: stretch;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; font-size: 12.5px; color: var(--muted);
+}
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--text);
+  animation: spin 700ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* Reduced motion turns the spin off globally, so give it a visible resting
+   state rather than a stationary partial ring. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { border-top-color: var(--border-strong); opacity: 0.6; }
+}

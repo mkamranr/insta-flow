@@ -69,7 +69,8 @@ export interface Post {
   rule_count: number
 }
 
-export const listPosts = () => apiGet<Post[]>('/api/posts')
+export const listPosts = (limit = 0, offset = 0) =>
+  apiGet<Post[]>(`/api/posts?limit=${limit}&offset=${offset}`)
 export const syncPosts = () => apiPost<{ synced: number }>('/api/posts/sync')
 
 export const listRules = (mediaId?: string) =>

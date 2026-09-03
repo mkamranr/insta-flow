@@ -318,3 +318,61 @@ async def test_the_public_account_carries_the_profile_picture(database, admin):
     )
 
     assert public.profile_picture_url == "https://scontent.cdninstagram.com/v/abc.jpg"
+
+
+async def test_posts_paginate_for_the_dashboard_rail(signed_in, database, admin):
+    """The rail walks `offset` as it scrolls, so pages must not overlap."""
+    from datetime import UTC, datetime, timedelta
+
+    account_id = (
+        await database["instagram_accounts"].insert_one(
+            {
+                "user_id": admin["_id"],
+                "instagram_user_id": "17841400000000000",
+                "username": "shop",
+                "status": "connected",
+            }
+        )
+    ).inserted_id
+    now = datetime.now(UTC)
+    for index in range(12):
+        await database["media"].insert_one(
+            {
+                "instagram_account_id": account_id,
+                "instagram_media_id": f"m{index:02d}",
+                "caption": f"post {index}",
+                "published_at": now - timedelta(days=index),
+            }
+        )
+
+    first = (await signed_in.get("/api/posts?limit=5&offset=0")).json()
+    second = (await signed_in.get("/api/posts?limit=5&offset=5")).json()
+
+    assert len(first) == 5
+    assert len(second) == 5
+    assert {p["instagram_media_id"] for p in first}.isdisjoint(
+        {p["instagram_media_id"] for p in second}
+    ), "a page must not repeat the previous page"
+
+
+async def test_the_last_page_is_short_which_is_how_the_rail_knows_to_stop(
+    signed_in, database, admin
+):
+    account_id = (
+        await database["instagram_accounts"].insert_one(
+            {
+                "user_id": admin["_id"],
+                "instagram_user_id": "17841400000000000",
+                "username": "shop",
+                "status": "connected",
+            }
+        )
+    ).inserted_id
+    for index in range(3):
+        await database["media"].insert_one(
+            {"instagram_account_id": account_id, "instagram_media_id": f"x{index}"}
+        )
+
+    page = (await signed_in.get("/api/posts?limit=5&offset=0")).json()
+
+    assert len(page) == 3
