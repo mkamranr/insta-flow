@@ -14,6 +14,10 @@ MatchMode = Literal["exact", "contains", "word"]
 # "specific" = the listed posts. "any" = every post, including future ones.
 RuleScope = Literal["specific", "any"]
 
+# What starts an automation. "comment" is the original and remains the default,
+# so rules written before this field existed keep their behaviour.
+RuleTrigger = Literal["comment", "story_reply", "dm_keyword"]
+
 MAX_KEYWORDS = 20
 MAX_BUTTONS = 3
 
@@ -124,6 +128,7 @@ class Attachment(BaseModel):
 
 class RuleBase(BaseModel):
     name: str = Field(default="", max_length=120)
+    trigger: RuleTrigger = "comment"
     scope: RuleScope = "specific"
     instagram_media_ids: list[str] = Field(default_factory=list)
 
@@ -180,6 +185,7 @@ class RuleCreate(RuleBase):
 
 class RuleUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
+    trigger: RuleTrigger | None = None
     scope: RuleScope | None = None
     instagram_media_ids: list[str] | None = None
     keywords: list[str] | None = None

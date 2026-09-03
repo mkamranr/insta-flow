@@ -31,9 +31,13 @@ export interface Attachment {
   size_bytes: number
 }
 
+/** What starts an automation. "comment" is the original and the default. */
+export type RuleTrigger = 'comment' | 'story_reply' | 'dm_keyword'
+
 export interface Rule {
   id: string
   name: string
+  trigger: RuleTrigger
   scope: 'specific' | 'any'
   instagram_media_ids: string[]
   keywords: string[]

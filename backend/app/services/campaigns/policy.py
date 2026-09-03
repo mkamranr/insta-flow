@@ -9,10 +9,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.constants import PRIVATE_REPLY_WINDOW_DAYS
+from app.constants import MESSAGE_REPLY_WINDOW_HOURS, PRIVATE_REPLY_WINDOW_DAYS
 
 ACTION_PRIVATE_REPLY = "private_reply"
 ACTION_PUBLIC_REPLY = "public_reply"
+# Story replies and inbound DMs both send an ordinary DM, so they share one
+# action. `action` names the Meta operation performed, not the reason for it --
+# the reason lives in the `trigger` field on the execution.
+ACTION_DIRECT_MESSAGE = "direct_message"
 
 # Decision reasons. Stored verbatim on the execution record.
 ALLOWED = "allowed"
@@ -21,6 +25,7 @@ RULE_DISABLED = "rule_disabled"
 ACCOUNT_NOT_CONNECTED = "account_not_connected"
 NO_MESSAGE = "no_message"
 OUTSIDE_REPLY_WINDOW = "outside_reply_window"
+OUTSIDE_MESSAGE_WINDOW = "outside_message_window"
 ALREADY_MESSAGED = "already_messaged"
 NOT_FOLLOWING = "not_following"
 RATE_LIMITED_MINUTE = "rate_limited_minute"
@@ -47,6 +52,9 @@ class PolicyContext:
     account: dict[str, Any]
     action: str = ACTION_PRIVATE_REPLY
     commented_at: datetime | None = None
+    # When the person messaged us. Separate from `commented_at` on purpose:
+    # reusing that for a message timestamp reads as a bug to the next person.
+    message_sent_at: datetime | None = None
     dry_run: bool = True
     sent_last_minute: int = 0
     sent_last_hour: int = 0
@@ -54,6 +62,19 @@ class PolicyContext:
     already_messaged: bool = False
     is_following: bool | None = None
     now: datetime | None = None
+
+
+def within_message_window(sent_at: datetime | None, now: datetime | None = None) -> bool:
+    """Is the person's own message still inside Meta's 24-hour reply window?
+
+    Checked before the call rather than by catching Meta's rejection. The case
+    this really catches is the worker being down and then draining a stale
+    queue. Absent timestamp fails open, matching `within_reply_window`.
+    """
+    if sent_at is None:
+        return True
+    reference = now or datetime.now(UTC)
+    return reference - sent_at <= timedelta(hours=MESSAGE_REPLY_WINDOW_HOURS)
 
 
 def within_reply_window(commented_at: datetime | None, now: datetime | None = None) -> bool:
@@ -94,6 +115,15 @@ def evaluate(context: PolicyContext) -> PolicyDecision:
             False,
             OUTSIDE_REPLY_WINDOW,
             f"comment is older than {PRIVATE_REPLY_WINDOW_DAYS} days",
+        )
+
+    if context.action == ACTION_DIRECT_MESSAGE and not within_message_window(
+        context.message_sent_at, now
+    ):
+        return PolicyDecision(
+            False,
+            OUTSIDE_MESSAGE_WINDOW,
+            f"their message is older than {MESSAGE_REPLY_WINDOW_HOURS} hours",
         )
 
     if context.already_messaged:

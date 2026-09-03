@@ -82,8 +82,24 @@ async def receive(
         return {"status": "duplicate", "queued": 0}
 
     postbacks = [p for p in parse_postback_events(payload) if p.is_ours]
-    # Echoes are our own sends coming back; acting on them would loop.
-    messages = [m for m in parse_message_events(payload) if not m.is_echo and m.text]
+    # Echoes are our own sends coming back; acting on them would loop. `is_self`
+    # is the second guard: echo filtering rests on one field Meta controls, and
+    # a message-id reservation would NOT catch a loop, because every echo has a
+    # distinct mid and would earn its own valid reservation.
+    messages = [
+        m for m in parse_message_events(payload) if not m.is_echo and not m.is_self and m.text
+    ]
+
+    # Any messaging event we recognised but cannot act on. Logged by shape only,
+    # so that when a story reaction finally arrives we have its real structure
+    # rather than a guess -- Meta does not document how they are delivered.
+    for entry in payload.get("entry") or []:
+        for event in (entry or {}).get("messaging") or []:
+            if isinstance(event, dict) and "message" not in event and "postback" not in event:
+                logger.info(
+                    "webhook_messaging_event_unhandled",
+                    extra={"keys": ",".join(sorted(event.keys()))},
+                )
     comments = parse_comment_events(payload)
 
     if not comments and not postbacks and not messages:
@@ -113,6 +129,7 @@ async def receive(
                 message.instagram_account_id,
                 message.sender_id,
                 message.text,
+                message.mid,
             )
             queued += 1
         except Exception:

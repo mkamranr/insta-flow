@@ -1,8 +1,11 @@
 import { AccountAvatar } from '../common/AccountAvatar'
 import { ThemeToggle } from '../common/ThemeToggle'
+import { NewAutomationDialog } from '../rules/NewAutomationDialog'
+import { RuleEditor } from '../rules/RuleEditor'
+import type { RuleTrigger } from '../../api/rules'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router-dom'
 import { getMe, logout } from '../../api/auth'
 import { getSummary } from '../../api/analytics'
 import { apiGet } from '../../api/client'
@@ -49,7 +52,9 @@ const HOURLY_CEILING = 750
 
 export function Layout() {
   const queryClient = useQueryClient()
-  const navigate = useNavigate()
+  const [starting, setStarting] = useState(false)
+  // The two account-wide triggers open the editor with no post.
+  const [newTrigger, setNewTrigger] = useState<RuleTrigger | null>(null)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
   const [contentOpen, setContentOpen] = useState(true)
   const [analyticsNavOpen, setAnalyticsNavOpen] = useState(true)
@@ -94,7 +99,7 @@ export function Layout() {
           </div>
         </div>
 
-        <button className="cta full" onClick={() => navigate('/posts')} style={{ marginBottom: 18 }}>
+        <button className="cta full" onClick={() => setStarting(true)} style={{ marginBottom: 18 }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
             <PlusIcon />
             New automation
@@ -204,6 +209,20 @@ export function Layout() {
       <main className="content">
         <DryRunBanner />
         <Outlet />
+
+      {starting && (
+        <NewAutomationDialog
+          onClose={() => setStarting(false)}
+          onPick={(trigger) => {
+            setStarting(false)
+            setNewTrigger(trigger)
+          }}
+        />
+      )}
+
+      {newTrigger && (
+        <RuleEditor trigger={newTrigger} onClose={() => setNewTrigger(null)} />
+      )}
       </main>
 
       <StatsRail onOpen={() => setAnalyticsOpen(true)} />

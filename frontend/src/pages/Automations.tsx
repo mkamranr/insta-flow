@@ -14,20 +14,17 @@ import {
 import { RuleEditor } from '../components/rules/RuleEditor'
 
 function describe(rule: Rule): string {
-  const trigger = rule.any_word
-    ? 'any comment'
-    : rule.keywords.map((k) => `'${k}'`).slice(0, 2).join(', ') +
-      (rule.keywords.length > 2 ? ` +${rule.keywords.length - 2} more` : '')
-  const opener = rule.opening_dm?.enabled ? ' · Opening message' : ''
-  const dm = rule.message.length > 44 ? `${rule.message.slice(0, 44)}…` : rule.message
-  return `Comments containing ${trigger}${opener} · DM: '${dm}'`
+  const trigger = rule.keywords?.length ? rule.keywords.join(', ') : 'any word'
+  if (rule.trigger === 'story_reply') return `Story replies containing ${trigger} → DM`
+  if (rule.trigger === 'dm_keyword') return `DMs containing ${trigger} → DM`
+  return `Comments containing ${trigger} → DM`
 }
 
 export function Automations() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [menuFor, setMenuFor] = useState<string | null>(null)
-  const [editing, setEditing] = useState<{ post: Post; rule: Rule } | null>(null)
+  const [editing, setEditing] = useState<{ post?: Post; rule: Rule } | null>(null)
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['rules'] })
@@ -166,8 +163,14 @@ export function Automations() {
                                   onClick={() => {
                                     setMenuFor(null)
                                     const post = postFor(rule)
-                                    if (post) setEditing({ post, rule })
-                                    else navigate('/posts')
+                                    // A story-reply or DM rule has no post, and
+                                    // is still perfectly editable. Sending it to
+                                    // Posts would make it uneditable forever.
+                                    if (post || rule.trigger !== 'comment') {
+                                      setEditing({ post, rule })
+                                    } else {
+                                      navigate('/posts')
+                                    }
                                   }}
                                 >
                                   Edit automation
@@ -207,6 +210,7 @@ export function Automations() {
       {editing && (
         <RuleEditor
           post={editing.post}
+          trigger={editing.rule.trigger}
           initial={editing.rule}
           editingId={editing.rule.id}
           onClose={() => setEditing(null)}

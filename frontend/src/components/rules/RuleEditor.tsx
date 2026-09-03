@@ -4,7 +4,14 @@ import { useState } from 'react'
 import { ApiError } from '../../api/client'
 import { useQuery } from '@tanstack/react-query'
 import { listAccounts } from '../../api/instagram'
-import { createRule, getIntents, patchRule, type Post, type Rule } from '../../api/rules'
+import {
+  createRule,
+  getIntents,
+  patchRule,
+  type Post,
+  type Rule,
+  type RuleTrigger,
+} from '../../api/rules'
 import { AttachmentField } from './AttachmentField'
 import { DelayPicker } from './DelayPicker'
 import { DmPreview } from './DmPreview'
@@ -31,13 +38,31 @@ const BLANK: Partial<Rule> = {
   priority: 100,
 }
 
+const TRIGGER_COPY: Record<RuleTrigger, { step1: string; anyWord: string }> = {
+  comment: {
+    step1: 'When someone comments',
+    anyWord: 'Any word — reply to every comment on this post',
+  },
+  story_reply: {
+    step1: 'When someone replies to your story',
+    anyWord: 'Any word — reply to every story reply',
+  },
+  dm_keyword: {
+    step1: 'When someone DMs you',
+    // Refused server-side: it would answer every real question anyone sends.
+    anyWord: 'Any word — not available for DMs',
+  },
+}
+
 export function RuleEditor({
   post,
+  trigger = 'comment',
   initial,
   editingId,
   onClose,
 }: {
-  post: Post
+  post?: Post
+  trigger?: RuleTrigger
   initial?: Partial<Rule>
   /** When set, saving updates that rule instead of creating a new one. */
   editingId?: string
@@ -49,11 +74,12 @@ export function RuleEditor({
 
   const save = useMutation({
     mutationFn: () => {
-      const payload = {
-        ...draft,
-        scope: 'specific' as const,
-        instagram_media_ids: [post.instagram_media_id],
-      }
+      // A story-reply or DM rule has no post to attach to, so it is account
+      // wide -- "any" literally means "not restricted to the listed posts".
+      const payload = post
+        ? { ...draft, trigger, scope: 'specific' as const,
+            instagram_media_ids: [post.instagram_media_id] }
+        : { ...draft, trigger, scope: 'any' as const, instagram_media_ids: [] }
       // `id` is server-owned; sending it back would be rejected.
       delete (payload as Partial<Rule>).id
       return editingId ? patchRule(editingId, payload) : createRule(payload)
@@ -78,7 +104,9 @@ export function RuleEditor({
         <header className="modal-head">
           <div>
             <h2>{editingId ? 'Edit automation' : 'New automation'}</h2>
-            <p className="muted small">{post.caption?.slice(0, 70) || post.instagram_media_id}</p>
+            <p className="muted small">
+              {post ? post.caption?.slice(0, 70) || post.instagram_media_id : TRIGGER_COPY[trigger].step1}
+            </p>
           </div>
           <button className="link" onClick={onClose} aria-label="Close">
             <CloseIcon />
@@ -88,18 +116,24 @@ export function RuleEditor({
         <div className="modal-body editor-split">
           <div className="editor-form">
           <section className="step">
-            <div className="step-head"><span className="step-num">1</span><h3>When someone comments</h3></div>
+            <div className="step-head"><span className="step-num">1</span><h3>{TRIGGER_COPY[trigger].step1}</h3></div>
             <label>Keywords</label>
             <KeywordInput keywords={draft.keywords ?? []} onChange={(k) => set({ keywords: k })} />
 
             <label className="inline">
               <input
                 type="checkbox"
-                checked={draft.any_word ?? false}
+                disabled={trigger === 'dm_keyword'}
+                checked={trigger === 'dm_keyword' ? false : (draft.any_word ?? false)}
                 onChange={(e) => set({ any_word: e.target.checked })}
               />
-              Any word — reply to every comment on this post
+              {TRIGGER_COPY[trigger].anyWord}
             </label>
+            {trigger === 'dm_keyword' && (
+              <p className="muted small">
+                It would reply to every message anyone sends you, including real questions.
+              </p>
+            )}
 
             <label htmlFor="match">Match</label>
             <select
@@ -113,6 +147,7 @@ export function RuleEditor({
             </select>
           </section>
 
+          {trigger === 'comment' && (
           <section className="step">
             <div className="step-head"><span className="step-num">2</span><h3>They optionally get an opening DM</h3></div>
             <label className="inline">
@@ -146,6 +181,7 @@ export function RuleEditor({
               </>
             )}
           </section>
+          )}
 
           <section className="step">
             <div className="step-head"><span className="step-num">3</span><h3>And they get a DM with</h3></div>

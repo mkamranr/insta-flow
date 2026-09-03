@@ -76,7 +76,8 @@ Layout: `backend/app/{api,db,models,services,workers}`, `frontend/src`, `infra/c
 | --- | --- |
 | Webhook | `webhook_events.event_hash` |
 | Comment | `comments.(instagram_account_id, instagram_comment_id)` |
-| Execution | `executions.(comment_id, campaign_id, action)` |
+| Execution, comment-triggered | `executions.(comment_id, rule_id, action)`, partial on `comment_id: {$type: objectId}` |
+| Execution, message-triggered | `executions.(trigger_message_id, rule_id, action)`, partial on `trigger_message_id: {$type: string}` |
 
 The worker reserves an execution with an atomic insert **before** calling Meta. A duplicate
 key error means another worker already has it — skip, do not send.
@@ -102,19 +103,25 @@ key error means another worker already has it — skip, do not send.
 
 ## Known gaps
 
-**The rule engine is comment-driven.** A rule matches keywords in a comment on a specific post,
-and nothing else. Two trigger types are therefore not available, and the templates gallery
-deliberately omits them rather than shipping automations that would silently never fire:
+**Three triggers, one matcher.** A rule carries `trigger`: `comment` (the original and the
+default), `story_reply`, or `dm_keyword`. Rules written before that field existed have no
+`trigger` key, so `list_for_media` filters `{"$in": ["comment", None]}` — `$in` with `None`
+matches a missing field as well as an explicit null, which is what lets them keep working
+with no backfill. Without that clause every existing rule would also fire on DMs.
 
-| Wanted | Blocked by |
-| --- | --- |
-| Send link on **story reaction** | No story-reaction trigger. The `messages` webhook carries story replies, but `select_rule` only ever runs against a `CommentContext`. |
-| **Auto-reply to DMs** on a keyword | `process_message_event` only resumes an execution parked at `awaiting_email`; there is no general inbound-DM matcher. Deliberate — the app is not a chatbot. |
-| Thank **story reactors** | Same as the first row. |
+`select_rule` and `rule_matches` were always generic over text; only the caller was
+comment-coupled.
 
-Adding either means a trigger discriminator on the rule model and a second matcher path. Until
-then, a template promising them would create a rule that never fires, which is worse than not
-offering it.
+**Story *reactions* are still not a trigger.** Meta does not document how a bare emoji tap on
+a story is delivered, and the one reaction this account has received was a reaction to a
+*message*, carried only `mid` + emoji, and had **no sender** — nobody to reply to. The
+endpoint logs the shape of any unhandled messaging event so a real one can be inspected
+rather than guessed at.
+
+**Still comment-only:** `opening_dm` and `public_reply` (both structurally need a comment id),
+`any_word` on `dm_keyword` (it would answer every real question anyone sends), AI intent
+matching (`ai_classifications` is keyed on `comment_id`), and `awaiting_follow` parking
+(`recheck_follow` loads a comment row). All are refused at the API with an explanation.
 
 **Follower history is only what we recorded.** Instagram exposes a follower total and no
 history, so growth begins the day the account was connected, and gross new-vs-unfollowed is not

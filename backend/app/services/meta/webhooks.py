@@ -269,7 +269,7 @@ def parse_postback_events(payload: dict[str, Any]) -> list[ParsedPostback]:
 
 @dataclass(frozen=True)
 class ParsedMessage:
-    """An inbound DM from an Instagram user."""
+    """An inbound DM from an Instagram user, including a reply to our story."""
 
     instagram_account_id: str
     sender_id: str
@@ -277,6 +277,26 @@ class ParsedMessage:
     mid: str = ""
     is_echo: bool = False
     sent_at: datetime | None = None
+    # Present only when the person replied to one of our stories.
+    story_id: str = ""
+    story_url: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_story_reply(self) -> bool:
+        return bool(self.story_id)
+
+    @property
+    def is_self(self) -> bool:
+        """Our own account as the sender.
+
+        Belt and braces beside `is_echo`. Echo filtering rests on a single field
+        Meta controls, and acting on our own sends would loop: every echo has a
+        distinct mid, so each would earn its own valid reservation and the
+        message-id key would not stop it. The comment path guards itself twice
+        for the same reason.
+        """
+        return bool(self.sender_id) and self.sender_id == self.instagram_account_id
 
 
 def parse_message_events(payload: dict[str, Any]) -> list[ParsedMessage]:
@@ -300,6 +320,14 @@ def parse_message_events(payload: dict[str, Any]) -> list[ParsedMessage]:
             raw_sender = event.get("sender")
             sender: dict[str, Any] = raw_sender if isinstance(raw_sender, dict) else {}
 
+            # A story reply carries reply_to.story. reply_to.mid is a quoted
+            # reply to an earlier message, which is an ordinary DM -- treating
+            # it as a story reply would fire the wrong automation.
+            raw_reply_to = message.get("reply_to")
+            reply_to: dict[str, Any] = raw_reply_to if isinstance(raw_reply_to, dict) else {}
+            raw_story = reply_to.get("story")
+            story: dict[str, Any] = raw_story if isinstance(raw_story, dict) else {}
+
             events.append(
                 ParsedMessage(
                     instagram_account_id=account_id,
@@ -308,6 +336,9 @@ def parse_message_events(payload: dict[str, Any]) -> list[ParsedMessage]:
                     mid=_as_str(message.get("mid")),
                     is_echo=bool(message.get("is_echo", False)),
                     sent_at=_timestamp(event.get("timestamp", entry.get("time"))),
+                    story_id=_as_str(story.get("id")),
+                    story_url=_as_str(story.get("url")),
+                    raw=event,
                 )
             )
     return events

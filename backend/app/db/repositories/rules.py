@@ -27,10 +27,33 @@ class RulesRepository(BaseRepository[Any]):
             {
                 "instagram_account_id": to_object_id(instagram_account_id),
                 "enabled": True,
+                # Comment rules only. `$in` with None matches a MISSING field as
+                # well as an explicit null, which is what lets rules written
+                # before `trigger` existed keep working with no backfill.
+                #
+                # Without this clause every existing rule would also fire on
+                # story replies and inbound DMs.
+                "trigger": {"$in": ["comment", None]},
                 "$or": [
                     {"scope": "any"},
                     {"instagram_media_ids": str(instagram_media_id)},
                 ],
+            }
+        ).sort([("priority", DESCENDING), ("_id", DESCENDING)])
+        return [doc async for doc in cursor]
+
+    async def list_for_trigger(self, instagram_account_id: Any, trigger: str) -> list[Document]:
+        """Enabled rules for a non-comment trigger, highest priority first.
+
+        Exact match on a value legacy rows cannot hold, so pre-`trigger` rules
+        are excluded automatically. Ties break on id, as in `list_for_media`, so
+        selection is deterministic.
+        """
+        cursor = self.collection.find(
+            {
+                "instagram_account_id": to_object_id(instagram_account_id),
+                "enabled": True,
+                "trigger": trigger,
             }
         ).sort([("priority", DESCENDING), ("_id", DESCENDING)])
         return [doc async for doc in cursor]

@@ -28,6 +28,7 @@ from app.db.repositories import (
 from app.errors import MetaAPIError, MetaTokenError, TemplateError
 from app.services.ai.classifier import classify
 from app.services.campaigns import (
+    ACTION_DIRECT_MESSAGE,
     ACTION_PRIVATE_REPLY,
     CommentContext,
     PolicyContext,
@@ -45,7 +46,11 @@ from app.services.links import is_safe_target, new_token, tracking_url
 from app.services.meta import auth as meta_auth
 from app.services.meta.messages import postback_button, web_url_button
 from app.services.meta.tokens import needs_refresh, token_fields
-from app.services.meta.webhooks import build_postback_payload, parse_comment_events
+from app.services.meta.webhooks import (
+    build_postback_payload,
+    parse_comment_events,
+    parse_message_events,
+)
 from app.services.security.encryption import EncryptionError, decrypt
 
 logger = logging.getLogger(__name__)
@@ -1044,18 +1049,246 @@ async def refresh_geoip_database(ctx: dict[str, Any]) -> dict[str, Any]:
     return {"status": "updated"}
 
 
+async def _match_inbound_message(
+    ctx: dict[str, Any],
+    webhook_event_id: str,
+    account: dict[str, Any],
+    sender_id: str,
+    text: str,
+    mid: str,
+    delayed: bool,
+) -> dict[str, Any]:
+    """Match a story reply or a plain DM against the rules for that trigger.
+
+    Reached only when nobody is parked at `awaiting_email`. The person's own
+    message opened a 24-hour window, so the payoff goes straight out as an
+    ordinary DM -- no private reply, no opening DM, no postback.
+    """
+    db = ctx["db"]
+    settings = ctx["settings"]
+    client = ctx["client"]
+
+    # No message id, no reservation, no send. The mid is the only duplicate
+    # protection a message-triggered execution has.
+    if not mid:
+        return {"status": "ignored", "reason": "no_message_id"}
+
+    events = WebhookEventsRepository(db)
+    event = await events.get(webhook_event_id)
+    if event is None:
+        return {"status": "skipped", "reason": "event_missing"}
+
+    # Re-derived from the stored payload rather than trusted from the job
+    # arguments, as the comment path does -- and it is how `reply_to` reaches us
+    # without widening the queue signature every time we need another field.
+    parsed = next(
+        (m for m in parse_message_events(event.get("payload") or {}) if m.mid == mid), None
+    )
+    if parsed is None:
+        return {"status": "skipped", "reason": "not_in_payload"}
+
+    trigger = "story_reply" if parsed.is_story_reply else "dm_keyword"
+    log = {"trigger": trigger, "mid": mid}
+
+    rules = await RulesRepository(db).list_for_trigger(account["_id"], trigger)
+    context = CommentContext(text=text, instagram_user_id=sender_id)
+    rule = select_rule(context, rules)
+    if rule is None:
+        await events.mark_processed(event["_id"])
+        logger.info("message_unmatched", extra={**log, "rules": len(rules)})
+        return {"status": "unmatched", "trigger": trigger}
+
+    log["rule_id"] = str(rule["_id"])
+
+    delay_seconds = int(rule.get("reply_delay_seconds") or 0)
+    if delay_seconds > 0 and not delayed:
+        redis = ctx.get("redis")
+        if redis is not None:
+            await redis.enqueue_job(
+                "process_message_event",
+                webhook_event_id,
+                str(account["instagram_user_id"]),
+                sender_id,
+                text,
+                mid,
+                True,
+                _defer_by=timedelta(seconds=delay_seconds),
+            )
+            logger.info("reply_delayed", extra={**log, "delay_seconds": delay_seconds})
+            return {"status": "scheduled", "delay_seconds": delay_seconds}
+
+    executions = ExecutionsRepository(db)
+    now = datetime.now(UTC)
+    decision = evaluate(
+        PolicyContext(
+            rule=rule,
+            account=account,
+            action=ACTION_DIRECT_MESSAGE,
+            message_sent_at=parsed.sent_at,
+            dry_run=settings.dry_run,
+            sent_last_minute=await executions.count_since(
+                rule["_id"], now - timedelta(minutes=1), ACTION_DIRECT_MESSAGE
+            ),
+            sent_last_hour=await executions.count_since(
+                rule["_id"], now - timedelta(hours=1), ACTION_DIRECT_MESSAGE
+            ),
+            sent_last_day=await executions.count_since(
+                rule["_id"], now - timedelta(days=1), ACTION_DIRECT_MESSAGE
+            ),
+            already_messaged=(
+                await executions.already_sent_to(rule["_id"], sender_id)
+                if rule.get("once_per_person", True)
+                else False
+            ),
+            is_following=(
+                await lookup_is_following(client, settings, account, sender_id, log)
+                if (rule.get("require_follow") or {}).get("enabled")
+                else None
+            ),
+            now=now,
+        )
+    )
+
+    execution = await executions.reserve(
+        instagram_account_id=account["_id"],
+        trigger_message_id=mid,
+        rule_id=rule["_id"],
+        action=ACTION_DIRECT_MESSAGE,
+        dry_run=settings.dry_run,
+        instagram_user_id=sender_id,
+    )
+    if execution is None:
+        existing = await executions.find_reservation(
+            rule_id=rule["_id"], action=ACTION_DIRECT_MESSAGE, trigger_message_id=mid
+        )
+        if existing is None or existing.get("status") in TERMINAL_STATUSES:
+            logger.info("duplicate_message_ignored", extra=log)
+            return {"status": "duplicate"}
+        execution = existing
+
+    # Denormalised so the activity feed can describe a row that has no comment.
+    await executions.update(
+        execution["_id"],
+        {
+            "trigger": trigger,
+            "trigger_text": text,
+            "story_id": parsed.story_id or None,
+            "story_url": parsed.story_url or None,
+        },
+    )
+    log["execution_id"] = str(execution["_id"])
+
+    if not decision.allowed:
+        if decision.reason == NOT_FOLLOWING and not settings.dry_run:
+            await _send_follow_prompt(client, settings, account, sender_id, rule, log)
+        await executions.complete(
+            execution["_id"], status="skipped", policy_decision=decision.reason
+        )
+        await events.mark_processed(event["_id"])
+        logger.info("policy_denied", extra={**log, "reason": decision.reason})
+        return {"status": "skipped", "reason": decision.reason}
+
+    try:
+        message = render(rule["message"], build_render_context(context, rule))
+    except TemplateError as exc:
+        await executions.complete(execution["_id"], status="failed", error=str(exc))
+        return {"status": "failed", "reason": "template_error"}
+
+    if settings.dry_run:
+        await executions.complete(
+            execution["_id"], status="dry_run", message_text=message, policy_decision=DRY_RUN
+        )
+        await events.mark_processed(event["_id"])
+        return {"status": "dry_run", "execution_id": str(execution["_id"])}
+
+    try:
+        access_token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+        result = await client.send_direct_message(
+            access_token,
+            account["instagram_user_id"],
+            sender_id,
+            await _with_disclosure(db, message),
+            await tracked_buttons(db, settings, rule, account, execution["_id"], sender_id),
+        )
+    except MetaTokenError as exc:
+        await InstagramAccountsRepository(db).set_status(account["_id"], "token_error", str(exc))
+        await executions.complete(execution["_id"], status="failed", error=str(exc))
+        return {"status": "failed", "reason": "token_error"}
+    except (MetaAPIError, EncryptionError) as exc:
+        await executions.complete(execution["_id"], status="failed", error=str(exc))
+        return {"status": "failed", "reason": "meta_error"}
+
+    # The window is already open, so a file needs no opening-DM dance here.
+    await send_attachment_if_any(client, settings, account, sender_id, rule, log)
+
+    await executions.complete(
+        execution["_id"],
+        status="success",
+        message_text=message,
+        meta_message_id=result.message_id,
+        meta_recipient_id=result.recipient_id,
+    )
+    await events.mark_processed(event["_id"])
+    logger.info("message_reply_sent", extra=log)
+    return {"status": "success", "trigger": trigger, "execution_id": str(execution["_id"])}
+
+
+async def _send_follow_prompt(
+    client: Any,
+    settings: Any,
+    account: dict[str, Any],
+    recipient_id: str,
+    rule: dict[str, Any],
+    log: dict[str, Any],
+) -> None:
+    """Tell them why the link is being withheld. Silence teaches nothing."""
+    prompt = ((rule.get("require_follow") or {}).get("prompt") or "").strip()
+    if not prompt:
+        return
+    try:
+        token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+        await client.send_direct_message(token, account["instagram_user_id"], recipient_id, prompt)
+        logger.info("follow_prompt_sent", extra=log)
+    except (MetaAPIError, EncryptionError) as exc:
+        logger.warning("follow_prompt_failed", extra={**log, "error": str(exc)})
+
+
+async def _with_disclosure(db: Any, message: str) -> str:
+    """Append the automated-experience disclosure, if one is configured.
+
+    Meta requires disclosing an automated experience to users in California and
+    Germany. The obligation is the operator's, so the wording is theirs and it
+    can be switched off -- but silence by default would be the wrong default.
+    """
+    saved = await AppSettingsRepository(db).load()
+    if not saved.get("automation_disclosure_enabled", True):
+        return message
+    line = str(saved.get("automation_disclosure") or "Automated reply.").strip()
+    return f"{message}\n\n{line}" if line else message
+
+
 async def process_message_event(
     ctx: dict[str, Any],
     webhook_event_id: str,
     instagram_account_id: str,
     sender_id: str,
     text: str,
+    mid: str = "",
+    delayed: bool = False,
 ) -> dict[str, Any]:
-    """An inbound DM. Used to complete the "collect email" flow.
+    """An inbound DM: a reply to our story, or a plain message.
 
-    Only acts when an execution for this person is parked at `awaiting_email`;
-    every other message is ignored, because Social Flow is not a chatbot and must
-    not respond to unrelated conversation.
+    Two jobs, in a fixed order that matters. First, completing the "collect
+    email" flow. Only if nobody is parked does it try to match a `story_reply`
+    or `dm_keyword` rule.
+
+    That order is the whole safety argument. Someone parked at `awaiting_email`
+    who sends "LINK me@example.com" must resume the email flow and NOT also fire
+    a keyword rule. `once_per_person` would not save us: it counts `success` and
+    `dry_run` rows, and a parked execution is neither.
+
+    `mid` defaults to empty because ARQ jobs queued before this argument existed
+    carry only four; without a default they would raise on resume.
     """
     db = ctx["db"]
     settings = ctx["settings"]
@@ -1066,10 +1299,18 @@ async def process_message_event(
     if account is None:
         return {"status": "skipped", "reason": "unknown_account"}
 
+    # Our own message coming back. The endpoint filters these too; this is the
+    # second guard, because replying to ourselves would loop and a message-id
+    # reservation cannot stop it -- every echo carries a fresh mid.
+    if sender_id and sender_id == str(account.get("instagram_user_id") or ""):
+        return {"status": "skipped", "reason": "self_message"}
+
     executions = ExecutionsRepository(db)
     execution = await executions.find_awaiting_email(account["_id"], sender_id)
     if execution is None:
-        return {"status": "ignored", "reason": "no_pending_capture"}
+        return await _match_inbound_message(
+            ctx, webhook_event_id, account, sender_id, text, mid, delayed
+        )
 
     log = {"execution_id": str(execution["_id"]), "rule_id": str(execution.get("rule_id"))}
 

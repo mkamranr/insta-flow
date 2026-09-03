@@ -18,3 +18,9 @@ PRIVATE_REPLY_CALLS_PER_HOUR: Final = 750
 # Long-lived token lifetime, and the minimum age before it may be refreshed.
 TOKEN_LIFETIME_DAYS: Final = 60
 TOKEN_MIN_REFRESH_AGE_HOURS: Final = 24
+
+# Meta gives 24 hours to reply to a message a user sent us. Distinct from the
+# seven-day private-reply window above: that one starts at a comment, this one
+# at the person's own message, and only the latter applies to story replies and
+# inbound DMs (docs/meta-api.md).
+MESSAGE_REPLY_WINDOW_HOURS: Final = 24

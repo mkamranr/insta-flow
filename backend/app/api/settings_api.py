@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+class Disclosure(BaseModel):
+    enabled: bool = True
+    text: str = Field(default="", max_length=200)
+
+
 class GeoIpCredentials(BaseModel):
     account_id: str = Field(min_length=1, max_length=64)
     license_key: str = Field(min_length=1, max_length=256)
@@ -35,6 +40,36 @@ def _database_state(settings: Any) -> dict[str, Any]:
         "size_bytes": stat.st_size,
         "updated_at": stat.st_mtime,
     }
+
+
+DEFAULT_DISCLOSURE = "Automated reply."
+
+
+@router.get("/disclosure")
+async def get_disclosure(user: CurrentUser, store: AppSettingsRepo) -> dict[str, Any]:
+    """The automated-experience notice appended to the first automated message."""
+    saved = await store.load()
+    return {
+        "enabled": bool(saved.get("automation_disclosure_enabled", True)),
+        "text": saved.get("automation_disclosure") or DEFAULT_DISCLOSURE,
+    }
+
+
+@router.put("/disclosure")
+async def save_disclosure(
+    payload: Disclosure, user: CurrentUser, store: AppSettingsRepo
+) -> dict[str, Any]:
+    """Meta requires disclosing an automated experience to users in California
+    and Germany. The obligation is the operator's, so the wording is theirs and
+    it can be switched off -- but silence by default would be the wrong default.
+    """
+    await store.save(
+        {
+            "automation_disclosure_enabled": payload.enabled,
+            "automation_disclosure": payload.text.strip() or DEFAULT_DISCLOSURE,
+        }
+    )
+    return {"saved": True}
 
 
 @router.get("/geoip")

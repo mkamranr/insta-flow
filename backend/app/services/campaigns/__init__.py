@@ -21,6 +21,7 @@ from app.services.campaigns.matcher import (
     normalize_for_search,
 )
 from app.services.campaigns.policy import (
+    ACTION_DIRECT_MESSAGE,
     ACTION_PRIVATE_REPLY,
     ACTION_PUBLIC_REPLY,
     PolicyContext,
@@ -37,6 +38,7 @@ from app.services.campaigns.renderer import (
 )
 
 __all__ = [
+    "ACTION_DIRECT_MESSAGE",
     "ACTION_PRIVATE_REPLY",
     "ACTION_PUBLIC_REPLY",
     "ALLOWED_VARIABLES",

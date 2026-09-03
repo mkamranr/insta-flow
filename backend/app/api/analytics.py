@@ -34,7 +34,9 @@ from app.services.superfans import find as find_superfans
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
-SENT_ACTIONS = ("private_reply", "opening_dm")
+# `direct_message` is what story-reply and DM-keyword rules send. Omitting it
+# would make every such rule report 0 DMs sent and 0% CTR forever.
+SENT_ACTIONS = ("private_reply", "opening_dm", "direct_message")
 
 _SUPERFAN_RULE = (
     f"{MIN_COMMENTS_PER_WEEK}+ comments in a week, in at least "
@@ -66,7 +68,9 @@ async def summary(
     since = datetime.now(UTC) - timedelta(days=days)
     window = {"instagram_account_id": account_id, "created_at": {"$gte": since}}
 
-    by_status = await executions.count_by_status(window)
+    # Comment-triggered rows only: `unmatched` below subtracts this from the
+    # comment count, and message-triggered executions would silently deflate it.
+    by_status = await executions.count_by_status({**window, "comment_id": {"$exists": True}})
     sent = by_status.get("success", 0)
     clicks = await links.count_clicks(
         {"instagram_account_id": account_id, "created_at": {"$gte": since}}

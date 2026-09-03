@@ -143,6 +143,41 @@ async def sync_posts(
 # --- rules ------------------------------------------------------------------
 
 
+def _refuse_unsupported_features(trigger: str, values: dict[str, Any]) -> None:
+    """Reject combinations that cannot work, rather than shipping dead settings.
+
+    An opening DM exists to open a messaging window a private reply cannot. For
+    a story reply or an inbound DM the person's own message already opened one,
+    so the opener is pure latency -- and it is broken besides: its button
+    payload carries a comment id, and the postback handler refuses to proceed
+    without that comment row.
+
+    A public reply is `POST /{comment_id}/replies`. No comment, no reply.
+
+    `any_word` on a DM trigger would answer every message anyone sends,
+    including real customer questions. `process_message_event` says it plainly:
+    this is not a chatbot.
+    """
+    if trigger == "comment":
+        return
+
+    label = "story reply" if trigger == "story_reply" else "DM keyword"
+    if (values.get("opening_dm") or {}).get("enabled"):
+        raise ValidationError(
+            f"An opening DM only applies to comments. A {label} automation replies "
+            "directly, because their message already opened the window."
+        )
+    if (values.get("public_reply") or {}).get("enabled"):
+        raise ValidationError(
+            f"A public reply needs a comment to reply to, so it cannot apply to a {label}."
+        )
+    if trigger == "dm_keyword" and values.get("any_word"):
+        raise ValidationError(
+            "'Any word' would reply to every message anyone sends you, including real "
+            "questions. Give this automation at least one keyword."
+        )
+
+
 @router.get("/intents")
 async def list_intents(user: CurrentUser, settings: SettingsDep) -> dict[str, Any]:
     """Intents the classifier may return, for the rule editor."""
@@ -202,7 +237,9 @@ async def create_rule(
     if payload.opening_dm.enabled and payload.opening_dm.message.strip():
         validate(payload.opening_dm.message)
 
-    if payload.scope == "specific":
+    # Only a comment rule targets posts. A story reply or an inbound DM is not
+    # attached to one, so requiring a post would make those rules impossible.
+    if payload.trigger == "comment" and payload.scope == "specific":
         if not payload.instagram_media_ids:
             raise ValidationError("Select at least one post, or set the rule to every post.")
         for media_id in payload.instagram_media_ids:
@@ -211,6 +248,8 @@ async def create_rule(
 
     if not payload.any_word and not payload.keywords:
         raise ValidationError("Add at least one keyword, or switch on 'any word'.")
+
+    _refuse_unsupported_features(payload.trigger, payload.model_dump())
 
     document = payload.model_dump()
     document["instagram_account_id"] = account["_id"]
@@ -265,6 +304,11 @@ async def update_rule(
         validate(changes["message"])
     if changes.get("keywords") == [] and not changes.get("any_word"):
         raise ValidationError("A rule needs at least one keyword, or 'any word'.")
+
+    # Merged over the stored rule: a PATCH that only flips `any_word` still has
+    # to be judged against the trigger the rule already has.
+    merged = {**existing, **changes}
+    _refuse_unsupported_features(str(merged.get("trigger") or "comment"), merged)
 
     updated = await rules.update(_object_id(rule_id, "rule_id"), changes)
     await audit.record(

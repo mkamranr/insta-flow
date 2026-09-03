@@ -33,6 +33,8 @@ Meta's own rate limits.
 ## Features
 
 - **Per-post rules** — on this post, if someone comments this keyword, send this message
+- **Story-reply and DM-keyword triggers** — reply directly, inside the 24-hour window their
+  own message opens, so files send immediately with no button step
 - Several keywords per rule, matched **exactly**, as a **whole word**, or **anywhere** in the comment
 - **Two-step DMs** — an opening message with a button, then the payoff with link buttons
 - **Public auto-reply** under the comment, to boost engagement
@@ -143,7 +145,7 @@ rather than worked around.
 
 ## Tests
 
-550 tests covering keyword matching, template rendering, policy decisions, webhook signature
+581 tests covering keyword matching, template rendering, policy decisions, webhook signature
 validation, idempotency under concurrency, token encryption, retry semantics, and the AI
 classifier's prompt-injection resistance, the follow gate, deferred delivery after a follow,
 attachment storage and path traversal, the reply delay, and who counts as a superfan. Meta is
@@ -159,8 +161,11 @@ make lint    # ruff + mypy
 **Working end to end against real traffic.** Comments from accounts with no role on the app are
 delivered, matched, and answered; the follow gate holds; links are tracked.
 
-Known gap: story reactions and inbound-DM keywords are not triggers yet — the rule engine is
-comment-driven. See [`DEVELOPMENT.md`](DEVELOPMENT.md).
+Three triggers: a comment on a post, a reply to a story, or a DM containing a keyword.
+
+Known gap: a bare emoji *reaction* to a story is not a trigger — Meta does not document how
+those are delivered, and the one we have received carried no sender. See
+[`DEVELOPMENT.md`](DEVELOPMENT.md).
 
 ## License
 

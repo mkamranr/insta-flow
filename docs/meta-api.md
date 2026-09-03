@@ -298,6 +298,50 @@ what a sender almost always means.
 
 Docs: <https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api>
 
+## 4d. Story replies and inbound DMs — verified 2026-09-03
+
+Both arrive on the **`messages`** field, which this app already subscribes to. They were
+being delivered, stored and enqueued long before anything acted on them.
+
+| Event | Shape |
+| --- | --- |
+| Story reply | `entry[].messaging[].message.reply_to.story = {id, url}` |
+| Quoted reply to a message | `message.reply_to.mid` — an ordinary DM, **not** a story reply |
+| Plain DM | `message.text`, no `reply_to` |
+| Our own send coming back | `message.is_echo: true` |
+
+**The 24-hour window.** Meta allows 24 hours to reply to a message a user sent. Their own
+message opens it, so a story reply or keyword DM is answered with an ordinary
+`send_direct_message` — no private reply, no opening DM, no postback button. A file therefore
+sends on the first message, unlike the comment path where it needs the button step first.
+
+**Echoes are a loop hazard.** 33 have been observed on this account. Filtering on `is_echo`
+alone rests on a single field Meta controls, and a message-id reservation does **not** help:
+every echo carries a distinct `mid` and would earn its own valid reservation. Sender identity
+is therefore checked independently, at the endpoint and again in the worker.
+
+**Story reactions are undocumented.** Meta's webhook reference does not say how a bare emoji
+tap on a story is delivered. The one reaction received here was a reaction to a *message*:
+
+```json
+{"reaction": {"mid": "...", "action": "react", "reaction": "other", "emoji": "❤"}}
+```
+
+It carries no `sender`, so there would be nobody to reply to. Not implemented; the endpoint
+logs the key names of any unhandled messaging event so a real story reaction can be inspected
+rather than guessed at.
+
+**Automated-experience disclosure.** Meta requires informing users in California and Germany
+that they are interacting with automation. Social Flow appends a configurable line, on by
+default, editable in Settings.
+
+**`GET /{ig-user-id}/stories` is unconfirmed for Instagram Login.** It is documented only for
+Facebook Login (`instagram_basic` + `pages_read_engagement`). Called live with an Instagram
+Login token it returned `200 {"data": []}` with no active stories — the same shape that misled
+this project in §7. Until a story exists to test against, "works, none active" cannot be
+distinguished from "silently filtered". Not depended on: the story trigger reads
+`reply_to.story` from the webhook and needs no story listing.
+
 ## 5. Webhooks
 
 ### 5.1 Verification (GET)

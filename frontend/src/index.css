@@ -1352,3 +1352,45 @@ button.theme-opt.active {
     border: 1px solid var(--border);
   }
 }
+
+/* -- New automation dialog ------------------------------------------------ */
+
+.modal.start-modal { width: min(880px, 100%); }
+.start-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+
+button.start-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 5px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 16px; text-align: left; white-space: normal;
+  box-shadow: var(--shadow-xs);
+}
+button.start-card:hover:not(:disabled) {
+  background: var(--surface); border-color: var(--border-strong); box-shadow: var(--shadow-md);
+}
+.start-kicker {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--faint); margin-top: 10px;
+}
+.start-title { font-size: 17px; letter-spacing: -0.01em; }
+.start-go { margin-top: 12px; font-weight: 700; font-size: 13px; display: flex; gap: 6px; }
+
+/* Explicit height: the sketch has no intrinsic size to derive one from. */
+.start-sketch {
+  display: grid; place-items: center; width: 100%; height: 104px;
+  border-radius: var(--radius); overflow: hidden;
+}
+.tint-lime { background: color-mix(in oklab, var(--accent) 34%, var(--surface)); }
+.tint-blue { background: color-mix(in oklab, #4f8ef7 22%, var(--surface)); }
+.tint-pink { background: color-mix(in oklab, #f77ba8 24%, var(--surface)); }
+.sketch-card {
+  width: 62%; background: var(--surface); border-radius: 9px;
+  padding: 10px; display: flex; flex-direction: column; gap: 6px;
+  box-shadow: var(--shadow-xs);
+}
+.sketch-bar { height: 14px; border-radius: 4px; background: var(--border-strong); }
+.sketch-bar.wide { width: 70%; }
+.sketch-line { height: 6px; border-radius: 3px; background: var(--border); }
+.sketch-line.short { width: 55%; }
+
+.start-foot { justify-content: center; }
