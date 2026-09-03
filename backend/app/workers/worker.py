@@ -20,6 +20,7 @@ from app.workers.tasks import (
     process_postback_event,
     recheck_follow,
     refresh_expiring_tokens,
+    refresh_geoip_database,
     snapshot_account_metrics,
 )
 
@@ -70,6 +71,7 @@ class WorkerSettings:
         process_message_event,
         recheck_follow,
         refresh_expiring_tokens,
+        refresh_geoip_database,
         snapshot_account_metrics,
     ]
     cron_jobs = [
@@ -79,6 +81,9 @@ class WorkerSettings:
         # is labelled with. Meta keeps no follower history, so a day not written
         # here is a day of growth that can never be recovered (§2b).
         cron(snapshot_account_metrics, hour=0, minute=15),
+        # GeoLite2 is rebuilt twice a week; Wednesday and Saturday keeps
+        # it fresh without hammering the download limit.
+        cron(refresh_geoip_database, weekday={2, 5}, hour=4, minute=30),
     ]
     on_startup = startup
     on_shutdown = shutdown

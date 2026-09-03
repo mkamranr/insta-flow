@@ -5,11 +5,17 @@ import {
   getAccountPerformance,
   getPostPerformance,
   getRulePerformance,
+  getRulePlaces,
+  getAccountPlaces,
+  getHighlights,
+  getTrends,
   getSummary,
   type AccountPerformance as AccountData,
+  type PlaceRow,
   type PostPerformance,
   type RulePerformance,
 } from '../api/analytics'
+import { BarSeries } from '../components/analytics/BarSeries'
 import { ActivityLog } from './Activity'
 
 const TABS = [
@@ -65,6 +71,8 @@ function Performance({ days }: { days: number }) {
 
   return (
     <>
+      <Highlights days={days} />
+
       <section className="section">
         <div className="section-head">
           <div>
@@ -92,6 +100,22 @@ function Performance({ days }: { days: number }) {
 
       <section className="section">
         <AutomationPerformance rules={rules} posts={posts} />
+      </section>
+
+      <EngagementTrends days={days} />
+
+      <section className="section">
+        <div className="section-head">
+          <div>
+            <h2>Geographic distribution</h2>
+            <p className="muted small">
+              Where link clicks came from, across every automation.
+            </p>
+          </div>
+        </div>
+        <div className="card">
+          <AccountPlaces days={days} />
+        </div>
       </section>
 
       <section className="section">
@@ -144,6 +168,169 @@ function Performance({ days }: { days: number }) {
   )
 }
 
+// -- Highlights, trends and geography ----------------------------------------
+
+function HighlightCard({
+  kicker,
+  headline,
+  detail,
+}: {
+  kicker: string
+  headline: React.ReactNode
+  detail?: React.ReactNode
+}) {
+  return (
+    <div className="stat highlight">
+      <div className="highlight-kicker">{kicker}</div>
+      <div className="highlight-headline">{headline}</div>
+      {detail && <div className="muted small">{detail}</div>}
+    </div>
+  )
+}
+
+function niceDay(bucket?: string | null) {
+  if (!bucket) return null
+  const date = new Date(`${bucket}T00:00:00Z`)
+  return Number.isNaN(date.getTime())
+    ? bucket
+    : date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
+}
+
+function Highlights({ days }: { days: number }) {
+  const { data } = useQuery({
+    queryKey: ['highlights', days],
+    queryFn: () => getHighlights(days),
+  })
+  if (!data?.connected) return null
+
+  // Every card can be blank. "Nothing yet" is a real answer, and inventing a
+  // winner from an empty set would be worse than showing none.
+  const none = <span className="muted">Nothing yet</span>
+
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
+          <h2>Highlights</h2>
+          <p className="muted small">The standout result from each section.</p>
+        </div>
+      </div>
+      <div className="stat-grid">
+        <HighlightCard
+          kicker="Best automation"
+          headline={data.best_automation ? <mark>{data.best_automation.name}</mark> : none}
+          detail={
+            data.best_automation
+              ? `${data.best_automation.click_through_rate}% CTR · ${data.best_automation.dms_sent} DMs · ${data.best_automation.link_clicks} clicks`
+              : 'No automation has sent a DM yet.'
+          }
+        />
+        <HighlightCard
+          kicker="Top day for DMs"
+          headline={data.top_dm_day ? <mark>{niceDay(data.top_dm_day.bucket)}</mark> : none}
+          detail={data.top_dm_day ? `${data.top_dm_day.count} DMs sent — busiest day.` : undefined}
+        />
+        <HighlightCard
+          kicker="Top day for clicks"
+          headline={data.top_click_day ? <mark>{niceDay(data.top_click_day.bucket)}</mark> : none}
+          detail={
+            data.top_click_day ? `${data.top_click_day.count} link clicks — peak day.` : undefined
+          }
+        />
+        <HighlightCard
+          kicker="Top country"
+          headline={data.top_country ? <mark>{data.top_country.country}</mark> : none}
+          detail={
+            data.top_country
+              ? `${data.top_country.clicks} clicks`
+              : 'Needs a MaxMind key in Settings, and a click after it.'
+          }
+        />
+      </div>
+    </section>
+  )
+}
+
+function EngagementTrends({ days }: { days: number }) {
+  const [bucket, setBucket] = useState<'hour' | 'day'>('hour')
+  const { data } = useQuery({
+    queryKey: ['trends', days, bucket],
+    queryFn: () => getTrends(days, bucket),
+  })
+
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
+          <h2>Engagement trends</h2>
+          <p className="muted small">When the DMs went out, and when they were clicked.</p>
+        </div>
+        <div className="filters" style={{ margin: 0 }}>
+          {(['hour', 'day'] as const).map((id) => (
+            <button
+              key={id}
+              className={bucket === id ? 'filter active' : 'filter'}
+              onClick={() => setBucket(id)}
+            >
+              {id === 'hour' ? 'Hourly' : 'Daily'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="trend-grid">
+        <div className="card">
+          <h3 className="small">DMs sent</h3>
+          <BarSeries
+            data={data?.dms ?? []}
+            byHour={bucket === 'hour'}
+            emptyNote="No DMs sent in this window."
+          />
+        </div>
+        <div className="card">
+          <h3 className="small">Link clicks</h3>
+          <BarSeries
+            data={data?.clicks ?? []}
+            byHour={bucket === 'hour'}
+            emptyNote="No clicks recorded in this window. Clicks are counted per click from the day this was added."
+          />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function AccountPlaces({ days }: { days: number }) {
+  const [by, setBy] = useState<'country' | 'city'>('country')
+  const { data } = useQuery({
+    queryKey: ['account-places', days, by],
+    queryFn: () => getAccountPlaces(days, by),
+  })
+  if (!data) return <p className="muted small">Loading…</p>
+
+  return (
+    <>
+      <div className="auto-body-head">
+        <div className="filters" style={{ margin: 0 }}>
+          {(['country', 'city'] as const).map((id) => (
+            <button
+              key={id}
+              className={by === id ? 'filter active' : 'filter'}
+              onClick={() => setBy(id)}
+            >
+              {id === 'country' ? 'Country' : 'City'}
+            </button>
+          ))}
+        </div>
+        <span className="muted small">
+          {data.located} of {data.total_clicks} clicks placed · {data.countries} countries
+        </span>
+      </div>
+      <PlaceRows rows={data.rows} located={data.located} />
+    </>
+  )
+}
+
 // -- Automation performance --------------------------------------------------
 
 const SORTS = [
@@ -163,6 +350,7 @@ function AutomationCard({
   open: boolean
   onToggle: () => void
 }) {
+  const [panel, setPanel] = useState<'links' | 'places'>('links')
   const linkCount = rule.links.length
   const top = rule.links[0]
 
@@ -209,6 +397,22 @@ function AutomationCard({
 
       {open && (
         <div className="auto-body">
+          <div className="filters" style={{ margin: '12px 0 4px' }}>
+            {(['links', 'places'] as const).map((id) => (
+              <button
+                key={id}
+                className={panel === id ? 'filter active' : 'filter'}
+                onClick={() => setPanel(id)}
+              >
+                {id === 'links' ? 'Link performance' : 'Geographic distribution'}
+              </button>
+            ))}
+          </div>
+
+          {panel === 'places' ? (
+            <PlacesPanel ruleId={rule.id} />
+          ) : (
+          <>
           <div className="auto-body-head">
             <strong className="small">Link performance</strong>
             {top && (
@@ -253,9 +457,81 @@ function AutomationCard({
               </div>
             ))
           )}
+          </>
+          )}
         </div>
       )}
     </div>
+  )
+}
+
+function PlaceRows({ rows, located }: { rows: PlaceRow[]; located: number }) {
+  if (rows.length === 0) {
+    return (
+      <p className="muted small">
+        No clicks have been placed yet. Locations are resolved at click time, so only clicks
+        made after the GeoLite2 database was installed carry one — add your MaxMind key under
+        Settings if you have not.
+      </p>
+    )
+  }
+  const peak = rows[0]?.clicks ?? 0
+  return (
+    <div className="place-list">
+      {rows.slice(0, 12).map((row) => {
+        const name = row.city ? `${row.city} (${row.country ?? '—'})` : row.country
+        const share = located ? Math.round((row.clicks / located) * 100) : 0
+        return (
+          <div className="place-row" key={`${row.country_code}-${row.city ?? ''}`}>
+            <span className="place-name">{name ?? 'Unknown'}</span>
+            <span className="place-track" aria-hidden="true">
+              <span
+                className="place-bar"
+                style={{ width: `${peak ? (row.clicks / peak) * 100 : 0}%` }}
+              />
+            </span>
+            <span className="place-count">{row.clicks.toLocaleString()}</span>
+            <span className="muted small place-share">{share}%</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function PlacesPanel({ ruleId }: { ruleId: string }) {
+  const [by, setBy] = useState<'country' | 'city'>('country')
+  const { data, isLoading } = useQuery({
+    queryKey: ['rule-places', ruleId, by],
+    queryFn: () => getRulePlaces(ruleId, by),
+  })
+
+  if (isLoading) return <p className="muted small">Loading…</p>
+  if (!data) return null
+
+  const rows = data.rows
+
+  return (
+    <>
+      <div className="auto-body-head">
+        <div className="filters" style={{ margin: 0 }}>
+          {(['country', 'city'] as const).map((id) => (
+            <button
+              key={id}
+              className={by === id ? 'filter active' : 'filter'}
+              onClick={() => setBy(id)}
+            >
+              {id === 'country' ? 'Country' : 'City'}
+            </button>
+          ))}
+        </div>
+        <span className="muted small">
+          {data.located} of {data.total_clicks} clicks placed · {data.countries} countries
+        </span>
+      </div>
+
+      <PlaceRows rows={rows} located={data.located} />
+    </>
   )
 }
 

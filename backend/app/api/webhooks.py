@@ -76,9 +76,7 @@ async def receive(
         logger.warning("webhook_payload_unparseable")
         return {"status": "ignored", "reason": "unparseable"}
 
-    record, is_new = await events.record(
-        raw_body=raw_body, payload=payload, event_type="comments"
-    )
+    record, is_new = await events.record(raw_body=raw_body, payload=payload, event_type="comments")
     if not is_new:
         logger.info("webhook_duplicate_ignored", extra={"event_id": str(record["_id"])})
         return {"status": "duplicate", "queued": 0}

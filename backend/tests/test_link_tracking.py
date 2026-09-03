@@ -99,3 +99,19 @@ async def test_clicks_are_summed_not_counted(database):
             }
         )
     assert await links.count_clicks({"instagram_account_id": account}) == 8
+
+
+async def test_a_redirect_survives_a_link_with_no_account(api, database):
+    """Analytics must never be the reason a redirect fails.
+
+    A link row without an `instagram_account_id` used to raise KeyError and
+    return 500 — the visitor lost the page over our own bookkeeping.
+    """
+    await database["link_clicks"].insert_one(
+        {"token": "orphan-link", "target_url": "https://example.com/ok", "click_count": 0}
+    )
+
+    response = await api.get("/r/orphan-link", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://example.com/ok"

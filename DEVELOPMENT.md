@@ -92,6 +92,14 @@ key error means another worker already has it — skip, do not send.
 - The comment id arrives as `value.comment_id` **or** `value.id` — Meta's own docs disagree.
   Accept either.
 
+## Collections beyond the core
+
+| Collection | Why it exists |
+| --- | --- |
+| `account_snapshots` | Instagram gives a follower total and no history. Growth is only knowable if we write it down daily. One row per account per day, unique index. |
+| `click_events` | One row per click. `link_clicks` is a counter with a first/last timestamp — it knows how many, never when, so an hourly chart cannot come from it. |
+| `app_settings` | A single document for things an operator may edit from the dashboard. Currently the MaxMind credentials; the license key is encrypted like a Meta token. |
+
 ## Known gaps
 
 **The rule engine is comment-driven.** A rule matches keywords in a comment on a specific post,
@@ -111,6 +119,14 @@ offering it.
 **Follower history is only what we recorded.** Instagram exposes a follower total and no
 history, so growth begins the day the account was connected, and gross new-vs-unfollowed is not
 derivable from a total at all — only net change is.
+
+**Click history begins with `click_events`.** Clicks recorded before that collection existed
+are a counter and a last-clicked timestamp, so they cannot be placed on a timeline or a map.
+
+**A CSS gotcha that has bitten three times.** The global `button:hover:not(:disabled)` rule is
+specificity (0,2,1). Any `.some-class:hover` styling a `<button>` is (0,2,0) and loses, so the
+element turns dark on hover. Write `button.some-class:hover:not(:disabled)` instead. The same
+arithmetic applies to `.tab.active` and friends.
 
 ## Environment
 

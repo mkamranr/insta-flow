@@ -1,5 +1,83 @@
 import { useQuery } from '@tanstack/react-query'
-import { getSummary, getTopCommenters } from '../api/analytics'
+import { getSuperfans, getSummary, getTopCommenters } from '../api/analytics'
+
+function HeartIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1L12 21l7.7-7.6 1.1-1a5.5 5.5 0 0 0 0-7.8Z" />
+    </svg>
+  )
+}
+
+function Superfans() {
+  const { data, isLoading } = useQuery({ queryKey: ['superfans'], queryFn: () => getSuperfans() })
+
+  return (
+    <section className="section">
+      <div className="card">
+        <div className="superfan-head">
+          <span className="superfan-mark" aria-hidden="true">
+            <HeartIcon />
+          </span>
+          <div>
+            <h2>Superfans</h2>
+            <p className="muted small">People who keep turning up, week after week.</p>
+          </div>
+        </div>
+
+        {isLoading && <p className="muted small">Loading…</p>}
+
+        {data && data.rows.length === 0 && (
+          <div className="empty-state">
+            <p className="empty-title">No superfans yet</p>
+            <p className="muted small">
+              {/* The server's own wording, not a paraphrase of it. */}
+              A superfan is someone with {data.rule}.
+            </p>
+          </div>
+        )}
+
+        {data && data.rows.length > 0 && (
+          <>
+            <p className="muted small">
+              {data.rows.length} {data.rows.length === 1 ? 'person' : 'people'} with {data.rule},
+              over the last {data.weeks_considered} weeks.
+            </p>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th className="numeric">Streak</th>
+                  <th className="numeric">Active weeks</th>
+                  <th className="numeric">Comments</th>
+                  <th>Last seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((fan, index) => (
+                  <tr key={fan.instagram_user_id}>
+                    <td>
+                      <span className="rank">{index + 1}</span>@{fan.username || 'unknown'}
+                    </td>
+                    <td className="numeric">
+                      {fan.streak_weeks} {fan.streak_weeks === 1 ? 'week' : 'weeks'}
+                    </td>
+                    <td className="numeric">{fan.qualifying_weeks}</td>
+                    <td className="numeric">{fan.comments}</td>
+                    <td className="muted small">
+                      {fan.last_at ? new Date(fan.last_at).toLocaleDateString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </div>
+    </section>
+  )
+}
 
 export function Insights() {
   const { data: summary } = useQuery({ queryKey: ['summary'], queryFn: () => getSummary(7) })
@@ -61,6 +139,8 @@ export function Insights() {
           </ol>
         </div>
       </section>
-    </>
+    
+      <Superfans />
+</>
   )
 }

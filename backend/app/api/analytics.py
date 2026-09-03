@@ -13,6 +13,7 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import (
     AccountsRepo,
+    ClickEventsRepo,
     CommentsRepo,
     ContactsRepo,
     CurrentUser,
@@ -23,11 +24,22 @@ from app.api.deps import (
     SnapshotsRepo,
 )
 from app.db.repositories import serialise_required
+from app.errors import NotFoundError
+from app.services.superfans import (
+    MIN_COMMENTS_PER_WEEK,
+    MIN_CONSECUTIVE_WEEKS,
+)
+from app.services.superfans import find as find_superfans
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 SENT_ACTIONS = ("private_reply", "opening_dm")
+
+_SUPERFAN_RULE = (
+    f"{MIN_COMMENTS_PER_WEEK}+ comments in a week, in at least "
+    f"{MIN_CONSECUTIVE_WEEKS} consecutive weeks"
+)
 
 
 async def _account_id(accounts: Any, user: dict[str, Any]) -> Any:
@@ -187,6 +199,31 @@ async def activity(
     return out
 
 
+@router.get("/superfans")
+async def superfans(
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    comments: CommentsRepo,
+    weeks: int = Query(12, ge=2, le=52),
+) -> dict[str, Any]:
+    """People who comment repeatedly, week after week.
+
+    The rule is returned alongside the rows so the UI states the same definition
+    the server applied, rather than a paraphrase that can drift from it.
+    """
+    account_id = await _account_id(accounts, user)
+    if account_id is None:
+        return {"rows": [], "rule": _SUPERFAN_RULE}
+
+    since = datetime.now(UTC) - timedelta(weeks=weeks)
+    rows = await comments.weekly_counts(account_id, since)
+    return {
+        "rows": find_superfans(rows),
+        "weeks_considered": weeks,
+        "rule": _SUPERFAN_RULE,
+    }
+
+
 @router.get("/top-commenters")
 async def top_commenters(
     user: CurrentUser,
@@ -214,6 +251,153 @@ async def top_commenters(
         {"username": doc["_id"], "comments": doc["comments"], "last_at": doc.get("last_at")}
         async for doc in await comments.collection.aggregate(pipeline)
     ]
+
+
+@router.get("/trends")
+async def trends(
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    executions: ExecutionsRepo,
+    events: ClickEventsRepo,
+    days: int = Query(7, ge=1, le=90),
+    bucket: str = Query("hour", pattern="^(hour|day)$"),
+) -> dict[str, Any]:
+    """DMs sent and link clicks over time.
+
+    Clicks come from `click_events`, one row per click. The counter on
+    `link_clicks` cannot answer this: it knows how many, never when.
+    """
+    account_id = await _account_id(accounts, user)
+    if account_id is None:
+        return {"connected": False, "dms": [], "clicks": []}
+
+    since = datetime.now(UTC) - timedelta(days=days)
+    by_hour = bucket == "hour"
+    return {
+        "connected": True,
+        "days": days,
+        "bucket": bucket,
+        "dms": await executions.series(account_id, since, SENT_ACTIONS, by_hour=by_hour),
+        "clicks": await events.series(account_id, since, by_hour=by_hour),
+    }
+
+
+@router.get("/places")
+async def account_places(
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    events: ClickEventsRepo,
+    days: int = Query(7, ge=1, le=90),
+    by: str = Query("country", pattern="^(country|city)$"),
+) -> dict[str, Any]:
+    """Where this account's link clicks came from, across every automation."""
+    account_id = await _account_id(accounts, user)
+    if account_id is None:
+        return {"rows": [], "located": 0}
+
+    since = datetime.now(UTC) - timedelta(days=days)
+    rows = await events.by_place(account_id, since, by_city=(by == "city"))
+    total = await events.count({"instagram_account_id": account_id, "clicked_at": {"$gte": since}})
+    return {
+        "by": by,
+        "rows": rows,
+        "located": sum(row["clicks"] for row in rows),
+        "total_clicks": total,
+        "countries": len({row["country_code"] for row in rows if row["country_code"]}),
+    }
+
+
+@router.get("/highlights")
+async def highlights(
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    executions: ExecutionsRepo,
+    events: ClickEventsRepo,
+    links: LinkClicksRepo,
+    rules: RulesRepo,
+    days: int = Query(7, ge=1, le=90),
+) -> dict[str, Any]:
+    """The standout result from each section, or null where there is not one.
+
+    Every field is nullable on purpose. "No clicks yet" is a real state, and a
+    highlight card inventing a winner from an empty set would be worse than an
+    honest blank.
+    """
+    account_id = await _account_id(accounts, user)
+    if account_id is None:
+        return {"connected": False}
+
+    since = datetime.now(UTC) - timedelta(days=days)
+    clicks_by_rule = await links.clicks_by_rule(account_id)
+
+    best = None
+    for rule in await rules.list_for_account(account_id):
+        sent = await executions.count(
+            {"rule_id": rule["_id"], "status": "success", "action": {"$in": list(SENT_ACTIONS)}}
+        )
+        clicks = clicks_by_rule.get(str(rule["_id"]), 0)
+        if not sent:
+            continue
+        rate = round(clicks / sent * 100, 1)
+        if best is None or rate > best["click_through_rate"]:
+            best = {
+                "id": str(rule["_id"]),
+                "name": rule.get("name") or "Comment → DM",
+                "dms_sent": sent,
+                "link_clicks": clicks,
+                "click_through_rate": rate,
+            }
+
+    dm_days = await executions.series(account_id, since, SENT_ACTIONS, by_hour=False)
+    click_days = await events.series(account_id, since, by_hour=False)
+    places = await events.by_place(account_id, since)
+
+    def peak(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        return max(rows, key=lambda row: row["count"]) if rows else None
+
+    return {
+        "connected": True,
+        "days": days,
+        "best_automation": best,
+        "top_dm_day": peak(dm_days),
+        "top_click_day": peak(click_days),
+        "top_country": places[0] if places else None,
+    }
+
+
+@router.get("/rules/{rule_id}/places")
+async def rule_places(
+    rule_id: str,
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    rules: RulesRepo,
+    links: LinkClicksRepo,
+    by: str = Query("country", pattern="^(country|city)$"),
+) -> dict[str, Any]:
+    """Where a rule's link clicks came from.
+
+    Locations are derived at click time from a local GeoLite2 database; no IP is
+    stored. Rows predating the database, or from addresses it cannot place, carry
+    no location and are simply absent -- see `located` versus `total_clicks`.
+    """
+    account_id = await _account_id(accounts, user)
+    if account_id is None:
+        return {"rows": [], "located": 0, "total_clicks": 0}
+
+    rule = await rules.get(rule_id)
+    if rule is None or rule.get("instagram_account_id") != account_id:
+        raise NotFoundError("Automation not found.")
+
+    rows = await links.clicks_by_place(rule["_id"], by_city=(by == "city"))
+    located = sum(row["clicks"] for row in rows)
+    total = (await links.clicks_by_rule(account_id)).get(rule_id, 0)
+    return {
+        "by": by,
+        "rows": rows,
+        "located": located,
+        "total_clicks": total,
+        "countries": len({row["country_code"] for row in rows if row["country_code"]}),
+    }
 
 
 @router.get("/account")

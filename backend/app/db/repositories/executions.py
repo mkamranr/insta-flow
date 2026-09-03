@@ -70,9 +70,7 @@ class ExecutionsRepository(BaseRepository[Any]):
         except DuplicateKeyError:
             return None
 
-    async def find_reservation(
-        self, comment_id: Any, rule_id: Any, action: str
-    ) -> Document | None:
+    async def find_reservation(self, comment_id: Any, rule_id: Any, action: str) -> Document | None:
         """Fetch the reservation a `reserve()` collision refers to.
 
         A retry of the same job must continue the existing execution, not create
@@ -204,6 +202,36 @@ class ExecutionsRepository(BaseRepository[Any]):
         return await self.collection.distinct(
             "comment_id", {"instagram_account_id": to_object_id(instagram_account_id)}
         )
+
+    async def series(
+        self,
+        instagram_account_id: Any,
+        since: Any,
+        actions: tuple[str, ...],
+        *,
+        by_hour: bool = True,
+    ) -> list[Document]:
+        """Successful sends per hour or per day, oldest first."""
+        fmt = "%Y-%m-%dT%H:00" if by_hour else "%Y-%m-%d"
+        pipeline: list[Document] = [
+            {
+                "$match": {
+                    "instagram_account_id": to_object_id(instagram_account_id),
+                    "status": "success",
+                    "action": {"$in": list(actions)},
+                    "created_at": {"$gte": since},
+                }
+            },
+            {
+                "$group": {
+                    "_id": {"$dateToString": {"format": fmt, "date": "$created_at"}},
+                    "count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+        cursor = await self.collection.aggregate(pipeline)
+        return [{"bucket": doc["_id"], "count": int(doc["count"])} async for doc in cursor]
 
     async def count_by_status(self, query: Document | None = None) -> dict[str, int]:
         pipeline: list[Document] = []

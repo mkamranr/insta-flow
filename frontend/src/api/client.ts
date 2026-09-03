@@ -35,4 +35,23 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const apiGet = <T,>(path: string) => request<T>('GET', path)
 export const apiPost = <T,>(path: string, body?: unknown) => request<T>('POST', path, body)
+export const apiPut = <T,>(path: string, body?: unknown) => request<T>('PUT', path, body)
 export const apiDelete = <T,>(path: string) => request<T>('DELETE', path)
+
+/** Multipart upload. No Content-Type header — the browser sets the boundary. */
+export async function apiUpload<T>(path: string, file: File): Promise<T> {
+  const form = new FormData()
+  form.append('file', file)
+  const response = await fetch(path, { method: 'POST', credentials: 'same-origin', body: form })
+  const text = await response.text()
+  const payload = text ? JSON.parse(text) : null
+  if (!response.ok) {
+    const error = payload?.error
+    throw new ApiError(
+      error?.message ?? `Upload failed (${response.status})`,
+      response.status,
+      error?.code,
+    )
+  }
+  return payload as T
+}

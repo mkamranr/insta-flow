@@ -22,6 +22,11 @@ class Settings(BaseSettings):
 
     mongo_url: str = "mongodb://mongodb:27017"
     mongo_database: str = "instaflow"
+    # Meta fetches attachments by URL rather than accepting bytes, so uploads
+    # have to live somewhere this server can serve publicly (§4c).
+    upload_dir: str = "/app/uploads"
+    # GeoLite2-City.mmdb lives beside the uploads so it survives a rebuild.
+    geoip_dir: str = "/app/uploads/.geoip"
     redis_url: str = "redis://redis:6379/0"
 
     # Meta credentials. These are the *Instagram* App ID/Secret. See docs/meta-api.md.

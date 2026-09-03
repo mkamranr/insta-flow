@@ -18,8 +18,7 @@ def token_fields(access_token: str, expires_at: datetime | None, secret: str) ->
     """Build the account fields that carry a token. Encrypts on the way in."""
     return {
         "access_token_encrypted": encrypt(access_token, secret),
-        "token_expires_at": expires_at
-        or datetime.now(UTC) + timedelta(days=TOKEN_LIFETIME_DAYS),
+        "token_expires_at": expires_at or datetime.now(UTC) + timedelta(days=TOKEN_LIFETIME_DAYS),
         "token_obtained_at": datetime.now(UTC),
     }
 

@@ -40,9 +40,15 @@ Meta's own rate limits.
 - **Email capture** — ask for an address in the DM before sending the link, exportable as CSV
 - **Deferred delivery** — a gated non-follower who follows later gets the link automatically,
   inside the 24-hour messaging window their button tap opened
+- **Reply delay** — wait up to 59:59 before answering, so it does not read as instant automation
+- **File attachments** — send an image, video, audio clip or PDF with the payoff DM
+- **Live DM preview** while you build the automation, including the attachment bubble
+- **Superfans** — people who comment 2+ times a week for consecutive weeks
 - **Click tracking** with honest click-through numbers, per link destination
-- **Analytics** — performance, activity log, and follower growth recorded daily
-- **17 starter templates** across five categories, pre-filled and ready to customise
+- **Analytics** — highlights, engagement trends, activity log, and follower growth recorded daily
+- **Click geography** (optional) — country and city from a local GeoLite2 database; the IP is
+  used for the lookup and never stored
+- **18 starter templates** across five categories, pre-filled and ready to customise
 - "Only send once per person", per-rule rate limits, and a full activity log
 - **Optional local AI** — classify comments by intent with Ollama or vLLM when no keyword matches
 - **Dry-run mode** that exercises the entire pipeline without sending anything
@@ -137,10 +143,11 @@ rather than worked around.
 
 ## Tests
 
-494 tests covering keyword matching, template rendering, policy decisions, webhook signature
+550 tests covering keyword matching, template rendering, policy decisions, webhook signature
 validation, idempotency under concurrency, token encryption, retry semantics, and the AI
-classifier's prompt-injection resistance, the follow gate, and deferred delivery after a
-follow. Meta is never contacted in tests.
+classifier's prompt-injection resistance, the follow gate, deferred delivery after a follow,
+attachment storage and path traversal, the reply delay, and who counts as a superfan. Meta is
+never contacted in tests.
 
 ```bash
 make test    # backend suite

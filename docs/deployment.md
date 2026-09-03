@@ -109,6 +109,51 @@ them, so this holds unless someone changes it.
 With Tailscale Funnel, nothing needs to be open on the host firewall at all: Tailscale dials
 out.
 
+## Attachment storage
+
+Rules can carry a file — image, video, audio or PDF — that Meta delivers with the payoff DM.
+Meta does not accept bytes; it takes a URL and fetches it, so uploads have to be served
+publicly (docs/meta-api.md §4c).
+
+- Files land in `./uploads/<uuid>/<slug>-<hex>.<ext>`, bind-mounted into the API container at
+  `/app/uploads`. They live on the host, so a rebuild does not lose them.
+- They are served at `/files/<uuid>/<name>` **without authentication** — Meta carries none of
+  our credentials. The UUID is the only thing keeping a file unlisted. Treat anything uploaded
+  as readable by whoever holds the URL.
+- Caddy needs a `handle /files/*` route. Without it requests fall through to the SPA and Meta
+  silently receives an HTML page instead of the file.
+- Meta only fetches **once, at send time**, then re-hosts on `cdn.fbsbx.com`. The host must be
+  reachable at that moment, not forever.
+- Deleting a rule deletes its file, and replacing an attachment deletes the one it replaced.
+  Nothing else references them, so an orphan would sit there at up to 25MB a time.
+
+Back these up with the database if the automations matter; `uploads/` is gitignored.
+
+## Click geography (optional)
+
+Country and city for link clicks, from MaxMind's **GeoLite2 database** — not their web
+service. The database is downloaded here and every lookup runs locally, so no visitor IP is
+ever sent to MaxMind.
+
+Set it up in **Settings → Click geography** with a MaxMind account ID and license key. The key
+is encrypted at rest and never returned by the API. Credentials are verified against MaxMind
+on save, so a typo surfaces immediately rather than as a quietly empty report weeks later.
+
+- The database refreshes automatically on Wednesdays and Saturdays. MaxMind rebuilds GeoLite2
+  twice a week, and the job checks with a HEAD request first, which does not count against the
+  daily download limit.
+- It lands in `./uploads/.geoip/GeoLite2-City.mmdb`, about 65MB.
+- **Only the derived country and city are stored.** The IP is used for the lookup and dropped.
+- Locations are resolved at click time, so clicks made before setup have none and cannot be
+  backfilled.
+
+**The visitor's address has to survive the proxy chain.** `request.client.host` is always
+Caddy, so the code reads `X-Forwarded-For` and takes the first public entry scanning right to
+left. If the chain never carried a public address, the click is recorded without a location
+rather than attributed to a proxy. A click that could not be placed logs `click_not_located`
+with the chain *shape* — `private>private` versus `public>private`, never the addresses — which
+is how to tell "no database" apart from "the address never reached us".
+
 ## Backups
 
 MongoDB is authoritative; Redis holds only in-flight jobs and can be discarded.

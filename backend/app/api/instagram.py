@@ -125,6 +125,8 @@ async def callback(
             "username": profile.username,
             "display_name": profile.name,
             "account_type": profile.account_type,
+            # Meta's CDN URLs expire, so this is refreshed by the daily job too.
+            "profile_picture_url": profile.profile_picture_url,
             "followers_count": profile.followers_count,
             "follows_count": profile.follows_count,
             "media_count": profile.media_count,
@@ -198,7 +200,7 @@ async def deauthorize_info() -> HTMLResponse:
     """A human landing here should see an explanation, not raw JSON."""
     return HTMLResponse(
         "<!doctype html><meta charset=utf-8><title>Deauthorize callback</title>"
-        "<body style=\"font:16px/1.6 system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem\">"
+        '<body style="font:16px/1.6 system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem">'
         "<h1 style=font-size:1.3rem>Deauthorize callback</h1>"
         "<p>This endpoint exists for Meta, not for people. Meta sends a signed "
         "POST here when someone removes this app from their Instagram account, "
@@ -237,7 +239,7 @@ async def data_deletion_info(settings: SettingsDep) -> HTMLResponse:
     """As with deauthorize: a person here should get an explanation, not a 405."""
     return HTMLResponse(
         "<!doctype html><meta charset=utf-8><title>Data deletion callback</title>"
-        "<body style=\"font:16px/1.6 system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem\">"
+        '<body style="font:16px/1.6 system-ui;max-width:34rem;margin:3rem auto;padding:0 1rem">'
         "<h1 style=font-size:1.3rem>Data deletion callback</h1>"
         "<p>This endpoint exists for Meta, not for people. Meta sends a signed "
         "POST here to request deletion of an account's data.</p>"

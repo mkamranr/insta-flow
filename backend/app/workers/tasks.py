@@ -15,6 +15,7 @@ from arq.worker import Retry
 from app.db.repositories import (
     AccountSnapshotsRepository,
     AiClassificationsRepository,
+    AppSettingsRepository,
     CommentsRepository,
     ContactsRepository,
     ExecutionsRepository,
@@ -130,6 +131,7 @@ async def process_comment_event(
     webhook_event_id: str,
     instagram_account_id: str,
     instagram_comment_id: str,
+    delayed: bool = False,
 ) -> dict[str, Any]:
     db = ctx["db"]
     settings = ctx["settings"]
@@ -233,6 +235,27 @@ async def process_comment_event(
 
     # The opening DM and the payoff DM are separate actions, each with its own
     # reservation, so the second can be sent later without colliding with the first.
+    # Reply delay. Re-queued rather than slept on: a worker holding a job open
+    # for a minute is a worker not draining the queue. The rule is re-read on the
+    # second pass, so editing it during the wait takes effect.
+    #
+    # Nothing is reserved yet, so a Meta redelivery could double-enqueue -- the
+    # webhook endpoint's event_hash index is what stops that (§idempotency).
+    delay_seconds = int(rule.get("reply_delay_seconds") or 0)
+    if delay_seconds > 0 and not delayed:
+        redis = ctx.get("redis")
+        if redis is not None:
+            await redis.enqueue_job(
+                "process_comment_event",
+                webhook_event_id,
+                instagram_account_id,
+                instagram_comment_id,
+                True,
+                _defer_by=timedelta(seconds=delay_seconds),
+            )
+            logger.info("reply_delayed", extra={**log, "delay_seconds": delay_seconds})
+            return {"status": "scheduled", "delay_seconds": delay_seconds}
+
     action = ACTION_OPENING_DM if uses_opening_dm(rule) else ACTION_PRIVATE_REPLY
     log["action"] = action
 
@@ -272,8 +295,7 @@ async def process_comment_event(
             # yet. The postback gate does the real enforcement (§4, §5).
             is_following=(
                 await lookup_is_following(client, settings, account, parsed.instagram_user_id, log)
-                if (rule.get("require_follow") or {}).get("enabled")
-                and not uses_opening_dm(rule)
+                if (rule.get("require_follow") or {}).get("enabled") and not uses_opening_dm(rule)
                 else None
             ),
             now=now,
@@ -703,6 +725,8 @@ async def process_postback_event(
         await executions.complete(execution["_id"], status="failed", error=str(exc))
         return {"status": "failed", "reason": "meta_error"}
 
+    await send_attachment_if_any(client, settings, account, sender_id, rule, log)
+
     await executions.complete(
         execution["_id"],
         status="success",
@@ -753,6 +777,36 @@ async def refresh_expiring_tokens(ctx: dict[str, Any]) -> dict[str, int]:
         logger.info("scheduled_token_refreshed", extra={"account_id": str(account["_id"])})
 
     return {"refreshed": refreshed, "failed": failed}
+
+
+async def send_attachment_if_any(
+    client: Any,
+    settings: Any,
+    account: dict[str, Any],
+    recipient_id: str,
+    rule: dict[str, Any],
+    log: dict[str, Any] | None = None,
+) -> None:
+    """Send the rule's attachment, if it has one, as its own message.
+
+    Meta takes a URL and fetches it, so this is a second call after the text
+    rather than a field on it. A failure here is logged and swallowed: the payoff
+    text and its buttons already went out, and failing the whole execution would
+    make a delivered message look undelivered.
+    """
+    attachment = rule.get("attachment") or {}
+    url = attachment.get("url")
+    kind = attachment.get("type")
+    if not url or not kind:
+        return
+    try:
+        token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+        await client.send_attachment(token, account["instagram_user_id"], recipient_id, kind, url)
+        logger.info("attachment_sent", extra={**(log or {}), "type": kind})
+    except (MetaAPIError, EncryptionError) as exc:
+        logger.warning(
+            "attachment_send_failed", extra={**(log or {}), "type": kind, "error": str(exc)}
+        )
 
 
 async def lookup_is_following(
@@ -831,6 +885,9 @@ async def snapshot_account_metrics(ctx: dict[str, Any]) -> dict[str, int]:
                 "followers_count": profile.followers_count,
                 "follows_count": profile.follows_count,
                 "media_count": profile.media_count,
+                # Refreshed here because Meta's CDN links expire; a stale one
+                # renders as a broken image in the dashboard.
+                "profile_picture_url": profile.profile_picture_url,
             },
         )
         recorded += 1
@@ -934,6 +991,8 @@ async def recheck_follow(ctx: dict[str, Any], execution_id: str, attempt: int) -
         await executions.complete(execution["_id"], status="failed", error=str(exc))
         return {"status": "failed", "reason": "meta_error"}
 
+    await send_attachment_if_any(client, settings, account, recipient, rule, log)
+
     await executions.complete(
         execution["_id"],
         status="success",
@@ -944,6 +1003,45 @@ async def recheck_follow(ctx: dict[str, Any], execution_id: str, attempt: int) -
     )
     logger.info("link_delivered_after_follow", extra=log)
     return {"status": "success", "execution_id": str(execution["_id"])}
+
+
+async def refresh_geoip_database(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Keep GeoLite2 current. MaxMind rebuilds it twice a week.
+
+    A HEAD request first: their docs say checking does not count against the
+    daily download limit, so a no-op week costs nothing. Silent when no
+    credentials are configured -- geolocation is opt-in.
+    """
+    from pathlib import Path
+
+    from app.services.geoip import GeoIpError, database_path, download, remote_build_date
+
+    settings = ctx["settings"]
+    saved = await AppSettingsRepository(ctx["db"]).load()
+    account_id = saved.get("maxmind_account_id")
+    blob = saved.get("maxmind_license_key_encrypted")
+    if not account_id or not blob:
+        return {"status": "skipped", "reason": "not_configured"}
+
+    directory = Path(settings.geoip_dir)
+    try:
+        license_key = decrypt(blob, settings.encryption_key)
+        built = await remote_build_date(str(account_id), license_key)
+    except (GeoIpError, EncryptionError) as exc:
+        logger.warning("geoip_check_failed", extra={"error": str(exc)})
+        return {"status": "failed", "reason": str(exc)}
+
+    current = database_path(directory)
+    if current.is_file() and built is not None and current.stat().st_mtime >= built.timestamp():
+        return {"status": "current"}
+
+    try:
+        await download(str(account_id), license_key, directory)
+    except Exception as exc:
+        logger.warning("geoip_download_failed", extra={"error": str(exc)})
+        return {"status": "failed", "reason": str(exc)}
+
+    return {"status": "updated"}
 
 
 async def process_message_event(

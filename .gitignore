@@ -23,6 +23,10 @@ dist/
 *.local
 *.tsbuildinfo
 
+# Uploaded attachments — user data, not source
+uploads/*
+!uploads/README.md
+
 # OS / editor
 .DS_Store
 .idea/

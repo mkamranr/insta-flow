@@ -1,3 +1,4 @@
+import { AccountAvatar } from '../common/AccountAvatar'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
@@ -8,6 +9,7 @@ import { listAccounts } from '../../api/instagram'
 import type { ReadyResponse } from '../../types/health'
 import {
   ActivityIcon,
+  AnalyticsIcon,
   AutomationIcon,
   ContactsIcon,
   HomeIcon,
@@ -27,11 +29,11 @@ const TOP = [
   { to: '/templates', label: 'Templates', icon: <TemplatesIcon /> },
 ]
 
-const MY_CONTENT = [{ to: '/posts', label: 'Posts & Reels' }]
+const MY_CONTENT = [{ to: '/posts', label: 'Posts & Reels', icon: <PostsIcon /> }]
 
 const ANALYTICS = [
-  { to: '/analytics', label: 'Overview' },
-  { to: '/insights', label: 'Audience insights' },
+  { to: '/analytics', label: 'Overview', icon: <AnalyticsIcon /> },
+  { to: '/insights', label: 'Audience insights', icon: <ContactsIcon /> },
 ]
 
 const BOTTOM = [
@@ -76,9 +78,12 @@ export function Layout() {
         </div>
 
         <div className="workspace">
-          <div className="workspace-avatar">
-            {(account?.username ?? me?.email ?? '?').slice(0, 1).toUpperCase()}
-          </div>
+          <AccountAvatar
+            className="workspace-avatar"
+            url={account?.profile_picture_url}
+            name={account?.username ?? me?.email}
+            size={30}
+          />
           <div>
             <div className="workspace-name">
               {account ? `@${account.username}` : 'No account'}
@@ -97,21 +102,27 @@ export function Layout() {
         <nav className="nav">
           {TOP.map(({ to, label, icon, end }) => (
             <NavLink key={to} to={to} end={end}>
-              {icon}
+              <span className="nav-tile">{icon}</span>
               {label}
             </NavLink>
           ))}
 
           <div className="nav-group">
-            <button className="nav-toggle" onClick={() => setContentOpen((v) => !v)}>
-              <PostsIcon />
+            <button
+              className={contentOpen ? 'nav-toggle open' : 'nav-toggle'}
+              onClick={() => setContentOpen((v) => !v)}
+            >
+              <span className="nav-tile">
+                <PostsIcon />
+              </span>
               My content
               <span className="nav-chevron">{contentOpen ? '▾' : '▸'}</span>
             </button>
             {contentOpen && (
               <div className="nav-sub">
-                {MY_CONTENT.map(({ to, label }) => (
+                {MY_CONTENT.map(({ to, label, icon }) => (
                   <NavLink key={to} to={to}>
+                    <span className="nav-tile">{icon}</span>
                     {label}
                   </NavLink>
                 ))}
@@ -120,15 +131,21 @@ export function Layout() {
           </div>
 
           <div className="nav-group">
-            <button className="nav-toggle" onClick={() => setAnalyticsNavOpen((v) => !v)}>
-              <ActivityIcon />
+            <button
+              className={analyticsNavOpen ? 'nav-toggle open' : 'nav-toggle'}
+              onClick={() => setAnalyticsNavOpen((v) => !v)}
+            >
+              <span className="nav-tile">
+                <ActivityIcon />
+              </span>
               Analytics
               <span className="nav-chevron">{analyticsNavOpen ? '▾' : '▸'}</span>
             </button>
             {analyticsNavOpen && (
               <div className="nav-sub">
-                {ANALYTICS.map(({ to, label }) => (
+                {ANALYTICS.map(({ to, label, icon }) => (
                   <NavLink key={to} to={to}>
+                    <span className="nav-tile">{icon}</span>
                     {label}
                   </NavLink>
                 ))}
@@ -138,7 +155,7 @@ export function Layout() {
 
           {BOTTOM.map(({ to, label, icon }) => (
             <NavLink key={to} to={to}>
-              {icon}
+              <span className="nav-tile">{icon}</span>
               {label}
             </NavLink>
           ))}

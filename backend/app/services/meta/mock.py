@@ -63,6 +63,7 @@ class MockInstagramClient:
     MUTATIONS = (
         "send_private_reply",
         "send_direct_message",
+        "send_attachment",
         "send_public_reply",
         "subscribe_webhooks",
     )
@@ -84,6 +85,7 @@ class MockInstagramClient:
         self.sent_private_replies: list[dict[str, Any]] = []
         self.sent_direct_messages: list[dict[str, Any]] = []
         self.sent_public_replies: list[dict[str, Any]] = []
+        self.sent_attachments: list[dict[str, Any]] = []
         self.profile = MetaUserProfile(
             instagram_user_id="17800000000000000",
             username="john123",
@@ -151,9 +153,7 @@ class MockInstagramClient:
         self.subscribed_fields = list(fields)
         return True
 
-    async def get_subscribed_fields(
-        self, access_token: str, instagram_user_id: str
-    ) -> list[str]:
+    async def get_subscribed_fields(self, access_token: str, instagram_user_id: str) -> list[str]:
         self._record("get_subscribed_fields", instagram_user_id=instagram_user_id)
         return list(self.subscribed_fields)
 
@@ -232,11 +232,29 @@ class MockInstagramClient:
         )
         return result
 
-    async def get_user_profile(
-        self, access_token: str, instagram_user_id: str
-    ) -> MetaUserProfile:
+    async def get_user_profile(self, access_token: str, instagram_user_id: str) -> MetaUserProfile:
         self._record("get_user_profile", instagram_user_id=instagram_user_id)
         return self.profile
+
+    async def send_attachment(
+        self,
+        access_token: str,
+        instagram_user_id: str,
+        recipient_id: str,
+        attachment_type: str,
+        url: str,
+    ) -> MetaSendResult:
+        self._record(
+            "send_attachment",
+            recipient_id=recipient_id,
+            attachment_type=attachment_type,
+            url=url,
+        )
+        result = MetaSendResult(success=True, message_id=f"attach_{len(self.sent_attachments)}")
+        self.sent_attachments.append(
+            {"recipient_id": recipient_id, "type": attachment_type, "url": url}
+        )
+        return result
 
     async def send_public_reply(
         self, access_token: str, comment_id: str, text: str
@@ -248,9 +266,7 @@ class MockInstagramClient:
             message_id=f"17900000000{index:06d}",
             raw_response={"id": f"17900000000{index:06d}"},
         )
-        self.sent_public_replies.append(
-            {"comment_id": comment_id, "text": text, "result": result}
-        )
+        self.sent_public_replies.append({"comment_id": comment_id, "text": text, "result": result})
         return result
 
 

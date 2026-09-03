@@ -2,7 +2,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { ApiError } from '../../api/client'
 import { useQuery } from '@tanstack/react-query'
+import { listAccounts } from '../../api/instagram'
 import { createRule, getIntents, patchRule, type Post, type Rule } from '../../api/rules'
+import { AttachmentField } from './AttachmentField'
+import { DelayPicker } from './DelayPicker'
+import { DmPreview } from './DmPreview'
 import { KeywordInput } from './KeywordInput'
 
 const BLANK: Partial<Rule> = {
@@ -15,6 +19,8 @@ const BLANK: Partial<Rule> = {
   opening_dm: { enabled: false, message: '', button_text: 'Send me the link' },
   message: '',
   buttons: [],
+  attachment: null,
+  reply_delay_seconds: 0,
   public_reply: { enabled: false, message: '' },
   require_follow: { enabled: false, prompt: '' },
   collect_email: { enabled: false, prompt: '' },
@@ -59,6 +65,8 @@ export function RuleEditor({
   })
 
   const { data: intentInfo } = useQuery({ queryKey: ['intents'], queryFn: getIntents })
+  // Cached by the dashboard already; this just reads it for the preview header.
+  const { data: accounts } = useQuery({ queryKey: ['instagram-accounts'], queryFn: listAccounts })
   const buttons = draft.buttons ?? []
   const opening = draft.opening_dm!
   const ai = draft.ai!
@@ -76,7 +84,8 @@ export function RuleEditor({
           </button>
         </header>
 
-        <div className="modal-body">
+        <div className="modal-body editor-split">
+          <div className="editor-form">
           <section className="step">
             <div className="step-head"><span className="step-num">1</span><h3>When someone comments</h3></div>
             <label>Keywords</label>
@@ -188,6 +197,25 @@ export function RuleEditor({
                 + Add link
               </button>
             )}
+
+            <label style={{ marginTop: 16 }}>File attachment</label>
+            <AttachmentField
+              value={draft.attachment ?? null}
+              onChange={(attachment) => set({ attachment })}
+            />
+            {draft.attachment && !opening.enabled && (
+              <p className="err small">
+                A file needs an open messaging window, and only the opening DM button opens
+                one. Turn on the opening DM in step 2 or this file will never be delivered.
+              </p>
+            )}
+
+            <label style={{ marginTop: 16 }}>Reply time</label>
+            <DelayPicker
+              seconds={draft.reply_delay_seconds ?? 0}
+              onChange={(reply_delay_seconds) => set({ reply_delay_seconds })}
+            />
+
           </section>
 
           {intentInfo?.ai_enabled && (
@@ -289,6 +317,17 @@ export function RuleEditor({
           </section>
 
           {save.isError && <p className="err">{(save.error as ApiError).message}</p>}
+          </div>
+
+          <aside className="editor-preview">
+            <h3 className="small">Preview</h3>
+            <p className="muted small">How this lands in their inbox.</p>
+            <DmPreview
+              draft={draft}
+              account={accounts?.[0]?.username}
+              avatarUrl={accounts?.[0]?.profile_picture_url}
+            />
+          </aside>
         </div>
 
         <footer className="modal-foot">

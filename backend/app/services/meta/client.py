@@ -118,13 +118,11 @@ class InstagramClient(Protocol):
         access_token: str,
         instagram_user_id: str,
         fields: tuple[str, ...] = DEFAULT_WEBHOOK_FIELDS,
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
     async def get_subscribed_fields(
         self, access_token: str, instagram_user_id: str
-    ) -> list[str]:
-        ...
+    ) -> list[str]: ...
 
     async def send_private_reply(
         self,
@@ -146,6 +144,21 @@ class InstagramClient(Protocol):
         buttons: list[dict[str, str]] | None = None,
     ) -> MetaSendResult:
         """Message an IGSID inside an open 24-hour window."""
+        ...
+
+    async def send_attachment(
+        self,
+        access_token: str,
+        instagram_user_id: str,
+        recipient_id: str,
+        attachment_type: str,
+        url: str,
+    ) -> MetaSendResult:
+        """Send a file by URL. Meta fetches it; we never upload bytes.
+
+        Only valid to an IGSID inside an open window -- a private reply is
+        text-only (docs/meta-api.md §4c).
+        """
         ...
 
     async def send_public_reply(

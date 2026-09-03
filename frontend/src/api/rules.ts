@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from './client'
+import { apiDelete, apiGet, apiPost, apiUpload } from './client'
 
 export interface LinkButton {
   title: string
@@ -23,6 +23,14 @@ export interface AiMatching {
   min_confidence: number | null
 }
 
+export interface Attachment {
+  type: 'image' | 'video' | 'audio' | 'file'
+  url: string
+  storage_key: string
+  filename: string
+  size_bytes: number
+}
+
 export interface Rule {
   id: string
   name: string
@@ -35,6 +43,9 @@ export interface Rule {
   opening_dm: OpeningDm
   message: string
   buttons: LinkButton[]
+  attachment: Attachment | null
+  /** Seconds to wait before replying. 0 means immediately; capped at 59:59. */
+  reply_delay_seconds: number
   public_reply: { enabled: boolean; message: string }
   require_follow: { enabled: boolean; prompt: string }
   collect_email: { enabled: boolean; prompt: string }
@@ -372,4 +383,42 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
       buttons: [{ title: 'Watch now', url: 'https://youtube.com/@example' }],
     },
   },
+  {
+    id: 'send-file',
+    title: 'Send a file or guide',
+    blurb: 'Someone comments "PDF" → they tap once and the file lands in their DMs.',
+    group: 'Capture leads',
+    example: {
+      username: 'reader.robin',
+      comment: 'Send me the PDF!',
+      reply: 'Your guide is ready!',
+      button: 'Send it over',
+    },
+    rule: {
+      name: 'Send a file or guide',
+      keywords: ['pdf', 'file', 'guide'],
+      // A file cannot ride the reply to a comment -- only the button tap opens
+      // the messaging window an attachment needs (docs/meta-api.md §4c), so
+      // this template arrives with the opening DM already switched on.
+      opening_dm: {
+        enabled: true,
+        message: "Happy to send that over! Tap below and it's yours.",
+        button_text: 'Send it over',
+      },
+      message: 'Here you go — enjoy!',
+      buttons: [],
+    },
+  },
 ]
+
+export interface UploadedAttachment {
+  type: 'image' | 'video' | 'audio' | 'file'
+  url: string
+  storage_key: string
+  filename: string
+  size_bytes: number
+}
+
+/** Uploads the file and returns what to store on the rule as `attachment`. */
+export const uploadAttachment = (file: File) =>
+  apiUpload<UploadedAttachment>('/api/uploads', file)

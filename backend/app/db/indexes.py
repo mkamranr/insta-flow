@@ -26,11 +26,22 @@ COLLECTIONS = [
     "ai_classifications",
     "audit_logs",
     "account_snapshots",
+    "app_settings",
+    "click_events",
 ]
 
 INDEXES: dict[str, list[IndexModel]] = {
     "users": [
         IndexModel([("email", ASCENDING)], unique=True, name="uq_email"),
+    ],
+    "click_events": [
+        # Every query is "this account, since this moment", either grouped into
+        # time buckets or by place.
+        IndexModel(
+            [("instagram_account_id", ASCENDING), ("clicked_at", DESCENDING)],
+            name="ix_account_clicked",
+        ),
+        IndexModel([("rule_id", ASCENDING), ("clicked_at", DESCENDING)], name="ix_rule_clicked"),
     ],
     "account_snapshots": [
         # One row per account per calendar day. The uniqueness is what makes the
@@ -42,9 +53,7 @@ INDEXES: dict[str, list[IndexModel]] = {
         ),
     ],
     "instagram_accounts": [
-        IndexModel(
-            [("instagram_user_id", ASCENDING)], unique=True, name="uq_instagram_user_id"
-        ),
+        IndexModel([("instagram_user_id", ASCENDING)], unique=True, name="uq_instagram_user_id"),
         IndexModel([("user_id", ASCENDING)], name="ix_user_id"),
     ],
     "media": [
@@ -167,6 +176,15 @@ async def drop_obsolete_indexes(database: AsyncDatabase[dict[str, Any]]) -> list
 async def create_indexes(database: AsyncDatabase[dict[str, Any]]) -> dict[str, list[str]]:
     """Create every index. Idempotent — safe to run on every startup."""
     await drop_obsolete_indexes(database)
+
+    # COLLECTIONS is the declared set, and a collection with nothing but its
+    # `_id` still has to exist -- `app_settings` needs no secondary index but
+    # must be there. Mongo creates lazily on first write, which would leave a
+    # declared collection missing until something happened to use it.
+    existing = set(await database.list_collection_names())
+    for name in COLLECTIONS:
+        if name not in INDEXES and name not in existing:
+            await database.create_collection(name)
 
     created: dict[str, list[str]] = {}
     for collection_name, models in INDEXES.items():

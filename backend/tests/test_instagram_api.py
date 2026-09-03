@@ -296,3 +296,25 @@ async def test_meta_callbacks_explain_themselves_in_a_browser(api):
         response = await api.get(path)
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
+
+
+async def test_the_public_account_carries_the_profile_picture(database, admin):
+    """`from_document` maps fields one by one.
+
+    A field added to the model but not to the mapper silently serialises as
+    null, which is how the dashboard kept showing a placeholder initial after
+    the picture was already stored.
+    """
+    from app.models.instagram import InstagramAccountPublic
+
+    public = InstagramAccountPublic.from_document(
+        {
+            "_id": ObjectId(),
+            "instagram_user_id": "1",
+            "username": "daily.techtalks",
+            "status": "connected",
+            "profile_picture_url": "https://scontent.cdninstagram.com/v/abc.jpg",
+        }
+    )
+
+    assert public.profile_picture_url == "https://scontent.cdninstagram.com/v/abc.jpg"

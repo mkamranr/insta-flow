@@ -280,7 +280,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   background: none; border: none; color: var(--muted);
   cursor: pointer; font-size: 16px; line-height: 1; padding: 0 3px; margin: 0;
 }
-.chip-x:hover { background: none; color: var(--err); }
+button.chip-x:hover:not(:disabled) { background: none; color: var(--err); }
 
 button.chip { padding: 5px 13px; font-weight: 500; background: #f2f2ef; color: var(--muted); }
 button.chip:hover { background: #eaeae6; color: var(--text); }
@@ -339,7 +339,13 @@ button.chip.chip-on { background: var(--accent); color: var(--accent-text); font
   overflow-wrap: anywhere;
 }
 .template-card > span { min-width: 0; }
-.template-card:hover { background: var(--surface-alt); border-color: var(--dark); }
+/* `button.` prefix, not `.template-card` alone: the global
+   `button:hover:not(:disabled)` is specificity (0,2,1) and would otherwise
+   repaint the whole card dark, leaving unreadable text. */
+button.template-card:hover:not(:disabled) {
+  background: var(--surface-alt); border-color: var(--border-strong);
+  color: var(--text); box-shadow: var(--shadow);
+}
 .template-card strong { font-size: 14px; }
 
 /* ---------- tables ---------- */
@@ -496,7 +502,8 @@ button.menu-item:hover { background: var(--surface-alt); }
   padding: 16px 20px 16px 16px; display: flex; flex-direction: column; gap: 14px;
   z-index: 30; text-align: left; font: inherit; color: inherit;
 }
-.stats-rail:hover { background: var(--surface); }
+/* A button, so it needs to out-specify the global dark hover fill. */
+button.stats-rail:hover:not(:disabled) { background: var(--surface); }
 .rail-item { display: flex; align-items: center; gap: 10px; }
 .rail-badge {
   width: 26px; height: 26px; border-radius: 50%;
@@ -716,3 +723,276 @@ button.auto-head:hover:not(:disabled) { background: var(--surface-alt); }
 .link-metric-value { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .link-metric.emphasis { background: var(--ok-bg); }
 .link-metric.emphasis .link-metric-value { color: var(--ok); }
+
+/* -- Rule editor: form beside a live DM preview --------------------------- */
+
+/* The editor needs two columns; other modals stay narrow. */
+.modal:has(.editor-split) { width: min(1020px, 100%); }
+
+.editor-split {
+  display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 26px;
+  align-items: start;
+}
+.editor-form { min-width: 0; }
+.editor-preview { position: sticky; top: 6px; padding-top: 18px; }
+.editor-preview h3 { margin: 0 0 2px; }
+
+@media (max-width: 900px) {
+  .editor-split { grid-template-columns: minmax(0, 1fr); }
+  .editor-preview { position: static; }
+}
+
+.dm-phone {
+  margin-top: 12px;
+  border: 3px solid var(--dark); border-radius: 26px; overflow: hidden;
+  background: var(--surface); display: flex; flex-direction: column;
+  /* Explicit height: aspect-ratio loses to flex sizing in a column container. */
+  height: 470px;
+}
+.dm-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border);
+  font-size: 13px; flex: none;
+}
+.dm-back { color: var(--muted); font-size: 17px; line-height: 1; }
+
+.dm-face {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;
+  background: linear-gradient(135deg, #4f46e5, #9333ea);
+}
+
+.dm-thread {
+  flex: 1; overflow-y: auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.dm-row { display: flex; align-items: flex-end; gap: 7px; }
+.dm-row-them { justify-content: flex-end; }
+
+.dm-bubble {
+  background: var(--surface-alt); border: 1px solid var(--border);
+  border-radius: 15px; padding: 9px 11px; max-width: 82%;
+  font-size: 12.5px; line-height: 1.45;
+}
+.dm-bubble p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dm-cta {
+  display: block; margin-top: 8px; text-align: center;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 9px; padding: 7px 10px; font-weight: 600; font-size: 12px;
+}
+.dm-tap {
+  background: var(--dark); color: #fff; border-radius: 999px;
+  padding: 8px 15px; font-size: 12px; font-weight: 600;
+}
+
+.dm-attach {
+  display: flex; align-items: center; gap: 10px; max-width: 82%;
+  background: #1f2430; color: #fff; border-radius: 14px; padding: 11px 13px;
+}
+.dm-attach-image { padding: 0; overflow: hidden; }
+.dm-attach-image img { display: block; width: 100%; height: auto; }
+.dm-attach-icon { opacity: 0.75; display: flex; flex: none; }
+.dm-attach-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dm-attach-name {
+  font-size: 12.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dm-attach-size { font-size: 11.5px; opacity: 0.66; }
+
+.dm-note { margin: 0; font-size: 11.5px; color: var(--faint); text-align: center; }
+.dm-warn {
+  margin: 0; font-size: 11.5px; color: var(--warn);
+  background: var(--warn-bg); border: 1px solid var(--warn-border);
+  border-radius: 9px; padding: 8px 10px; line-height: 1.4;
+}
+
+.dm-foot {
+  display: flex; align-items: center; gap: 9px; flex: none;
+  padding: 10px 12px; border-top: 1px solid var(--border);
+}
+.dm-camera { width: 24px; height: 24px; border-radius: 50%; background: var(--dark); flex: none; }
+
+.attach-field { display: flex; flex-direction: column; gap: 7px; align-items: flex-start; }
+.attach-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%;
+  background: var(--surface-alt); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 9px 12px;
+}
+.attach-name {
+  font-weight: 600; font-size: 13px; min-width: 0; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Profile pictures come from Meta's CDN; the initial is the fallback when a
+   link has expired between refreshes. */
+.account-avatar { border-radius: 50%; object-fit: cover; flex: none; display: block; }
+.account-avatar-initial {
+  display: grid; place-items: center;
+  background: var(--dark); color: #fff; font-weight: 700; font-size: 12px;
+}
+
+/* -- Reply delay picker --------------------------------------------------- */
+
+.delay-field {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
+}
+.delay-label { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+.delay-hint {
+  width: 15px; height: 15px; border-radius: 50%; flex: none;
+  border: 1px solid var(--border-strong); color: var(--muted);
+  font-size: 10px; font-weight: 700; font-style: italic;
+  display: grid; place-items: center; cursor: help;
+}
+
+/* The popover anchors here, so it must establish the containing block. */
+.delay-control { position: relative; display: flex; align-items: center; gap: 4px; }
+
+button.delay-trigger {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  padding: 8px 12px; font-weight: 500;
+}
+button.delay-trigger:hover:not(:disabled) { background: var(--surface-alt); }
+button.delay-trigger.open { border-color: var(--dark); box-shadow: 0 0 0 3px rgba(22,24,29,.07); }
+.delay-value { font-variant-numeric: tabular-nums; font-size: 15px; }
+
+button.delay-clear {
+  background: none; color: var(--faint); border: none; border-radius: 50%;
+  width: 22px; height: 22px; padding: 0; font-size: 16px; line-height: 1;
+}
+button.delay-clear:hover:not(:disabled) { background: var(--surface-alt); color: var(--text); }
+
+.delay-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 14px 40px rgba(16,24,40,.18);
+  width: 210px; overflow: hidden;
+}
+.delay-cols { display: grid; grid-template-columns: 1fr 1fr; }
+.delay-col + .delay-col { border-left: 1px solid var(--border); }
+.delay-col-head {
+  text-align: center; padding: 9px 0; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border);
+}
+/* Explicit height: a scroll column cannot size itself from its contents. */
+.delay-col-list { height: 176px; overflow-y: auto; padding: 4px 0; }
+
+button.delay-opt {
+  display: block; width: 100%; background: none; color: var(--text);
+  border: none; border-radius: 0; padding: 7px 0; text-align: center;
+  font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums;
+}
+button.delay-opt:hover:not(:disabled) { background: var(--surface-alt); }
+button.delay-opt.active { background: var(--surface-alt); font-weight: 800; }
+
+.delay-actions { display: flex; justify-content: flex-end; padding: 9px 10px; }
+.delay-actions button { padding: 6px 20px; border-radius: 8px; font-size: 13px; }
+
+/* Ranked click geography. One series, so the bars are ink on a light track --
+   no categorical palette to get wrong, and the value is direct-labelled. */
+.place-list { display: flex; flex-direction: column; gap: 6px; }
+.place-row {
+  display: grid; grid-template-columns: minmax(90px, 150px) 1fr auto 40px;
+  align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+}
+.place-name {
+  font-size: 13px; font-weight: 600; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.place-track { background: var(--surface-alt); border-radius: 999px; height: 8px; }
+.place-bar { display: block; height: 100%; border-radius: 999px; background: var(--dark); }
+.place-count { font-weight: 700; font-variant-numeric: tabular-nums; }
+.place-share { text-align: right; }
+
+/* -- Highlights ----------------------------------------------------------- */
+
+.stat.highlight { display: flex; flex-direction: column; gap: 6px; }
+.highlight-kicker {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--muted);
+}
+.highlight-headline { font-size: 15px; font-weight: 700; }
+/* The accent works as a highlighter behind dark text, where it fails as a
+   data mark on white. */
+.highlight-headline mark {
+  background: var(--accent); color: var(--accent-text);
+  padding: 2px 7px; border-radius: 7px;
+}
+
+/* -- Engagement trends ---------------------------------------------------- */
+
+.trend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.trend-grid h3 { margin: 0 0 2px; }
+
+.bars { display: flex; flex-direction: column; gap: 8px; }
+.bars-caption { margin: 0; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.bars-readout { color: var(--text); }
+
+/* Explicit height: a flex/grid child cannot derive one from percentage bars. */
+.bars-plot {
+  display: flex; align-items: flex-end; gap: 1px;
+  height: 128px; padding-top: 4px;
+  border-bottom: 1px solid var(--border);
+}
+button.bar {
+  flex: 1 1 0; min-width: 0; padding: 0; border: none; border-radius: 2px 2px 0 0;
+  background: var(--dark); opacity: 0.82; transition: opacity .1s;
+}
+button.bar:hover:not(:disabled), button.bar.hovered { background: var(--dark); opacity: 1; }
+.bars-axis {
+  display: flex; justify-content: space-between;
+  font-size: 11px; color: var(--faint); font-weight: 600;
+}
+
+/* -- Sidebar polish ------------------------------------------------------- */
+
+/* Icons sit in a soft tile, so the rail reads as a column of objects rather
+   than a column of loose glyphs. */
+.nav-tile {
+  width: 26px; height: 26px; flex: none;
+  display: grid; place-items: center;
+  border-radius: 8px; background: var(--surface-alt);
+  border: 1px solid var(--border); color: var(--muted);
+  transition: background .12s, border-color .12s, color .12s;
+}
+.nav a, button.nav-toggle { gap: 10px; padding: 7px 9px; border-radius: 11px; }
+.nav a svg, .nav-tile svg { opacity: 1; }
+
+.nav a:hover .nav-tile, button.nav-toggle:hover:not(:disabled) .nav-tile {
+  background: var(--surface); border-color: var(--border-strong); color: var(--text);
+}
+
+.nav a.active { background: #f1f1ee; font-weight: 700; }
+.nav a.active .nav-tile {
+  background: var(--dark); border-color: var(--dark); color: #fff;
+}
+
+button.nav-toggle.open { color: var(--text); font-weight: 600; }
+button.nav-toggle:hover:not(:disabled) { background: var(--surface-alt); }
+.nav-chevron { transition: transform .15s; }
+button.nav-toggle.open .nav-chevron { opacity: 0.9; }
+
+/* Sub-items line up under the parent's label, not its icon. */
+.nav-sub { padding-left: 16px; gap: 2px; }
+.nav-sub a { font-size: 13.5px; }
+.nav-sub .nav-tile { width: 23px; height: 23px; border-radius: 7px; }
+
+/* -- Superfans ------------------------------------------------------------ */
+
+.superfan-head { display: flex; align-items: flex-start; gap: 11px; margin-bottom: 14px; }
+.superfan-head h2 { margin: 0; }
+.superfan-mark {
+  width: 32px; height: 32px; flex: none; border-radius: 10px;
+  display: grid; place-items: center;
+  background: var(--err-bg); color: var(--err);
+}
+.rank {
+  display: inline-grid; place-items: center; width: 22px; height: 22px;
+  border-radius: 50%; background: var(--surface-alt); border: 1px solid var(--border);
+  font-size: 11px; font-weight: 700; color: var(--muted); margin-right: 9px;
+}
+.empty-state { text-align: center; padding: 34px 16px; }
+.empty-title { margin: 0 0 4px; font-weight: 600; }

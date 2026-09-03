@@ -30,8 +30,7 @@ ACCOUNT_FIELDS = (
     "followers_count,follows_count,media_count"
 )
 PROFILE_FIELDS = (
-    "name,username,profile_pic,follower_count,"
-    "is_user_follow_business,is_business_follow_user"
+    "name,username,profile_pic,follower_count," "is_user_follow_business,is_business_follow_user"
 )
 MEDIA_FIELDS_BASE = "id,media_type,media_product_type,caption,permalink,thumbnail_url,timestamp"
 # Engagement counts are not available on every media type or account, and asking
@@ -79,9 +78,7 @@ class MetaInstagramClient:
         except httpx.TimeoutException as exc:
             # Retryable: the request may well have arrived, so the caller relies
             # on the execution reservation rather than assuming nothing happened.
-            raise MetaAPIError(
-                "Meta request timed out.", status_code=None, retryable=True
-            ) from exc
+            raise MetaAPIError("Meta request timed out.", status_code=None, retryable=True) from exc
         except httpx.RequestError as exc:
             raise MetaAPIError(
                 f"Could not reach Meta: {type(exc).__name__}", status_code=None, retryable=True
@@ -164,9 +161,7 @@ class MetaInstagramClient:
         )
         return bool(body.get("success", False))
 
-    async def get_subscribed_fields(
-        self, access_token: str, instagram_user_id: str
-    ) -> list[str]:
+    async def get_subscribed_fields(self, access_token: str, instagram_user_id: str) -> list[str]:
         body = await self._request(
             "GET", "me/subscribed_apps", params={"access_token": access_token}
         )
@@ -175,8 +170,7 @@ class MetaInstagramClient:
         for entry in body.get("data") or []:
             raw_fields.extend(entry.get("subscribed_fields") or [])
         return [
-            str(f["name"]) if isinstance(f, dict) and "name" in f else str(f)
-            for f in raw_fields
+            str(f["name"]) if isinstance(f, dict) and "name" in f else str(f) for f in raw_fields
         ]
 
     async def _send(
@@ -248,6 +242,36 @@ class MetaInstagramClient:
             access_token, instagram_user_id, {"id": recipient_id}, text, buttons
         )
 
+    async def send_attachment(
+        self,
+        access_token: str,
+        instagram_user_id: str,
+        recipient_id: str,
+        attachment_type: str,
+        url: str,
+    ) -> MetaSendResult:
+        """POST /{ig-user-id}/messages with an attachment payload (§4c).
+
+        Meta fetches `url` from its own servers, so it must be publicly
+        reachable at send time -- a link behind auth, or a laptop that has gone
+        to sleep, produces a message that never arrives.
+        """
+        body = await self._request(
+            "POST",
+            f"{instagram_user_id}/messages",
+            json_body={
+                "recipient": {"id": recipient_id},
+                "message": {"attachment": {"type": attachment_type, "payload": {"url": url}}},
+            },
+            bearer=access_token,
+        )
+        return MetaSendResult(
+            success=True,
+            message_id=body.get("message_id"),
+            recipient_id=body.get("recipient_id"),
+            raw_response=body,
+        )
+
     async def send_public_reply(
         self, access_token: str, comment_id: str, text: str
     ) -> MetaSendResult:
@@ -260,9 +284,7 @@ class MetaInstagramClient:
         )
         return MetaSendResult(success=True, message_id=body.get("id"), raw_response=body)
 
-    async def get_user_profile(
-        self, access_token: str, instagram_user_id: str
-    ) -> MetaUserProfile:
+    async def get_user_profile(self, access_token: str, instagram_user_id: str) -> MetaUserProfile:
         """Messaging User Profile API — backs "require follow before DM"."""
         body = await self._request(
             "GET",

@@ -44,9 +44,7 @@ def rule_matches(rule: dict[str, Any], text: str) -> bool:
     )
 
 
-def select_rule(
-    comment: CommentContext, rules: list[dict[str, Any]]
-) -> dict[str, Any] | None:
+def select_rule(comment: CommentContext, rules: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Pick the one rule that should act on this comment, or None.
 
     `rules` arrives already filtered to this post and sorted by priority, so the
@@ -89,9 +87,7 @@ def select_rule_by_intent(
     return None
 
 
-def build_render_context(
-    comment: CommentContext, rule: dict[str, Any]
-) -> dict[str, str | None]:
+def build_render_context(comment: CommentContext, rule: dict[str, Any]) -> dict[str, str | None]:
     """The only values a message may interpolate (§29)."""
     return {
         "username": comment.username,

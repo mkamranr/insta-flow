@@ -44,9 +44,7 @@ def validate(body: str) -> set[str]:
     # A stray single brace is almost always a typo for a placeholder.
     stripped = _PLACEHOLDER.sub("", body)
     if "{{" in stripped or "}}" in stripped:
-        raise TemplateError(
-            "Unclosed or malformed {{placeholder}}. Check for a missing brace."
-        )
+        raise TemplateError("Unclosed or malformed {{placeholder}}. Check for a missing brace.")
 
     return extract_variables(body)
 

@@ -5,6 +5,7 @@ export interface InstagramAccount {
   id: string
   instagram_user_id: string
   username: string
+  profile_picture_url?: string | null
   display_name: string | null
   account_type: string | null
   permissions: string[]

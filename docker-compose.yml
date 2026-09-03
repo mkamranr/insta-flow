@@ -28,6 +28,9 @@ services:
     expose: ["8000"]
     volumes:
       - ./scripts:/app/scripts:ro
+      # Attachments live on the host so they survive a rebuild. Meta fetches
+      # them from /files/... on the public URL.
+      - ./uploads:/app/uploads
     depends_on:
       mongodb:
         condition: service_healthy

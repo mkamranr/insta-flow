@@ -245,6 +245,59 @@ unlike the account edge (§2b).
 Purely a conversational flow: ask in the DM, read the reply from the `messages` webhook, store
 it. Nothing here needs a capability Meta does not already grant.
 
+## 4c. Attachments — verified from Meta's docs 2026-09-03
+
+**A private reply is text-only.** The documented body for `recipient.comment_id` is
+`{"message": {"text": "..."}}`. No attachment field appears on that page and none is
+described. So a file can never ride the reply to a comment.
+
+**Attachments go to an IGSID, inside an open window.**
+
+```
+POST https://graph.instagram.com/<API_VERSION>/<IG_USER_ID>/messages
+
+{ "recipient": { "id": "<IGSID>" },
+  "message": { "attachment": { "type": "file", "payload": { "url": "<PUBLIC_URL>" } } } }
+```
+
+`type` is one of `image`, `video`, `audio`, `file`. Up to ten may be sent by using
+`attachments` as an array instead.
+
+| Type | Formats | Max size |
+| --- | --- | --- |
+| image | png, jpeg | 8 MB |
+| video | mp4, ogg, avi, mov, webm | 25 MB |
+| audio | aac, m4a, wav, mp4 | 25 MB |
+| file | **pdf only** | 25 MB |
+
+**Meta fetches the URL itself; bytes are never uploaded to Meta.** Two consequences that
+shape the design:
+
+1. The file must be publicly reachable **at send time**, with no authentication. Behind a
+   login, or on a laptop that has gone to sleep, the message silently fails to arrive.
+2. Because the reply to a comment cannot carry it, **any rule with an attachment must use the
+   opening-DM flow** — the button tap is what opens the 24-hour window the attachment needs.
+   A one-step rule with an attachment would never deliver it.
+
+### Meta re-hosts the file — observed live 2026-09-03
+
+A 744KB PDF was sent from `https://<our-host>/files/<uuid>/<name>.pdf`. What arrived in the
+recipient's inbox was a **`cdn.fbsbx.com`** URL, not ours.
+
+So Meta fetches the URL once, at send time, and serves its own copy from then on. Three things
+follow:
+
+- Our server has to be up **only for that one fetch**, not for the life of the message.
+- The recipient never touches our host, so an attachment generates no traffic and leaks no
+  server details to them.
+- Replacing the file afterwards does not change what an already-delivered message shows. Meta
+  has its own copy; the delivered message is effectively frozen.
+
+`.mp4` is listed under both video and audio. Social Flow resolves it to **video**, which is
+what a sender almost always means.
+
+Docs: <https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/messaging-api>
+
 ## 5. Webhooks
 
 ### 5.1 Verification (GET)

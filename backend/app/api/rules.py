@@ -17,9 +17,11 @@ from app.api.deps import (
     RulesRepo,
     SettingsDep,
 )
+from app.api.uploads import upload_root
 from app.db.repositories import serialise_required, to_object_id, utcnow
 from app.errors import MetaAPIError, NotFoundError, ValidationError
 from app.models.rules import MessagePreviewRequest, PostPublic, RuleCreate, RuleUpdate
+from app.services.attachments import delete as delete_attachment
 from app.services.campaigns import ALLOWED_VARIABLES, render, validate
 from app.services.meta.factory import build_client
 from app.services.security.encryption import decrypt
@@ -59,12 +61,9 @@ async def list_posts(
 ) -> list[PostPublic]:
     account = await _only_account(accounts, user)
     counts = await rules.counts_by_media(account["_id"])
-    posts = await media.list(
-        {"instagram_account_id": account["_id"]}, sort_field="published_at"
-    )
+    posts = await media.list({"instagram_account_id": account["_id"]}, sort_field="published_at")
     return [
-        PostPublic.from_document(p, counts.get(p.get("instagram_media_id", ""), 0))
-        for p in posts
+        PostPublic.from_document(p, counts.get(p.get("instagram_media_id", ""), 0)) for p in posts
     ]
 
 
@@ -228,13 +227,23 @@ async def update_rule(
     user: CurrentUser,
     rules: RulesRepo,
     audit: AuditRepo,
+    settings: SettingsDep,
 ) -> dict[str, Any]:
-    if await rules.get(_object_id(rule_id, "rule_id")) is None:
+    existing = await rules.get(_object_id(rule_id, "rule_id"))
+    if existing is None:
         raise NotFoundError("Rule not found.")
 
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise ValidationError("No fields to update.")
+
+    # Swapping or clearing an attachment orphans the old file. Nothing else ever
+    # references it, so it would sit on disk forever -- up to 25MB a time.
+    if "attachment" in changes:
+        old_key = ((existing.get("attachment") or {}) or {}).get("storage_key")
+        new_key = (changes.get("attachment") or {}).get("storage_key")
+        if old_key and old_key != new_key:
+            delete_attachment(upload_root(settings), old_key)
     if "message" in changes:
         validate(changes["message"])
     if changes.get("keywords") == [] and not changes.get("any_word"):
@@ -259,9 +268,15 @@ async def delete_rule(
     user: CurrentUser,
     rules: RulesRepo,
     audit: AuditRepo,
+    settings: SettingsDep,
 ) -> None:
+    doomed = await rules.get(_object_id(rule_id, "rule_id"))
     if not await rules.delete(_object_id(rule_id, "rule_id")):
         raise NotFoundError("Rule not found.")
+    if doomed:
+        delete_attachment(
+            upload_root(settings), ((doomed.get("attachment") or {}) or {}).get("storage_key")
+        )
     await audit.record(
         user_id=user["_id"],
         action="rule.deleted",

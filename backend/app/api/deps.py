@@ -4,6 +4,8 @@ Routes depend on repositories, never on a collection handle, so the layering
 holds at the HTTP layer too.
 """
 
+from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -12,7 +14,9 @@ from app.config import Settings, get_settings
 from app.db import mongodb
 from app.db.repositories import (
     AccountSnapshotsRepository,
+    AppSettingsRepository,
     AuditLogsRepository,
+    ClickEventsRepository,
     CommentsRepository,
     ContactsRepository,
     ExecutionsRepository,
@@ -24,6 +28,7 @@ from app.db.repositories import (
     WebhookEventsRepository,
 )
 from app.errors import AuthenticationError
+from app.services.geoip import GeoIpReader
 from app.services.security import sessions
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -50,6 +55,25 @@ def media_repo(db: DbDep) -> MediaRepository:
 
 def account_snapshots_repo(db: DbDep) -> AccountSnapshotsRepository:
     return AccountSnapshotsRepository(db)
+
+
+def app_settings_repo(db: DbDep) -> AppSettingsRepository:
+    return AppSettingsRepository(db)
+
+
+def click_events_repo(db: DbDep) -> ClickEventsRepository:
+    return ClickEventsRepository(db)
+
+
+@lru_cache(maxsize=1)
+def _reader_for(directory: str) -> GeoIpReader:
+    """One reader per process. Opening the database per click would mean a file
+    open on every redirect."""
+    return GeoIpReader(Path(directory))
+
+
+def geoip_reader(settings: SettingsDep) -> GeoIpReader:
+    return _reader_for(settings.geoip_dir)
 
 
 def contacts_repo(db: DbDep) -> ContactsRepository:
@@ -84,6 +108,9 @@ UsersRepo = Annotated[UsersRepository, Depends(users_repo)]
 AccountsRepo = Annotated[InstagramAccountsRepository, Depends(accounts_repo)]
 MediaRepo = Annotated[MediaRepository, Depends(media_repo)]
 SnapshotsRepo = Annotated[AccountSnapshotsRepository, Depends(account_snapshots_repo)]
+AppSettingsRepo = Annotated[AppSettingsRepository, Depends(app_settings_repo)]
+ClickEventsRepo = Annotated[ClickEventsRepository, Depends(click_events_repo)]
+GeoIpDep = Annotated[GeoIpReader, Depends(geoip_reader)]
 RulesRepo = Annotated[RulesRepository, Depends(rules_repo)]
 LinkClicksRepo = Annotated[LinkClicksRepository, Depends(link_clicks_repo)]
 ContactsRepo = Annotated[ContactsRepository, Depends(contacts_repo)]
@@ -93,9 +120,7 @@ WebhookEventsRepo = Annotated[WebhookEventsRepository, Depends(webhook_events_re
 AuditRepo = Annotated[AuditLogsRepository, Depends(audit_repo)]
 
 
-async def current_user(
-    request: Request, settings: SettingsDep, users: UsersRepo
-) -> dict[str, Any]:
+async def current_user(request: Request, settings: SettingsDep, users: UsersRepo) -> dict[str, Any]:
     """Resolve the signed session cookie to an active user.
 
     Rejects a session whose epoch is behind the user's current one — that is how

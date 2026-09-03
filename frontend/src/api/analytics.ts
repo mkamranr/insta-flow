@@ -113,3 +113,76 @@ export interface PostPerformance {
 export const getAccountPerformance = (days = 7) =>
   apiGet<AccountPerformance>(`/api/analytics/account?days=${days}`)
 export const getPostPerformance = () => apiGet<PostPerformance[]>('/api/analytics/posts')
+
+export interface PlaceRow {
+  country: string | null
+  country_code: string | null
+  city: string | null
+  clicks: number
+}
+
+export interface Places {
+  by: 'country' | 'city'
+  rows: PlaceRow[]
+  /** Clicks we could place. The rest predate the database or are unplaceable. */
+  located: number
+  total_clicks: number
+  countries: number
+}
+
+export const getRulePlaces = (ruleId: string, by: 'country' | 'city' = 'country') =>
+  apiGet<Places>(`/api/analytics/rules/${ruleId}/places?by=${by}`)
+
+export interface Bucket {
+  bucket: string
+  count: number
+}
+
+export interface Trends {
+  connected: boolean
+  days: number
+  bucket: 'hour' | 'day'
+  dms: Bucket[]
+  clicks: Bucket[]
+}
+
+export interface Highlights {
+  connected: boolean
+  days?: number
+  best_automation: {
+    id: string
+    name: string
+    dms_sent: number
+    link_clicks: number
+    click_through_rate: number
+  } | null
+  top_dm_day: Bucket | null
+  top_click_day: Bucket | null
+  top_country: PlaceRow | null
+}
+
+export const getTrends = (days = 7, bucket: 'hour' | 'day' = 'hour') =>
+  apiGet<Trends>(`/api/analytics/trends?days=${days}&bucket=${bucket}`)
+export const getHighlights = (days = 7) =>
+  apiGet<Highlights>(`/api/analytics/highlights?days=${days}`)
+export const getAccountPlaces = (days = 7, by: 'country' | 'city' = 'country') =>
+  apiGet<Places>(`/api/analytics/places?days=${days}&by=${by}`)
+
+export interface SuperfanRow {
+  instagram_user_id: string
+  username: string
+  comments: number
+  qualifying_weeks: number
+  streak_weeks: number
+  last_at: string | null
+}
+
+export interface Superfans {
+  rows: SuperfanRow[]
+  weeks_considered?: number
+  /** The rule the server applied, so the UI never paraphrases it into drift. */
+  rule: string
+}
+
+export const getSuperfans = (weeks = 12) =>
+  apiGet<Superfans>(`/api/analytics/superfans?weeks=${weeks}`)

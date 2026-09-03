@@ -9,7 +9,17 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app import queue
-from app.api import analytics, auth, instagram, legal, links, rules, webhooks
+from app.api import (
+    analytics,
+    auth,
+    instagram,
+    legal,
+    links,
+    rules,
+    settings_api,
+    uploads,
+    webhooks,
+)
 from app.config import get_settings
 from app.db import mongodb
 from app.db.indexes import create_indexes
@@ -83,6 +93,9 @@ app.include_router(instagram.router)
 app.include_router(webhooks.router)
 app.include_router(links.router)
 app.include_router(legal.router)
+app.include_router(uploads.router)
+app.include_router(uploads.public_router)
+app.include_router(settings_api.router)
 
 
 @app.get("/health", tags=["health"])

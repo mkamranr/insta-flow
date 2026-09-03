@@ -31,6 +31,14 @@
 		reverse_proxy api:8000
 	}
 
+	# Uploaded attachments. Public and unauthenticated by necessity: Meta
+	# fetches these itself when sending a DM and carries none of our
+	# credentials (docs/meta-api.md §4c). Without this route they fall through
+	# to the SPA, and Meta silently receives an HTML page instead of the file.
+	handle /files/* {
+		reverse_proxy api:8000
+	}
+
 	handle /ready {
 		reverse_proxy api:8000
 	}

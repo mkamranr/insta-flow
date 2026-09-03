@@ -79,9 +79,7 @@ class EmailGate(BaseModel):
     """Ask for an email in the DM before sending the payoff."""
 
     enabled: bool = False
-    prompt: str = Field(
-        default="What's your email? I'll send it straight over.", max_length=300
-    )
+    prompt: str = Field(default="What's your email? I'll send it straight over.", max_length=300)
 
 
 class AiMatching(BaseModel):
@@ -107,6 +105,23 @@ class AiMatching(BaseModel):
         return values
 
 
+class Attachment(BaseModel):
+    """A file Meta fetches by URL when the payoff is sent.
+
+    A private reply is text-only (docs/meta-api.md §4c), so an attachment can
+    only ride the follow-up DM -- which means a rule carrying one must use the
+    opening-DM flow to get a messaging window open first.
+    """
+
+    type: Literal["image", "video", "audio", "file"]
+    url: str = ""
+    #  "<uuid>/<filename>" on disk. Kept so the file can be deleted when the
+    #  rule goes or the attachment is replaced.
+    storage_key: str = ""
+    filename: str = ""
+    size_bytes: int = 0
+
+
 class RuleBase(BaseModel):
     name: str = Field(default="", max_length=120)
     scope: RuleScope = "specific"
@@ -120,6 +135,11 @@ class RuleBase(BaseModel):
     opening_dm: OpeningDm = Field(default_factory=OpeningDm)
     message: str = Field(min_length=1, max_length=1000)
     buttons: list[LinkButton] = Field(default_factory=list)
+    attachment: Attachment | None = None
+
+    # Wait this long before replying. Meta's private-reply window is seven days,
+    # so a delay capped at 59:59 can never push a send outside it.
+    reply_delay_seconds: int = Field(default=0, ge=0, le=3599)
 
     ai: AiMatching = Field(default_factory=AiMatching)
     public_reply: PublicReply = Field(default_factory=PublicReply)
@@ -169,6 +189,8 @@ class RuleUpdate(BaseModel):
     opening_dm: OpeningDm | None = None
     message: str | None = Field(default=None, min_length=1, max_length=1000)
     buttons: list[LinkButton] | None = None
+    attachment: Attachment | None = None
+    reply_delay_seconds: int | None = Field(default=None, ge=0, le=3599)
     ai: AiMatching | None = None
     public_reply: PublicReply | None = None
     require_follow: FollowGate | None = None

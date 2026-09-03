@@ -15,6 +15,7 @@ class InstagramAccountPublic(BaseModel):
     username: str
     display_name: str | None = None
     account_type: str | None = None
+    profile_picture_url: str | None = None
     permissions: list[str] = []
     status: str
     status_error: str | None = None
@@ -36,6 +37,7 @@ class InstagramAccountPublic(BaseModel):
             username=str(document.get("username", "")),
             display_name=document.get("display_name"),
             account_type=document.get("account_type"),
+            profile_picture_url=document.get("profile_picture_url"),
             permissions=list(document.get("permissions") or []),
             status=str(document.get("status", "disconnected")),
             status_error=document.get("status_error"),
