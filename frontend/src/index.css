@@ -1168,7 +1168,13 @@ input, textarea, select { transition: border-color var(--t-fast) var(--ease), bo
    not others, so the row of buttons steps up and down. */
 .scroller { align-items: stretch; }
 .ig-body { flex: 1; }
-.ig-body > button { margin-top: auto; }
+
+/* Both CTA variants, named explicitly. `.ig-body > button` is (0,1,1) and loses
+   to `.ig-body button.secondary` at (0,2,1), which is why "Set up automation"
+   pinned to the bottom and "View automation" did not. The gap on .ig-body
+   already provides the spacing those margin-top: 6px rules were adding. */
+.ig-body > button.ig-cta,
+.ig-body > button.secondary { margin-top: auto; }
 
 /* Two lines reserved whether the caption fills them or not, so the block below
    starts at the same place on every card. */

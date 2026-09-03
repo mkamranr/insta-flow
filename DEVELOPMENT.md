@@ -123,10 +123,19 @@ derivable from a total at all — only net change is.
 **Click history begins with `click_events`.** Clicks recorded before that collection existed
 are a counter and a last-clicked timestamp, so they cannot be placed on a timeline or a map.
 
-**A CSS gotcha that has bitten three times.** The global `button:hover:not(:disabled)` rule is
-specificity (0,2,1). Any `.some-class:hover` styling a `<button>` is (0,2,0) and loses, so the
-element turns dark on hover. Write `button.some-class:hover:not(:disabled)` instead. The same
-arithmetic applies to `.tab.active` and friends.
+**A CSS specificity trap that has now bitten four times.** Several base rules in
+`index.css` target `button` plus a class, which is (0,1,1) or (0,2,1). A later rule written as
+`.some-class { ... }` is only (0,1,0) and silently loses, so the change appears not to apply:
+
+| Symptom | Losing selector | What beat it |
+| --- | --- | --- |
+| Tabs filled dark on hover | `.tab:hover` (0,2,0) | `button:hover:not(:disabled)` (0,2,1) |
+| Template cards went dark, text unreadable | `.template-card:hover` (0,2,0) | same |
+| Stats rail and keyword chips, same shape | `.stats-rail:hover` (0,2,0) | same |
+| "View automation" would not pin to the card bottom | `.ig-body > button` (0,1,1) | `.ig-body button.secondary` (0,2,1) |
+
+Write the element into the selector — `button.some-class` — rather than relying on source
+order. Source order only decides a tie, and these are not ties.
 
 ## Environment
 
