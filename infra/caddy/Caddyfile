@@ -2,6 +2,21 @@
 # here, so this file must NOT contain TLS directives or a public hostname.
 # For a domain-based deployment with Caddy-managed certs, see docs/deployment.md.
 
+{
+	servers {
+		# Caddy v2 does NOT trust an inbound X-Forwarded-For unless the sender
+		# is declared trusted -- it replaces it with the immediate peer. Behind
+		# Tailscale Funnel that peer is the Docker gateway, so the visitor's
+		# real address was being discarded and every click recorded as
+		# unlocatable. Verified live: Caddy received 94.59.71.70 and the app
+		# saw a private chain.
+		#
+		# Safe here because Caddy binds 127.0.0.1 only (see docker-compose.yml),
+		# so nothing but the funnel and localhost can reach it to spoof a header.
+		trusted_proxies static private_ranges
+	}
+}
+
 :8080 {
 	encode gzip
 

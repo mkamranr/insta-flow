@@ -322,13 +322,22 @@ async def account_places(
     user: CurrentUser,
     accounts: AccountsRepo,
     events: ClickEventsRepo,
+    links: LinkClicksRepo,
     days: int = Query(7, ge=1, le=90),
     by: str = Query("country", pattern="^(country|city)$"),
 ) -> dict[str, Any]:
-    """Where this account's link clicks came from, across every automation."""
+    """Where this account's link clicks came from, across every automation.
+
+    `located` vs `total_clicks` is the whole diagnostic: equal means every click
+    was placed, `located == 0` with clicks present means locations are not being
+    derived, and both zero means nobody has clicked. The UI needs all three to
+    say anything true about an empty chart, so the shape is identical whether or
+    not an account is connected.
+    """
+    empty = {"by": by, "rows": [], "located": 0, "total_clicks": 0, "countries": 0, "links": 0}
     account_id = await _account_id(accounts, user)
     if account_id is None:
-        return {"rows": [], "located": 0}
+        return empty
 
     since = datetime.now(UTC) - timedelta(days=days)
     rows = await events.by_place(account_id, since, by_city=(by == "city"))
@@ -339,6 +348,10 @@ async def account_places(
         "located": sum(row["clicks"] for row in rows),
         "total_clicks": total,
         "countries": len({row["country_code"] for row in rows if row["country_code"]}),
+        # Whether any trackable link exists at all. Without one there is nothing
+        # to click, which is a different problem from "nobody clicked" and needs
+        # a different sentence.
+        "links": await links.count({"instagram_account_id": account_id}),
     }
 
 

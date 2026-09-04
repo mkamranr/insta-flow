@@ -62,7 +62,9 @@ export function Dashboard() {
   // not refetch everything the other sections already have.
   const PAGE = 8
   const rail = useInfiniteQuery({
-    queryKey: ['posts-rail'],
+    // A prefix of ['posts'], so invalidating that covers the rail too. A
+    // standalone key like ['posts-rail'] silently went stale on every save.
+    queryKey: ['posts', 'rail'],
     initialPageParam: 0,
     queryFn: ({ pageParam }) => listPosts(PAGE, pageParam as number),
     // A short page means the end; there is no total to compare against.

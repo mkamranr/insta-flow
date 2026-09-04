@@ -35,6 +35,10 @@ export function StatsRail({ onOpen }: { onOpen: () => void }) {
     {
       value: data.link_clicks ?? 0,
       label: 'LINK CLICKS',
+      // Counted from `link_clicks`, filtered on when the LINK was created, then
+      // summed over its lifetime clicks. That is not the same as clicks inside
+      // the window, and it is why this can read 5 while the timeline reads 0.
+      title: 'All clicks ever recorded on links created in this window',
       icon: (
         <svg {...badge}>
           <path d="M10 13a4 4 0 0 0 5.7.4l2.6-2.6a4 4 0 0 0-5.7-5.7l-1.5 1.5" />
@@ -45,6 +49,7 @@ export function StatsRail({ onOpen }: { onOpen: () => void }) {
     {
       value: `${data.click_through_rate ?? 0}%`,
       label: 'CTR',
+      title: 'Link clicks divided by DMs sent. Can exceed 100%: one person may click twice',
       icon: (
         <svg {...badge}>
           <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" />
@@ -56,7 +61,7 @@ export function StatsRail({ onOpen }: { onOpen: () => void }) {
   return (
     <button className="stats-rail" onClick={onOpen} aria-label="Open analytics">
       {items.map((item) => (
-        <div className="rail-item" key={item.label}>
+        <div className="rail-item" key={item.label} title={item.title}>
           <span className="rail-badge">{item.icon}</span>
           <div>
             <div className="rail-value">{item.value}</div>

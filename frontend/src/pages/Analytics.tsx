@@ -15,6 +15,7 @@ import {
   type PostPerformance,
   type RulePerformance,
 } from '../api/analytics'
+import { apiGet } from '../api/client'
 import { mediaImage } from '../api/rules'
 import { BarSeries } from '../components/analytics/BarSeries'
 import { ActivityLog } from './Activity'
@@ -293,7 +294,7 @@ function EngagementTrends({ days }: { days: number }) {
           <BarSeries
             data={data?.clicks ?? []}
             byHour={bucket === 'hour'}
-            emptyNote="No clicks recorded in this window. Clicks are counted per click from the day this was added."
+            emptyNote="No clicks in this window. The timeline records one row per click and only started doing so on 3 September, so earlier clicks — which the Link clicks total still counts — cannot appear here."
           />
         </div>
       </div>
@@ -306,6 +307,13 @@ function AccountPlaces({ days }: { days: number }) {
   const { data } = useQuery({
     queryKey: ['account-places', days, by],
     queryFn: () => getAccountPlaces(days, by),
+  })
+  // Only to tell "no database" apart from "clicks predate the database". The
+  // old copy told everyone to add a MaxMind key, including people who had.
+  const { data: geoip } = useQuery({
+    queryKey: ['geoip'],
+    queryFn: () => apiGet<{ database: { present: boolean } }>('/api/settings/geoip'),
+    retry: false,
   })
   if (!data) return <p className="muted small">Loading…</p>
 
@@ -327,7 +335,13 @@ function AccountPlaces({ days }: { days: number }) {
           {data.located} of {data.total_clicks} clicks placed · {data.countries} countries
         </span>
       </div>
-      <PlaceRows rows={data.rows} located={data.located} />
+      <PlaceRows
+        rows={data.rows}
+        located={data.located}
+        totalClicks={data.total_clicks}
+        links={data.links}
+        geoipReady={geoip?.database?.present}
+      />
     </>
   )
 }
@@ -466,15 +480,45 @@ function AutomationCard({
   )
 }
 
-function PlaceRows({ rows, located }: { rows: PlaceRow[]; located: number }) {
+/**
+ * Why the map is empty — four different situations that used to share one
+ * sentence, and that sentence blamed MaxMind even when the key was configured.
+ *
+ * `located` vs `totalClicks` separates them: both zero means nobody clicked,
+ * while clicks with nothing located means locations are not being derived.
+ */
+function emptyReason(
+  totalClicks: number,
+  links: number | undefined,
+  geoipReady: boolean | undefined,
+): string {
+  if (links === 0) {
+    return 'No automation has a link button yet, so there is nothing to click. Add a button with a URL to an automation and its clicks will be mapped.'
+  }
+  if (totalClicks === 0) {
+    return 'No clicks in this window yet. Locations are worked out at click time, so a click has to happen after the database was installed to carry one.'
+  }
+  if (geoipReady === false) {
+    return `${totalClicks} click${totalClicks === 1 ? '' : 's'}, none placed — the GeoLite2 database is not installed. Add your MaxMind key under Settings.`
+  }
+  return `${totalClicks} click${totalClicks === 1 ? '' : 's'}, none of them placed. Locations are resolved at click time and cannot be added later, so clicks recorded before the database was installed stay unplaced.`
+}
+
+function PlaceRows({
+  rows,
+  located,
+  totalClicks = 0,
+  links,
+  geoipReady,
+}: {
+  rows: PlaceRow[]
+  located: number
+  totalClicks?: number
+  links?: number
+  geoipReady?: boolean
+}) {
   if (rows.length === 0) {
-    return (
-      <p className="muted small">
-        No clicks have been placed yet. Locations are resolved at click time, so only clicks
-        made after the GeoLite2 database was installed carry one — add your MaxMind key under
-        Settings if you have not.
-      </p>
-    )
+    return <p className="muted small">{emptyReason(totalClicks, links, geoipReady)}</p>
   }
   const peak = rows[0]?.clicks ?? 0
   return (
@@ -531,7 +575,7 @@ function PlacesPanel({ ruleId }: { ruleId: string }) {
         </span>
       </div>
 
-      <PlaceRows rows={rows} located={data.located} />
+      <PlaceRows rows={rows} located={data.located} totalClicks={data.total_clicks} />
     </>
   )
 }

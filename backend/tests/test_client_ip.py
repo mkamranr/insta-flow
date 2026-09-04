@@ -51,3 +51,26 @@ def test_the_chain_description_contains_no_addresses():
     assert described == "public>private>private"
     assert PUBLIC not in described
     assert CADDY not in described
+
+
+def test_a_public_address_survives_a_proxy_appending_its_own_hop():
+    """The shape Caddy produces once it trusts the funnel: the visitor's
+    address first, the proxy's own view appended.
+
+    Before `trusted_proxies` was set, Caddy REPLACED the inbound header with
+    its own peer, and every click was recorded unlocatable. Verified live: a
+    phone on mobile data reached Caddy as 94.59.71.70 and the app saw a fully
+    private chain.
+    """
+    from app.services.net import client_ip
+
+    assert client_ip("94.59.71.70, 172.25.0.1", "172.25.0.1") == "94.59.71.70"
+
+
+def test_a_tailscale_cgnat_address_is_not_treated_as_a_visitor():
+    """A request arriving over the tailnet rather than the funnel carries a
+    100.64.0.0/10 address. It is not routable, so it is not a location -- and a
+    test run from inside the tailnet cannot prove the funnel path works."""
+    from app.services.net import client_ip
+
+    assert client_ip("100.118.190.118, 172.25.0.1", "172.25.0.1") is None

@@ -130,6 +130,8 @@ export interface Places {
   located: number
   total_clicks: number
   countries: number
+  /** Trackable links that exist at all. Zero means nothing can be clicked. */
+  links?: number
 }
 
 export const getRulePlaces = (ruleId: string, by: 'country' | 'city' = 'country') =>

@@ -29,7 +29,10 @@ export function Automations() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['rules'] })
+    // Prefix match, so the paged rails follow. Deleting a rule has to return
+    // the card to "Set up automation" as promptly as creating one changes it.
     queryClient.invalidateQueries({ queryKey: ['posts'] })
+    queryClient.invalidateQueries({ queryKey: ['stories'] })
     queryClient.invalidateQueries({ queryKey: ['rule-performance'] })
   }
 

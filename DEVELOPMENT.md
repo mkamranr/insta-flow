@@ -133,6 +133,17 @@ rather than guessed at.
 matching (`ai_classifications` is keyed on `comment_id`), and `awaiting_follow` parking
 (`recheck_follow` loads a comment row). All are refused at the API with an explanation.
 
+**Click geography needs a trusted proxy.** Caddy v2 replaces an inbound `X-Forwarded-For`
+unless the sender is declared in `trusted_proxies`, so behind Tailscale Funnel the visitor's
+address was being swapped for the Docker gateway and `client_ip()` correctly refused it as
+private. Every click was stored with no location and the map was empty with no error anywhere.
+The two states — "nobody clicked" and "nothing could be placed" — are told apart by `located`
+vs `total_clicks` on `/api/analytics/places`; the UI now prints a different sentence for each.
+
+**Locations cannot be added later.** A `click_events` row keeps only the derived place, never
+the address, so an unplaced click is unplaced forever. That is deliberate, and it means
+`click_events` has no history before the day it shipped and no backfill is possible.
+
 **Follower history is only what we recorded.** Instagram exposes a follower total and no
 history, so growth begins the day the account was connected, and gross new-vs-unfollowed is not
 derivable from a total at all — only net change is.

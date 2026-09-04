@@ -100,8 +100,11 @@ export function RuleEditor({
       else await createRule(payload)
     },
     onSuccess: () => {
+      // Prefix matches, so the paged rails on Home and Posts refresh too --
+      // without this the button stays on "Set up automation" until a reload.
       queryClient.invalidateQueries({ queryKey: ['posts'] })
       queryClient.invalidateQueries({ queryKey: ['rules'] })
+      queryClient.invalidateQueries({ queryKey: ['stories'] })
       onClose()
     },
   })

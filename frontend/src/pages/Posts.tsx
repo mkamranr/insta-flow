@@ -24,7 +24,7 @@ export function Posts() {
   // reads the full list, so the two must not share a query key.
   const PAGE = 8
   const rail = useInfiniteQuery({
-    queryKey: ['posts-rail-page'],
+    queryKey: ['posts', 'rail', 'page'],
     initialPageParam: 0,
     queryFn: ({ pageParam }) => listPosts(PAGE, pageParam as number),
     // A short page means the end; there is no total to compare against.
@@ -50,8 +50,8 @@ export function Posts() {
   const sync = useMutation({
     mutationFn: syncPosts,
     onSuccess: () => {
+      // Prefix match: this covers ['posts', 'rail', 'page'] as well.
       queryClient.invalidateQueries({ queryKey: ['posts'] })
-      queryClient.invalidateQueries({ queryKey: ['posts-rail-page'] })
     },
   })
 
