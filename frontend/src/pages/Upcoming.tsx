@@ -41,13 +41,11 @@ export function Upcoming() {
             Set up an automation now; it arms itself on your next post.
           </p>
         </div>
-        <button
-          className="cta"
-          disabled={!!pending || isLoading}
-          onClick={() => setComposing(true)}
-        >
-          + Add upcoming post ({pending ? 1 : 0}/1)
-        </button>
+        {pending && (
+          <button className="cta" disabled>
+            + Add upcoming post (1/1)
+          </button>
+        )}
       </div>
 
       {isError && <div className="card err">{(error as ApiError).message}</div>}
