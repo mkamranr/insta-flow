@@ -25,6 +25,7 @@ from app.db.repositories import (
     MediaRepository,
     RulesRepository,
     StoriesRepository,
+    UpcomingPostsRepository,
     WebhookEventsRepository,
 )
 from app.errors import MetaAPIError, MetaTokenError, TemplateError
@@ -784,6 +785,123 @@ async def refresh_expiring_tokens(ctx: dict[str, Any]) -> dict[str, int]:
         logger.info("scheduled_token_refreshed", extra={"account_id": str(account["_id"])})
 
     return {"refreshed": refreshed, "failed": failed}
+
+
+async def sync_posts(ctx: dict[str, Any]) -> dict[str, int]:
+    """Pull recent posts, then arm the waiting automation on the first new one.
+
+    Posts were previously discovered only when someone pressed Refresh, which
+    made "apply this to my next post" meaningless -- the template would sit
+    unapplied until a human happened to look.
+
+    Read-only against Meta, so it runs regardless of DRY_RUN. Creating a rule is
+    a local write; nothing is sent until someone actually comments.
+    """
+    db = ctx["db"]
+    settings = ctx["settings"]
+    client = ctx["client"]
+    media = MediaRepository(db)
+
+    synced = armed = 0
+    for account in await InstagramAccountsRepository(db).list({"status": "connected"}):
+        try:
+            token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+            fetched = await client.get_media(token, account["instagram_user_id"], limit=50)
+        except (MetaAPIError, EncryptionError) as exc:
+            logger.warning(
+                "post_sync_failed", extra={"account_id": str(account["_id"]), "error": str(exc)}
+            )
+            continue
+
+        for item in fetched:
+            await media.upsert(
+                account["_id"],
+                item.instagram_media_id,
+                {
+                    "instagram_account_id": account["_id"],
+                    "instagram_media_id": item.instagram_media_id,
+                    "media_type": item.media_type,
+                    "media_product_type": item.media_product_type,
+                    "caption": item.caption,
+                    "permalink": item.permalink,
+                    "thumbnail_url": item.thumbnail_url,
+                    "media_url": item.media_url,
+                    "published_at": item.published_at,
+                    "like_count": item.like_count,
+                    "comments_count": item.comments_count,
+                    "updated_at": datetime.now(UTC),
+                },
+            )
+        synced += len(fetched)
+        armed += await apply_upcoming_post(db, account)
+
+    return {"synced": synced, "armed": armed}
+
+
+async def apply_upcoming_post(db: Any, account: dict[str, Any]) -> int:
+    """Arm the waiting template on the earliest post published since it was set.
+
+    "Published since" rather than "not seen before": a post that predates the
+    template is not what the operator meant by *upcoming*, however late we
+    happen to sync it.
+
+    Earliest first, because more than one post can appear between syncs and the
+    operator said the first one wins -- and because "the newest" would silently
+    change which post got it depending on sync timing.
+    """
+    upcoming = UpcomingPostsRepository(db)
+    claimed = await upcoming.claim(account["_id"])
+    if claimed is None:
+        return 0
+
+    cutoff = claimed.get("created_at")
+    candidates = await MediaRepository(db).list(
+        {
+            "instagram_account_id": account["_id"],
+            "published_at": {"$gt": cutoff},
+        },
+        sort_field="published_at",
+        descending=False,
+        limit=1,
+    )
+    if not candidates:
+        # Nothing published yet. Put it back and wait for the next sync.
+        await upcoming.release(claimed["_id"])
+        return 0
+
+    post = candidates[0]
+    template = dict(claimed.get("rule") or {})
+    template.update(
+        {
+            "instagram_account_id": account["_id"],
+            "trigger": "comment",
+            "scope": "specific",
+            "instagram_media_ids": [post["instagram_media_id"]],
+            "created_from_upcoming": True,
+        }
+    )
+
+    try:
+        rule_id = await RulesRepository(db).insert(template)
+    except Exception as exc:
+        # Put it back rather than lose the template because one sync failed.
+        await upcoming.release(claimed["_id"])
+        logger.error(
+            "upcoming_post_apply_failed",
+            extra={"upcoming_id": str(claimed["_id"]), "error": str(exc)},
+        )
+        return 0
+
+    await upcoming.mark_applied(claimed["_id"], rule_id, post["instagram_media_id"])
+    logger.info(
+        "upcoming_post_applied",
+        extra={
+            "rule_id": str(rule_id),
+            "instagram_media_id": post["instagram_media_id"],
+            "published_at": str(post.get("published_at")),
+        },
+    )
+    return 1
 
 
 async def sync_stories(ctx: dict[str, Any]) -> dict[str, int]:

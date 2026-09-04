@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Query, Request, status
+from pymongo.errors import DuplicateKeyError
 
 from app.api.deps import (
     AccountsRepo,
@@ -17,9 +18,10 @@ from app.api.deps import (
     RulesRepo,
     SettingsDep,
     StoriesRepo,
+    UpcomingRepo,
 )
 from app.api.uploads import upload_root
-from app.db.repositories import serialise_required, to_object_id, utcnow
+from app.db.repositories import serialise, serialise_required, to_object_id, utcnow
 from app.errors import MetaAPIError, NotFoundError, ValidationError
 from app.models.rules import (
     MessagePreviewRequest,
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 posts_router = APIRouter(prefix="/api/posts", tags=["posts"])
 stories_router = APIRouter(prefix="/api/stories", tags=["stories"])
+upcoming_router = APIRouter(prefix="/api/upcoming", tags=["upcoming"])
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
 
@@ -58,6 +61,103 @@ async def _only_account(accounts: Any, user: dict[str, Any]) -> dict[str, Any]:
     if not found:
         raise ValidationError("No Instagram account is connected yet.")
     return found[0]
+
+
+
+# --- upcoming post ----------------------------------------------------------
+
+
+@upcoming_router.get("")
+async def get_upcoming(
+    user: CurrentUser, accounts: AccountsRepo, upcoming: UpcomingRepo
+) -> dict[str, Any]:
+    """The automation waiting for the next post, and the last few applied."""
+    account = await _only_account(accounts, user)
+    pending = await upcoming.pending_for(account["_id"])
+    return {
+        "pending": serialise(pending) if pending else None,
+        "history": [serialise_required(h) for h in await upcoming.history(account["_id"])],
+    }
+
+
+@upcoming_router.post("", status_code=status.HTTP_201_CREATED)
+async def create_upcoming(
+    payload: RuleCreate,
+    request: Request,
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    upcoming: UpcomingRepo,
+    audit: AuditRepo,
+) -> dict[str, Any]:
+    """Save an automation to arm on the next post published from now.
+
+    Validated exactly as a rule is, because that is what it becomes -- catching
+    a broken message here rather than at 3am when the post goes live.
+    """
+    account = await _only_account(accounts, user)
+
+    if payload.trigger != "comment":
+        raise ValidationError(
+            "An upcoming-post automation answers comments on the post itself, "
+            "so it cannot use a story or DM trigger."
+        )
+    validate(payload.message)
+    if payload.opening_dm.enabled and payload.opening_dm.message.strip():
+        validate(payload.opening_dm.message)
+    if not payload.any_word and not payload.keywords:
+        raise ValidationError("Add at least one keyword, or switch on 'any word'.")
+
+    template = payload.model_dump()
+    # The post is not known yet; these are filled in when it is.
+    template.pop("instagram_media_ids", None)
+
+    try:
+        upcoming_id = await upcoming.insert(
+            {
+                "instagram_account_id": account["_id"],
+                "pending": True,
+                "status": "waiting",
+                "rule": template,
+            }
+        )
+    except DuplicateKeyError as exc:
+        # The partial unique index is the authority on "only one at a time".
+        raise ValidationError(
+            "An automation is already waiting for your next post. "
+            "Remove it first, or edit the one you have."
+        ) from exc
+
+    await audit.record(
+        user_id=user["_id"],
+        action="upcoming.created",
+        entity_type="upcoming_post",
+        entity_id=upcoming_id,
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"id": str(upcoming_id)}
+
+
+@upcoming_router.delete("/{upcoming_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_upcoming(
+    upcoming_id: str,
+    request: Request,
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    upcoming: UpcomingRepo,
+    audit: AuditRepo,
+) -> None:
+    account = await _only_account(accounts, user)
+    record = await upcoming.get(_object_id(upcoming_id, "upcoming_id"))
+    if record is None or record.get("instagram_account_id") != account["_id"]:
+        raise NotFoundError("No upcoming automation found.")
+    await upcoming.delete(_object_id(upcoming_id, "upcoming_id"))
+    await audit.record(
+        user_id=user["_id"],
+        action="upcoming.deleted",
+        entity_type="upcoming_post",
+        entity_id=to_object_id(upcoming_id),
+        ip_address=request.client.host if request.client else None,
+    )
 
 
 # --- stories ----------------------------------------------------------------
@@ -221,8 +321,15 @@ async def sync_posts(
         changes={"count": len(fetched)},
         ip_address=request.client.host if request.client else None,
     )
-    logger.info("media_synced", extra={"count": len(fetched)})
-    return {"synced": len(fetched)}
+    # A hand-pressed Refresh must arm the waiting template too. Otherwise the
+    # feature would only work on the cron, and pressing Refresh right after
+    # posting -- the obvious thing to do -- would appear to do nothing.
+    from app.workers.tasks import apply_upcoming_post
+
+    armed = await apply_upcoming_post(media.collection.database, account)
+
+    logger.info("media_synced", extra={"count": len(fetched), "armed": armed})
+    return {"synced": len(fetched), "armed": armed}
 
 
 # --- rules ------------------------------------------------------------------

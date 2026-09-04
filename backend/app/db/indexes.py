@@ -18,6 +18,7 @@ COLLECTIONS = [
     "instagram_accounts",
     "media",
     "stories",
+    "upcoming_posts",
     "rules",
     "link_clicks",
     "contacts",
@@ -82,6 +83,17 @@ INDEXES: dict[str, list[IndexModel]] = {
                 ("first_seen_at", DESCENDING),
             ],
             name="ix_account_active_story",
+        ),
+    ],
+    "upcoming_posts": [
+        # One pending template per account. `pending` is unset once applied, so
+        # the partial index stops covering the row and the next one can be
+        # created -- a plain unique index would block forever after the first.
+        IndexModel(
+            [("instagram_account_id", ASCENDING)],
+            unique=True,
+            name="uq_account_pending_upcoming",
+            partialFilterExpression={"pending": True},
         ),
     ],
     "rules": [

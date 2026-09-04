@@ -1468,3 +1468,15 @@ button.story-card.on { border-color: var(--text); box-shadow: 0 0 0 1px var(--te
   border-color: color-mix(in oklab, var(--ok, #2e7d32) 40%, var(--border));
   background: color-mix(in oklab, var(--ok, #2e7d32) 7%, var(--surface));
 }
+
+/* Keeps the rail from collapsing while the next page loads — a bare text node
+   in a flex row has no width of its own. */
+.rail-loading { flex: none; display: grid; place-items: center; width: 120px; }
+
+/* -- Upcoming post --------------------------------------------------------- */
+
+.upcoming-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.empty-card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+.clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

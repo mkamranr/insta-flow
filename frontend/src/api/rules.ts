@@ -114,6 +114,21 @@ export const listStories = () => apiGet<Story[]>('/api/stories')
 export const syncStories = () =>
   apiPost<{ active: number; expired: number; rules_disabled: number }>('/api/stories/sync')
 
+export interface UpcomingPost {
+  id: string
+  status: 'waiting' | 'applying' | 'applied'
+  rule: Partial<Rule>
+  created_at: string
+  applied_at?: string | null
+  instagram_media_id?: string | null
+}
+
+export const getUpcoming = () =>
+  apiGet<{ pending: UpcomingPost | null; history: UpcomingPost[] }>('/api/upcoming')
+export const createUpcoming = (rule: Partial<Rule>) =>
+  apiPost<{ id: string }>('/api/upcoming', rule)
+export const deleteUpcoming = (id: string) => apiDelete<void>(`/api/upcoming/${id}`)
+
 export const listPosts = (limit = 0, offset = 0) =>
   apiGet<Post[]>(`/api/posts?limit=${limit}&offset=${offset}`)
 export const syncPosts = () => apiPost<{ synced: number }>('/api/posts/sync')

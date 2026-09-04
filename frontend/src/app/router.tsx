@@ -10,6 +10,7 @@ import { Instagram } from '../pages/Instagram'
 import { Posts } from '../pages/Posts'
 import { Settings } from '../pages/Settings'
 import { Stories } from '../pages/Stories'
+import { Upcoming } from '../pages/Upcoming'
 import { Templates } from '../pages/Templates'
 
 export function Router() {
@@ -28,6 +29,7 @@ export function Router() {
           <Route path="templates" element={<Templates />} />
           <Route path="posts" element={<Posts />} />
           <Route path="stories" element={<Stories />} />
+          <Route path="upcoming" element={<Upcoming />} />
           <Route path="analytics" element={<Analytics />} />
           {/* The activity log became a tab; keep old links and bookmarks working. */}
           <Route

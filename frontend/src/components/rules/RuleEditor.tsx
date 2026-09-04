@@ -62,6 +62,7 @@ export function RuleEditor({
   trigger = 'comment',
   initial,
   editingId,
+  saveAs,
   onClose,
 }: {
   post?: Post
@@ -69,6 +70,12 @@ export function RuleEditor({
   initial?: Partial<Rule>
   /** When set, saving updates that rule instead of creating a new one. */
   editingId?: string
+  /**
+   * Where the finished rule goes, if not straight to `/api/rules`. The
+   * upcoming-post page stores it as a template instead, and the editor should
+   * not know which of those it is building.
+   */
+  saveAs?: (draft: Partial<Rule>) => Promise<void>
   onClose: () => void
 }) {
   const [draft, setDraft] = useState<Partial<Rule>>({ ...BLANK, ...initial })
@@ -76,7 +83,7 @@ export function RuleEditor({
   const set = (changes: Partial<Rule>) => setDraft((d) => ({ ...d, ...changes }))
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async (): Promise<void> => {
       // A story-reply or DM rule has no post to attach to, so it is account
       // wide -- "any" literally means "not restricted to the listed posts".
       const payload = post
@@ -85,7 +92,12 @@ export function RuleEditor({
         : { ...draft, trigger, scope: 'any' as const, instagram_media_ids: [] }
       // `id` is server-owned; sending it back would be rejected.
       delete (payload as Partial<Rule>).id
-      return editingId ? patchRule(editingId, payload) : createRule(payload)
+      if (saveAs) {
+        await saveAs(payload)
+        return
+      }
+      if (editingId) await patchRule(editingId, payload)
+      else await createRule(payload)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['posts'] })

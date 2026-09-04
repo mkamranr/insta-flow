@@ -22,6 +22,7 @@ from app.workers.tasks import (
     refresh_expiring_tokens,
     refresh_geoip_database,
     snapshot_account_metrics,
+    sync_posts,
     sync_stories,
 )
 
@@ -74,6 +75,7 @@ class WorkerSettings:
         refresh_expiring_tokens,
         refresh_geoip_database,
         snapshot_account_metrics,
+        sync_posts,
         sync_stories,
     ]
     cron_jobs = [
@@ -91,6 +93,10 @@ class WorkerSettings:
         # also the worst-case lag before a rule pinned to a dead story is
         # disabled. The endpoint runs it on demand too.
         cron(sync_stories, minute=5),
+        # Every 15 minutes. This is what makes "apply to my next post" real:
+        # without a scheduled sync a template would sit unapplied until someone
+        # happened to press Refresh.
+        cron(sync_posts, minute={0, 15, 30, 45}),
     ]
     on_startup = startup
     on_shutdown = shutdown

@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { listAccounts } from '../api/instagram'
@@ -20,9 +20,39 @@ export function Posts() {
     retry: false,
   })
 
+  // The rail pages on its own, like the dashboard's. The table below still
+  // reads the full list, so the two must not share a query key.
+  const PAGE = 8
+  const rail = useInfiniteQuery({
+    queryKey: ['posts-rail-page'],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => listPosts(PAGE, pageParam as number),
+    // A short page means the end; there is no total to compare against.
+    getNextPageParam: (last, all) =>
+      last.length < PAGE ? undefined : all.reduce((n, page) => n + page.length, 0),
+    retry: false,
+  })
+  const railPosts = rail.data?.pages.flat() ?? []
+
+  const onRailScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      const el = event.currentTarget
+      // A screen-width early, so the next page has usually landed by the time
+      // the reader reaches the end.
+      const remaining = el.scrollWidth - el.scrollLeft - el.clientWidth
+      if (remaining < el.clientWidth * 0.5 && rail.hasNextPage && !rail.isFetchingNextPage) {
+        rail.fetchNextPage()
+      }
+    },
+    [rail],
+  )
+
   const sync = useMutation({
     mutationFn: syncPosts,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['posts'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['posts'] })
+      queryClient.invalidateQueries({ queryKey: ['posts-rail-page'] })
+    },
   })
 
   const username = accounts?.[0]?.username ?? 'you'
@@ -75,8 +105,8 @@ export function Posts() {
                 </span>
               </div>
             )}
-            <div className="scroller">
-              {posts.slice(0, 12).map((post) => (
+            <div className="scroller" onScroll={onRailScroll}>
+              {railPosts.map((post) => (
                 <PostCard
                   key={post.id}
                   post={post}
@@ -84,6 +114,9 @@ export function Posts() {
                   onSetUp={() => openFor(post)}
                 />
               ))}
+              {rail.isFetchingNextPage && (
+                <div className="rail-loading muted small">Loading…</div>
+              )}
             </div>
           </section>
 

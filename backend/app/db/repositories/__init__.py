@@ -14,6 +14,7 @@ from .link_clicks import LinkClicksRepository
 from .media import MediaRepository
 from .rules import RulesRepository
 from .stories import StoriesRepository
+from .upcoming_posts import UpcomingPostsRepository
 from .users import UsersRepository
 from .webhook_events import WebhookEventsRepository, event_hash
 
@@ -32,6 +33,7 @@ __all__ = [
     "MediaRepository",
     "RulesRepository",
     "StoriesRepository",
+    "UpcomingPostsRepository",
     "UsersRepository",
     "WebhookEventsRepository",
     "event_hash",

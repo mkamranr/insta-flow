@@ -22,6 +22,7 @@ import {
   PlusIcon,
   PostsIcon,
   StoriesIcon,
+  UpcomingIcon,
   SettingsIcon,
   TemplatesIcon,
 } from '../icons/Icons'
@@ -38,6 +39,7 @@ const TOP = [
 const MY_CONTENT = [
   { to: '/posts', label: 'Posts & Reels', icon: <PostsIcon /> },
   { to: '/stories', label: 'Stories', icon: <StoriesIcon /> },
+  { to: '/upcoming', label: 'Upcoming post', icon: <UpcomingIcon /> },
 ]
 
 const ANALYTICS = [

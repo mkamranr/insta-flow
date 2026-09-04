@@ -13,10 +13,20 @@ def index_named(collection: str, name: str) -> dict:
 
 
 def test_every_specified_collection_is_present():
-    assert len(COLLECTIONS) == 15
+    assert len(COLLECTIONS) == 16
     assert set(INDEXES) <= set(COLLECTIONS)
     assert "account_snapshots" in COLLECTIONS
     assert "stories" in COLLECTIONS
+    assert "upcoming_posts" in COLLECTIONS
+
+
+def test_only_one_upcoming_post_can_be_pending():
+    """Partial on `pending`, not a plain unique index: `pending` is unset once
+    applied, so the row stops being covered and the next template can be saved.
+    A plain unique index would block every one after the first."""
+    doc = index_named("upcoming_posts", "uq_account_pending_upcoming")
+    assert doc["unique"] is True
+    assert doc["partialFilterExpression"] == {"pending": True}
 
 
 def test_a_story_is_unique_per_account():
