@@ -369,3 +369,50 @@ async def test_a_non_follower_is_told_why_and_gets_no_link(database, client, acc
     sent = [m["text"] for m in client.sent_direct_messages]
     assert "Follow me first!" in sent
     assert not any("example.com/thing" in text for text in sent)
+
+
+# -- {{username}} on a trigger whose webhook does not carry one ---------------
+
+
+async def test_username_is_looked_up_because_the_webhook_has_none(database, client, account):
+    """A comment webhook carries the username; a messaging one does not.
+
+    Without the lookup this renders "Hi !" -- on a trigger whose editor offers
+    the variable.
+    """
+    await add_rule(database, account, "dm_keyword", message="Hi {{username}}! Here you go.")
+
+    await deliver(database, client)
+
+    assert client.sent_direct_messages[0]["text"].startswith(
+        f"Hi {client.profile.username}!"
+    )
+
+
+async def test_a_message_without_the_variable_costs_no_profile_call(database, client, account):
+    """Otherwise every DM pays a Meta round trip to fill a variable nobody used."""
+    await add_rule(database, account, "dm_keyword", message="Here you go.")
+
+    await deliver(database, client)
+
+    assert [c for c in client.calls if c.method == "get_user_profile"] == []
+
+
+async def test_a_refused_profile_lookup_still_sends_the_message(database, client, account):
+    """Meta refuses this lookup for some senders. Losing a greeting is a much
+    smaller harm than losing the reply."""
+    from app.errors import MetaAPIError
+
+    client.fail(
+        "get_user_profile",
+        MetaAPIError("User consent is required", status_code=400, retryable=False),
+    )
+    await add_rule(database, account, "dm_keyword", message="Hi {{username}}! Here you go.")
+
+    result = await deliver(database, client)
+
+    assert result["status"] == "success"
+    # An awkward "Hi !" is the accepted cost. The renderer substitutes an empty
+    # value rather than dropping the surrounding text, and inventing a name
+    # would be worse than a stray space.
+    assert client.sent_direct_messages[0]["text"].startswith("Hi ! Here you go.")

@@ -7,6 +7,7 @@ place a private reply is ever sent.
 
 import logging
 import random
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -844,6 +845,36 @@ async def lookup_is_following(
     return profile.is_user_follow_business
 
 
+async def lookup_username(
+    client: Any,
+    settings: Any,
+    account: dict[str, Any],
+    instagram_user_id: str,
+    log: dict[str, Any] | None = None,
+) -> str:
+    """The sender's handle, for `{{username}}` on a message trigger.
+
+    A comment webhook carries the username; a messaging one does not, so it has
+    to be fetched. Called only when the template actually interpolates it --
+    otherwise every DM would pay for a Meta round trip to fill a variable nobody
+    used.
+
+    Failure returns "" and the message still sends. Meta refuses this lookup for
+    some senders ("User consent is required"), and losing a greeting is a much
+    smaller harm than losing the reply.
+    """
+    try:
+        token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+        profile = await client.get_user_profile(token, instagram_user_id)
+    except (MetaAPIError, EncryptionError) as exc:
+        logger.info(
+            "username_lookup_unavailable",
+            extra={**(log or {}), "instagram_user_id": instagram_user_id, "error": str(exc)},
+        )
+        return ""
+    return profile.username or ""
+
+
 async def snapshot_account_metrics(ctx: dict[str, Any]) -> dict[str, int]:
     """Record today's follower counters for every connected account.
 
@@ -1187,6 +1218,14 @@ async def _match_inbound_message(
         await events.mark_processed(event["_id"])
         logger.info("policy_denied", extra={**log, "reason": decision.reason})
         return {"status": "skipped", "reason": decision.reason}
+
+    # A messaging webhook carries no username, so `{{username}}` would render
+    # empty -- "Hi !" -- on a trigger whose editor offers the variable. Fetched
+    # only when the template asks for it.
+    if "{{username}}" in rule.get("message", ""):
+        context = replace(
+            context, username=await lookup_username(client, settings, account, sender_id, log)
+        )
 
     try:
         message = render(rule["message"], build_render_context(context, rule))

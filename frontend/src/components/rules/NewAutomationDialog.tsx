@@ -82,9 +82,17 @@ export function NewAutomationDialog({
               <button
                 key={option.trigger}
                 className="start-card"
-                onClick={() =>
-                  option.trigger === 'comment' ? navigate('/posts') : onPick(option.trigger)
-                }
+                onClick={() => {
+                  if (option.trigger !== 'comment') {
+                    onPick(option.trigger)
+                    return
+                  }
+                  // Navigating does not unmount the dialog -- it lives in the
+                  // layout, outside the routed outlet -- so it has to close
+                  // itself or it hangs over Posts & Reels.
+                  navigate('/posts')
+                  onClose()
+                }}
               >
                 <Sketch tint={option.tint} />
                 <span className="start-kicker">{option.kicker}</span>
@@ -99,7 +107,13 @@ export function NewAutomationDialog({
         </div>
 
         <footer className="modal-foot start-foot">
-          <button className="link" onClick={() => navigate('/templates')}>
+          <button
+            className="link"
+            onClick={() => {
+              navigate('/templates')
+              onClose()
+            }}
+          >
             Browse templates <span aria-hidden="true">→</span>
           </button>
         </footer>
