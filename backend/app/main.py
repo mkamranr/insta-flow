@@ -17,6 +17,7 @@ from app.api import (
     links,
     rules,
     settings_api,
+    setup,
     uploads,
     webhooks,
 )
@@ -85,6 +86,7 @@ async def social_flow_error_handler(request: Request, exc: SocialFlowError) -> J
 
 
 app.include_router(auth.router)
+app.include_router(setup.router)
 app.include_router(analytics.router)
 app.include_router(rules.router)
 app.include_router(rules.posts_router)

@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     login_attempt_limit: int = 10
     login_attempt_window_seconds: int = 900
 
+    # One-time secret that lets the very first admin be created through the web
+    # UI, for deployments with no shell access. Empty disables that route
+    # entirely -- an unset secret must never mean "no secret required".
+    admin_setup_secret: str = ""
+
     ai_enabled: bool = False
     ai_base_url: str = "http://host.docker.internal:11434/v1"
     ai_model: str = "qwen3:8b"

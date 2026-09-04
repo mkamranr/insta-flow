@@ -144,6 +144,22 @@ vs `total_clicks` on `/api/analytics/places`; the UI now prints a different sent
 the address, so an unplaced click is unplaced forever. That is deliberate, and it means
 `click_events` has no history before the day it shipped and no backfill is possible.
 
+**The first admin can be created from the browser, once.** `make bootstrap-admin` needs a
+shell, which a managed container host may not give you, so `POST /api/auth/setup` exists. It is
+an account-creation endpoint open to the internet, so it is fenced four ways and each is tested
+separately:
+
+1. refused once **any** user exists — not "any admin", any user
+2. refused unless `ADMIN_SETUP_SECRET` is set and at least 16 characters; an unset secret
+   disables the route rather than meaning "no secret required", and the route answers 404 so it
+   does not advertise itself
+3. constant-time comparison, throttled per client on the same limiter as login
+4. a partial unique index on `is_bootstrap` — two requests can pass check 1 together with
+   different emails, and the unique email index would not stop them
+
+The `/verify` step is UX only. It lets the operator learn the code is wrong before choosing a
+password, and grants nothing: creation re-runs every check.
+
 **Follower history is only what we recorded.** Instagram exposes a follower total and no
 history, so growth begins the day the account was connected, and gross new-vs-unfollowed is not
 derivable from a total at all — only net change is.

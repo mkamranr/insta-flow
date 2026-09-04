@@ -35,6 +35,17 @@ COLLECTIONS = [
 INDEXES: dict[str, list[IndexModel]] = {
     "users": [
         IndexModel([("email", ASCENDING)], unique=True, name="uq_email"),
+        # At most one user may ever carry `is_bootstrap`. Two requests that both
+        # pass a "no users yet" check would otherwise both create an admin, with
+        # different emails, and the unique email index would not stop them.
+        # Partial on the value, so ordinary users -- which omit the field -- are
+        # not covered and can be created freely.
+        IndexModel(
+            [("is_bootstrap", ASCENDING)],
+            unique=True,
+            name="uq_bootstrap_admin",
+            partialFilterExpression={"is_bootstrap": True},
+        ),
     ],
     "click_events": [
         # Every query is "this account, since this moment", either grouped into

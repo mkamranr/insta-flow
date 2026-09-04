@@ -9,7 +9,9 @@ class UsersRepository(BaseRepository[Any]):
     async def get_by_email(self, email: str) -> Document | None:
         return await self.collection.find_one({"email": email.strip().lower()})
 
-    async def create(self, email: str, password_hash: str) -> Document:
+    async def create(
+        self, email: str, password_hash: str, *, is_bootstrap: bool = False
+    ) -> Document:
         now = utcnow()
         document = {
             "email": email.strip().lower(),
@@ -21,6 +23,10 @@ class UsersRepository(BaseRepository[Any]):
             "updated_at": now,
             "last_login_at": None,
         }
+        if is_bootstrap:
+            # Carried only by the first admin, and covered by a partial unique
+            # index -- two concurrent setup requests cannot both succeed.
+            document["is_bootstrap"] = True
         document["_id"] = await self.insert(document)
         return document
 
