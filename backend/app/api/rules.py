@@ -16,11 +16,18 @@ from app.api.deps import (
     MediaRepo,
     RulesRepo,
     SettingsDep,
+    StoriesRepo,
 )
 from app.api.uploads import upload_root
 from app.db.repositories import serialise_required, to_object_id, utcnow
 from app.errors import MetaAPIError, NotFoundError, ValidationError
-from app.models.rules import MessagePreviewRequest, PostPublic, RuleCreate, RuleUpdate
+from app.models.rules import (
+    MessagePreviewRequest,
+    PostPublic,
+    RuleCreate,
+    RuleUpdate,
+    StoryPublic,
+)
 from app.services.attachments import delete as delete_attachment
 from app.services.campaigns import ALLOWED_VARIABLES, render, validate
 from app.services.meta.factory import build_client
@@ -29,6 +36,7 @@ from app.services.security.encryption import decrypt
 logger = logging.getLogger(__name__)
 
 posts_router = APIRouter(prefix="/api/posts", tags=["posts"])
+stories_router = APIRouter(prefix="/api/stories", tags=["stories"])
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
 
@@ -50,6 +58,82 @@ async def _only_account(accounts: Any, user: dict[str, Any]) -> dict[str, Any]:
     if not found:
         raise ValidationError("No Instagram account is connected yet.")
     return found[0]
+
+
+# --- stories ----------------------------------------------------------------
+
+
+@stories_router.get("", response_model=list[StoryPublic])
+async def list_stories(
+    user: CurrentUser, accounts: AccountsRepo, stories: StoriesRepo, rules: RulesRepo
+) -> list[StoryPublic]:
+    """Active stories, newest first, with how many rules target each.
+
+    Only active ones: a story expires after 24 hours, and offering an expired
+    one in the picker would create a rule that can never match.
+    """
+    account = await _only_account(accounts, user)
+    found = await stories.list_active(account["_id"])
+    counts = await rules.counts_by_story(account["_id"])
+    return [
+        StoryPublic.from_document(s, counts.get(s.get("instagram_story_id", ""), 0)) for s in found
+    ]
+
+
+@stories_router.post("/sync")
+async def sync_stories_now(
+    request: Request,
+    user: CurrentUser,
+    settings: SettingsDep,
+    accounts: AccountsRepo,
+    stories: StoriesRepo,
+    rules: RulesRepo,
+    audit: AuditRepo,
+) -> dict[str, int]:
+    """Refresh the story list now, rather than waiting for the hourly job.
+
+    Meta returns only active stories, so anything stored and no longer listed
+    has expired -- and rules that opted into `expire_with_story` are disabled
+    here, not left enabled and quietly unmatchable.
+    """
+    account = await _only_account(accounts, user)
+    token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+
+    try:
+        fetched = await build_client(settings).get_stories(token, account["instagram_user_id"])
+    except MetaAPIError as exc:
+        logger.error("story_sync_failed", extra={"error": str(exc)})
+        raise
+
+    for item in fetched:
+        await stories.upsert(
+            account["_id"],
+            item.instagram_media_id,
+            {
+                "instagram_account_id": account["_id"],
+                "instagram_story_id": item.instagram_media_id,
+                "media_type": item.media_type,
+                "caption": item.caption,
+                "permalink": item.permalink,
+                "thumbnail_url": item.thumbnail_url,
+                "media_url": item.media_url,
+                "published_at": item.published_at,
+                "updated_at": utcnow(),
+            },
+        )
+
+    gone = await stories.mark_expired(account["_id"], [item.instagram_media_id for item in fetched])
+    disabled = await rules.disable_for_expired_stories(account["_id"], gone)
+
+    await audit.record(
+        user_id=user["_id"],
+        action="stories.synced",
+        entity_type="instagram_account",
+        entity_id=account["_id"],
+        changes={"active": len(fetched), "expired": len(gone), "disabled": len(disabled)},
+        ip_address=request.client.host if request.client else None,
+    )
+    return {"active": len(fetched), "expired": len(gone), "rules_disabled": len(disabled)}
 
 
 # --- posts ------------------------------------------------------------------
@@ -121,6 +205,7 @@ async def sync_posts(
                 "caption": item.caption,
                 "permalink": item.permalink,
                 "thumbnail_url": item.thumbnail_url,
+                "media_url": item.media_url,
                 "published_at": item.published_at,
                 "like_count": item.like_count,
                 "comments_count": item.comments_count,
@@ -141,6 +226,30 @@ async def sync_posts(
 
 
 # --- rules ------------------------------------------------------------------
+
+
+async def _check_story_targets(
+    trigger: str, story_ids: list[str], account: dict[str, Any], stories: Any
+) -> None:
+    """Story ids must belong to this account and still be live.
+
+    An expired story cannot be replied to, so a rule pinned to one could never
+    match. Refusing at save time is the only place the operator finds out
+    before waiting for a reply that never comes.
+    """
+    if not story_ids:
+        return
+    if trigger != "story_reply":
+        raise ValidationError("Only a story-reply automation can target specific stories.")
+    for story_id in story_ids:
+        story = await stories.get_by_instagram_story_id(account["_id"], story_id)
+        if story is None:
+            raise ValidationError(f"Story {story_id} is not synced. Refresh stories and retry.")
+        if story.get("expired_at") is not None:
+            raise ValidationError(
+                "That story has expired, so nobody can reply to it any more. "
+                "Pick a live story, or let the automation answer replies to every story."
+            )
 
 
 def _refuse_unsupported_features(trigger: str, values: dict[str, Any]) -> None:
@@ -227,6 +336,7 @@ async def create_rule(
     accounts: AccountsRepo,
     media: MediaRepo,
     rules: RulesRepo,
+    stories: StoriesRepo,
     audit: AuditRepo,
 ) -> dict[str, Any]:
     account = await _only_account(accounts, user)
@@ -249,6 +359,7 @@ async def create_rule(
     if not payload.any_word and not payload.keywords:
         raise ValidationError("Add at least one keyword, or switch on 'any word'.")
 
+    await _check_story_targets(payload.trigger, payload.instagram_story_ids, account, stories)
     _refuse_unsupported_features(payload.trigger, payload.model_dump())
 
     document = payload.model_dump()
@@ -281,7 +392,9 @@ async def update_rule(
     payload: RuleUpdate,
     request: Request,
     user: CurrentUser,
+    accounts: AccountsRepo,
     rules: RulesRepo,
+    stories: StoriesRepo,
     audit: AuditRepo,
     settings: SettingsDep,
 ) -> dict[str, Any]:
@@ -309,6 +422,13 @@ async def update_rule(
     # to be judged against the trigger the rule already has.
     merged = {**existing, **changes}
     _refuse_unsupported_features(str(merged.get("trigger") or "comment"), merged)
+    if "instagram_story_ids" in changes:
+        await _check_story_targets(
+            str(merged.get("trigger") or "comment"),
+            changes["instagram_story_ids"] or [],
+            await _only_account(accounts, user),
+            stories,
+        )
 
     updated = await rules.update(_object_id(rule_id, "rule_id"), changes)
     await audit.record(

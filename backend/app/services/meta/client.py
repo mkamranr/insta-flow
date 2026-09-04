@@ -42,7 +42,11 @@ class MetaMedia:
     media_product_type: str | None = None
     caption: str | None = None
     permalink: str | None = None
+    # Meta returns `thumbnail_url` for VIDEO only; IMAGE and CAROUSEL_ALBUM
+    # carry `media_url` instead. Verified live 2026-09-04 -- a card that reads
+    # only `thumbnail_url` shows nothing for half the grid.
     thumbnail_url: str | None = None
+    media_url: str | None = None
     published_at: datetime | None = None
     like_count: int | None = None
     comments_count: int | None = None
@@ -111,6 +115,11 @@ class InstagramClient(Protocol):
         self, access_token: str, instagram_user_id: str, limit: int = 25
     ) -> list[MetaMedia]:
         """List recent media for campaign media-targeting."""
+        ...
+
+    async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
+        """Currently active stories. Meta returns only live ones, which is what
+        makes expiry observable rather than something to compute."""
         ...
 
     async def subscribe_webhooks(

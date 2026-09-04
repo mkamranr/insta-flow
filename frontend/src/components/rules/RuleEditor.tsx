@@ -16,6 +16,7 @@ import { AttachmentField } from './AttachmentField'
 import { DelayPicker } from './DelayPicker'
 import { DmPreview } from './DmPreview'
 import { KeywordInput } from './KeywordInput'
+import { StoryPicker } from './StoryPicker'
 
 const BLANK: Partial<Rule> = {
   name: '',
@@ -25,6 +26,8 @@ const BLANK: Partial<Rule> = {
   match_mode: 'contains',
   case_sensitive: false,
   opening_dm: { enabled: false, message: '', button_text: 'Send me the link' },
+  instagram_story_ids: [],
+  expire_with_story: true,
   message: '',
   buttons: [],
   attachment: null,
@@ -146,6 +149,21 @@ export function RuleEditor({
               <option value="exact">Exactly the keyword</option>
             </select>
           </section>
+
+          {trigger === 'story_reply' && (
+            <section className="step">
+              <div className="step-head">
+                <span className="step-num">2</span>
+                <h3>On which stories</h3>
+              </div>
+              <StoryPicker
+                selected={draft.instagram_story_ids ?? []}
+                expireWithStory={draft.expire_with_story ?? true}
+                onChange={(ids) => set({ instagram_story_ids: ids })}
+                onExpireChange={(value) => set({ expire_with_story: value })}
+              />
+            </section>
+          )}
 
           {trigger === 'comment' && (
           <section className="step">

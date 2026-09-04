@@ -104,6 +104,8 @@ export interface PostPerformance {
   caption?: string | null
   permalink?: string | null
   thumbnail_url?: string | null
+  media_url?: string | null
+  media_type?: string | null
   media_product_type?: string | null
   comments: number
   keyword_comments: number

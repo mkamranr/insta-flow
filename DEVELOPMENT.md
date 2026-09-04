@@ -113,11 +113,14 @@ with no backfill. Without that clause every existing rule would also fire on DMs
 comment-coupled.
 
 **Story replies are account-wide, but need not stay that way.** The webhook carries
-`reply_to.story.id`, and `GET /me/stories` is confirmed working under Instagram Login
-(docs/meta-api.md §4d), so a per-story picker is buildable. It is not built: stories expire
-after 24 hours, so a rule pinned to one is dead a day later, and the UI has to answer what
-happens then. `story_id` and `story_url` are captured on every execution so the narrowing can
-be added without a migration.
+`reply_to.story.id`, and `GET /me/stories` works under Instagram Login (docs/meta-api.md §4d), so a
+rule can target specific stories. It expires with them: the sync marks a story expired once
+Meta stops listing it, and a rule whose every target has gone is disabled with
+`disabled_reason: "story_expired"` — opt-out per rule, and never applied to an account-wide
+story rule, which targets nothing that can expire.
+
+**Expiry is observed, not computed.** A failed fetch and "everything expired" look identical
+if the error is swallowed, so a failed `get_stories` expires nothing.
 
 **Story *reactions* are still not a trigger.** Meta does not document how a bare emoji tap on
 a story is delivered, and the one reaction this account has received was a reaction to a

@@ -1,7 +1,7 @@
 import { CloseIcon } from '../components/icons/Icons'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { listPosts, STARTER_TEMPLATES, TEMPLATE_GROUPS, type Post, type Rule } from '../api/rules'
+import { listPosts, mediaImage, STARTER_TEMPLATES, TEMPLATE_GROUPS, type Post, type Rule } from '../api/rules'
 import { Avatar } from '../components/common/Avatar'
 import { RuleEditor } from '../components/rules/RuleEditor'
 
@@ -101,7 +101,7 @@ export function Templates() {
                     onClick={() => setTarget(post)}
                   >
                     <span className="row-thumb" style={{ width: '100%', height: 90 }}>
-                      {post.thumbnail_url && <img src={post.thumbnail_url} alt="" />}
+                      {mediaImage(post) && <img src={mediaImage(post)!} alt="" />}
                     </span>
                     <span className="small">{post.caption?.slice(0, 60) ?? '(no caption)'}</span>
                   </button>

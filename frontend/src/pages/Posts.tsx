@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { listAccounts } from '../api/instagram'
-import { STARTER_TEMPLATES, listPosts, syncPosts, type Post, type Rule } from '../api/rules'
+import { STARTER_TEMPLATES, listPosts, mediaImage, syncPosts, type Post, type Rule } from '../api/rules'
 import { PostCard } from '../components/common/PostCard'
 import { RuleEditor } from '../components/rules/RuleEditor'
 
@@ -109,8 +109,8 @@ export function Posts() {
                       <td>
                         <div className="post-row">
                           <span className="row-thumb">
-                            {post.thumbnail_url ? (
-                              <img src={post.thumbnail_url} alt="" loading="lazy" />
+                            {mediaImage(post) ? (
+                              <img src={mediaImage(post)!} alt="" loading="lazy" />
                             ) : (
                               <span className="row-thumb-empty" />
                             )}

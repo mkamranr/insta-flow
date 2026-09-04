@@ -84,8 +84,18 @@ async def add_rule(database, account_id, trigger, **overrides):
     return (await database["rules"].insert_one(doc)).inserted_id
 
 
-async def deliver(database, client, *, text="link", mid="mid_1", story=None, echo=False,
-                  sender=SENDER_ID, redis=None, delayed=False):
+async def deliver(
+    database,
+    client,
+    *,
+    text="link",
+    mid="mid_1",
+    story=None,
+    echo=False,
+    sender=SENDER_ID,
+    redis=None,
+    delayed=False,
+):
     """Push one messaging event through the worker the way the endpoint would."""
     message = {"mid": mid, "text": text}
     if story is not None:
@@ -384,9 +394,7 @@ async def test_username_is_looked_up_because_the_webhook_has_none(database, clie
 
     await deliver(database, client)
 
-    assert client.sent_direct_messages[0]["text"].startswith(
-        f"Hi {client.profile.username}!"
-    )
+    assert client.sent_direct_messages[0]["text"].startswith(f"Hi {client.profile.username}!")
 
 
 async def test_a_message_without_the_variable_costs_no_profile_call(database, client, account):
@@ -418,9 +426,7 @@ async def test_a_refused_profile_lookup_still_sends_the_message(database, client
     assert client.sent_direct_messages[0]["text"].startswith("Hi ! Here you go.")
 
 
-async def test_the_execution_records_the_message_that_was_actually_sent(
-    database, client, account
-):
+async def test_the_execution_records_the_message_that_was_actually_sent(database, client, account):
     """The disclosure is appended at send time.
 
     Storing the pre-disclosure render would make the activity log show the

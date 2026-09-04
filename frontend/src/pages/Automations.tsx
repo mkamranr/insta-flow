@@ -7,6 +7,7 @@ import {
   deleteRule,
   listPosts,
   listRules,
+  mediaImage,
   patchRule,
   type Post,
   type Rule,
@@ -57,7 +58,10 @@ export function Automations() {
 
   const statsFor = (id: string) => performance?.find((p) => p.id === id)
   const thumbFor = (rule: Rule) =>
-    posts?.find((p) => rule.instagram_media_ids.includes(p.instagram_media_id))?.thumbnail_url
+    (() => {
+      const p = posts?.find((p) => rule.instagram_media_ids.includes(p.instagram_media_id))
+      return p ? mediaImage(p) : undefined
+    })()
   const withoutRules = posts?.filter((p) => p.rule_count === 0).length ?? 0
 
   return (

@@ -32,11 +32,18 @@ ACCOUNT_FIELDS = (
 PROFILE_FIELDS = (
     "name,username,profile_pic,follower_count," "is_user_follow_business,is_business_follow_user"
 )
-MEDIA_FIELDS_BASE = "id,media_type,media_product_type,caption,permalink,thumbnail_url,timestamp"
+MEDIA_FIELDS_BASE = (
+    "id,media_type,media_product_type,caption,permalink,thumbnail_url,media_url,timestamp"
+)
 # Engagement counts are not available on every media type or account, and asking
 # for an unsupported field fails the whole request — so they are requested
 # separately and dropped on rejection rather than losing the sync.
 MEDIA_FIELDS = MEDIA_FIELDS_BASE + ",like_count,comments_count"
+# Stories carry no engagement counts. Both image URLs are needed: Meta returns
+# `thumbnail_url` for video only, and `media_url` for images.
+STORY_FIELDS = (
+    "id,media_type,media_product_type,caption,permalink,thumbnail_url,media_url,timestamp"
+)
 
 DEFAULT_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
@@ -146,6 +153,21 @@ class MetaInstagramClient:
                     "access_token": access_token,
                 },
             )
+        return [_media_from(item) for item in body.get("data") or []]
+
+    async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
+        """GET /me/stories -- active stories only (docs/meta-api.md §4d).
+
+        Meta documents this edge for Facebook Login, but it answers under
+        Instagram Login too; verified live 2026-09-04. `caption` is absent on
+        stories with no text, and `thumbnail_url` only appears for video, so
+        neither may be assumed present.
+        """
+        body = await self._request(
+            "GET",
+            "me/stories",
+            params={"fields": STORY_FIELDS, "access_token": access_token},
+        )
         return [_media_from(item) for item in body.get("data") or []]
 
     async def subscribe_webhooks(
@@ -311,6 +333,7 @@ def _media_from(item: dict[str, Any]) -> MetaMedia:
         caption=item.get("caption"),
         permalink=item.get("permalink"),
         thumbnail_url=item.get("thumbnail_url"),
+        media_url=item.get("media_url"),
         published_at=_parse_timestamp(item.get("timestamp")),
         like_count=item.get("like_count"),
         comments_count=item.get("comments_count"),

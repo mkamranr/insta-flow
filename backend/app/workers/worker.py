@@ -22,6 +22,7 @@ from app.workers.tasks import (
     refresh_expiring_tokens,
     refresh_geoip_database,
     snapshot_account_metrics,
+    sync_stories,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ class WorkerSettings:
         refresh_expiring_tokens,
         refresh_geoip_database,
         snapshot_account_metrics,
+        sync_stories,
     ]
     cron_jobs = [
         # Daily token check. Meta kills a token not refreshed within 60 days.
@@ -84,6 +86,11 @@ class WorkerSettings:
         # GeoLite2 is rebuilt twice a week; Wednesday and Saturday keeps
         # it fresh without hammering the download limit.
         cron(refresh_geoip_database, weekday={2, 5}, hour=4, minute=30),
+        # Hourly. A story lives 24 hours, and expiry is only visible by asking
+        # Meta which stories are still active, so the resolution of this cron is
+        # also the worst-case lag before a rule pinned to a dead story is
+        # disabled. The endpoint runs it on demand too.
+        cron(sync_stories, minute=5),
     ]
     on_startup = startup
     on_shutdown = shutdown

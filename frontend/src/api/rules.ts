@@ -40,6 +40,10 @@ export interface Rule {
   trigger: RuleTrigger
   scope: 'specific' | 'any'
   instagram_media_ids: string[]
+  /** Story-reply rules only. Empty means every story. */
+  instagram_story_ids: string[]
+  /** Switch the rule off when the last story it targets expires. */
+  expire_with_story: boolean
   keywords: string[]
   any_word: boolean
   match_mode: 'exact' | 'contains' | 'word'
@@ -67,11 +71,48 @@ export interface Post {
   caption: string | null
   permalink: string | null
   thumbnail_url: string | null
+  media_url: string | null
   published_at: string | null
   like_count: number | null
   comments_count: number | null
   rule_count: number
 }
+
+/** An active story. `permalink` and `published_at` are absent on videos —
+ *  Meta omits them — so `first_seen_at` is the only reliable ordering key. */
+export interface Story {
+  id: string
+  instagram_story_id: string
+  media_type: string | null
+  caption: string | null
+  permalink: string | null
+  thumbnail_url: string | null
+  media_url: string | null
+  published_at: string | null
+  first_seen_at: string | null
+  rule_count: number
+}
+
+/**
+ * The image to show for a post or story.
+ *
+ * Meta returns `thumbnail_url` for VIDEO only; IMAGE and CAROUSEL_ALBUM carry
+ * `media_url` instead, so reading `thumbnail_url` alone leaves every photo and
+ * carousel blank. `media_url` on a video is the video file, not a still, so it
+ * is never used as an <img> source.
+ */
+export function mediaImage(item: {
+  media_type?: string | null
+  thumbnail_url?: string | null
+  media_url?: string | null
+}): string | null {
+  if (item.thumbnail_url) return item.thumbnail_url
+  return item.media_type === 'VIDEO' ? null : (item.media_url ?? null)
+}
+
+export const listStories = () => apiGet<Story[]>('/api/stories')
+export const syncStories = () =>
+  apiPost<{ active: number; expired: number; rules_disabled: number }>('/api/stories/sync')
 
 export const listPosts = (limit = 0, offset = 0) =>
   apiGet<Post[]>(`/api/posts?limit=${limit}&offset=${offset}`)

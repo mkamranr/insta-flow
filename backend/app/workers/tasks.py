@@ -24,6 +24,7 @@ from app.db.repositories import (
     LinkClicksRepository,
     MediaRepository,
     RulesRepository,
+    StoriesRepository,
     WebhookEventsRepository,
 )
 from app.errors import MetaAPIError, MetaTokenError, TemplateError
@@ -785,6 +786,65 @@ async def refresh_expiring_tokens(ctx: dict[str, Any]) -> dict[str, int]:
     return {"refreshed": refreshed, "failed": failed}
 
 
+async def sync_stories(ctx: dict[str, Any]) -> dict[str, int]:
+    """Refresh the story list, and disable rules whose stories have expired.
+
+    Expiry is **observed, not computed**. Meta returns only active stories, so a
+    story we hold that the edge no longer lists has expired. Counting 24 hours
+    from `timestamp` would not work: Meta omits that field for video stories
+    (docs/meta-api.md §4d), so half of them have nothing to count from.
+
+    Read-only against Meta, so it runs regardless of DRY_RUN -- a rule silently
+    matching an expired story is a correctness problem, not a sending one.
+    """
+    db = ctx["db"]
+    settings = ctx["settings"]
+    client = ctx["client"]
+    stories = StoriesRepository(db)
+    rules = RulesRepository(db)
+
+    seen = expired = disabled = 0
+    for account in await InstagramAccountsRepository(db).list({"status": "connected"}):
+        try:
+            token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+            active = await client.get_stories(token, account["instagram_user_id"])
+        except (MetaAPIError, EncryptionError) as exc:
+            # One account's failure must not strand the others, and an empty
+            # response here is indistinguishable from "all expired" -- so a
+            # failed fetch expires nothing.
+            logger.warning(
+                "story_sync_failed",
+                extra={"account_id": str(account["_id"]), "error": str(exc)},
+            )
+            continue
+
+        for story in active:
+            await stories.upsert(
+                account["_id"],
+                story.instagram_media_id,
+                {
+                    "media_type": story.media_type,
+                    "caption": story.caption,
+                    "permalink": story.permalink,
+                    "thumbnail_url": story.thumbnail_url,
+                    "media_url": story.media_url,
+                    "published_at": story.published_at,
+                },
+            )
+        seen += len(active)
+
+        gone = await stories.mark_expired(account["_id"], [s.instagram_media_id for s in active])
+        expired += len(gone)
+        for rule in await rules.disable_for_expired_stories(account["_id"], gone):
+            disabled += 1
+            logger.info(
+                "rule_disabled_story_expired",
+                extra={"rule_id": str(rule["_id"]), "name": rule.get("name", "")},
+            )
+
+    return {"active": seen, "expired": expired, "rules_disabled": disabled}
+
+
 async def send_attachment_if_any(
     client: Any,
     settings: Any,
@@ -1121,7 +1181,11 @@ async def _match_inbound_message(
     trigger = "story_reply" if parsed.is_story_reply else "dm_keyword"
     log = {"trigger": trigger, "mid": mid}
 
-    rules = await RulesRepository(db).list_for_trigger(account["_id"], trigger)
+    # A story reply names the story it answers, so the rule set is narrowed to
+    # the ones targeting it. `None` for a DM keyword leaves the query unscoped.
+    rules = await RulesRepository(db).list_for_trigger(
+        account["_id"], trigger, instagram_story_id=parsed.story_id or None
+    )
     context = CommentContext(text=text, instagram_user_id=sender_id)
     rule = select_rule(context, rules)
     if rule is None:

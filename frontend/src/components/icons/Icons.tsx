@@ -33,6 +33,15 @@ export const PostsIcon = () => (
   </svg>
 )
 
+export const StoriesIcon = () => (
+  <svg {...base}>
+    {/* A story ring: the dashed outer circle is how Instagram itself signals
+        "story", and it reads at 18px where a play triangle does not. */}
+    <circle cx="12" cy="12" r="9" strokeDasharray="3 2.4" />
+    <circle cx="12" cy="12" r="4.6" />
+  </svg>
+)
+
 export const ActivityIcon = () => (
   <svg {...base}>
     <path d="M3 12h4l2.5-6 4 12 2.5-6h5" />

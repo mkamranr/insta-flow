@@ -15,6 +15,7 @@ import {
   type PostPerformance,
   type RulePerformance,
 } from '../api/analytics'
+import { mediaImage } from '../api/rules'
 import { BarSeries } from '../components/analytics/BarSeries'
 import { ActivityLog } from './Activity'
 
@@ -144,8 +145,8 @@ function Performance({ days }: { days: number }) {
                   <tr key={post.id}>
                     <td>
                       <div className="media-cell">
-                        {post.thumbnail_url && (
-                          <img className="media-thumb" src={post.thumbnail_url} alt="" />
+                        {mediaImage(post) && (
+                          <img className="media-thumb" src={mediaImage(post)!} alt="" />
                         )}
                         <span className="clamp">{post.caption || post.instagram_media_id}</span>
                       </div>
@@ -554,7 +555,10 @@ function AutomationPerformance({
   }
 
   const thumbFor = (rule: RulePerformance) =>
-    posts?.find((p) => rule.instagram_media_ids.includes(p.instagram_media_id))?.thumbnail_url
+    (() => {
+      const p = posts?.find((p) => rule.instagram_media_ids.includes(p.instagram_media_id))
+      return p ? mediaImage(p) : undefined
+    })()
 
   const sorted = [...rules].sort((a, b) => {
     if (sort === 'dms') return b.dms_sent - a.dms_sent

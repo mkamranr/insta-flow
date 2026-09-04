@@ -42,21 +42,70 @@ class RulesRepository(BaseRepository[Any]):
         ).sort([("priority", DESCENDING), ("_id", DESCENDING)])
         return [doc async for doc in cursor]
 
-    async def list_for_trigger(self, instagram_account_id: Any, trigger: str) -> list[Document]:
+    async def list_for_trigger(
+        self,
+        instagram_account_id: Any,
+        trigger: str,
+        instagram_story_id: str | None = None,
+    ) -> list[Document]:
         """Enabled rules for a non-comment trigger, highest priority first.
 
         Exact match on a value legacy rows cannot hold, so pre-`trigger` rules
         are excluded automatically. Ties break on id, as in `list_for_media`, so
         selection is deterministic.
+
+        `instagram_story_id` narrows story replies to the rules that target that
+        story. An empty or missing `instagram_story_ids` means every story, so
+        `$in` with None is used again -- rules written before per-story targeting
+        existed have no such field and must keep matching.
         """
+        query: Document = {
+            "instagram_account_id": to_object_id(instagram_account_id),
+            "enabled": True,
+            "trigger": trigger,
+        }
+        if instagram_story_id is not None:
+            query["$or"] = [
+                {"instagram_story_ids": {"$in": [[], None]}},
+                {"instagram_story_ids": {"$exists": False}},
+                {"instagram_story_ids": str(instagram_story_id)},
+            ]
+        cursor = self.collection.find(query).sort([("priority", DESCENDING), ("_id", DESCENDING)])
+        return [doc async for doc in cursor]
+
+    async def disable_for_expired_stories(
+        self, instagram_account_id: Any, expired_ids: list[str]
+    ) -> list[Document]:
+        """Disable story rules whose every target story has now expired.
+
+        Only rules that opted in via `expire_with_story`. A rule targeting three
+        stories stays enabled while any one of them is still live, so this
+        cannot be a blanket update -- each rule's remaining targets are checked.
+        """
+        if not expired_ids:
+            return []
+
+        gone = {str(i) for i in expired_ids}
         cursor = self.collection.find(
             {
                 "instagram_account_id": to_object_id(instagram_account_id),
+                "trigger": "story_reply",
                 "enabled": True,
-                "trigger": trigger,
+                "expire_with_story": True,
+                "instagram_story_ids": {"$in": list(gone)},
             }
-        ).sort([("priority", DESCENDING), ("_id", DESCENDING)])
-        return [doc async for doc in cursor]
+        )
+        disabled: list[Document] = []
+        async for rule in cursor:
+            targets = {str(i) for i in rule.get("instagram_story_ids") or []}
+            if targets - gone:
+                continue  # still has a live story to match on
+            await self.collection.update_one(
+                {"_id": rule["_id"]},
+                {"$set": {"enabled": False, "disabled_reason": "story_expired"}},
+            )
+            disabled.append(rule)
+        return disabled
 
     async def list_for_account(self, instagram_account_id: Any) -> list[Document]:
         return await self.list(
@@ -70,6 +119,17 @@ class RulesRepository(BaseRepository[Any]):
             {"$match": {"instagram_account_id": to_object_id(instagram_account_id)}},
             {"$unwind": "$instagram_media_ids"},
             {"$group": {"_id": "$instagram_media_ids", "n": {"$sum": 1}}},
+        ]
+        return {
+            str(doc["_id"]): doc["n"] async for doc in await self.collection.aggregate(pipeline)
+        }
+
+    async def counts_by_story(self, instagram_account_id: Any) -> dict[str, int]:
+        """How many rules each story has, for the picker."""
+        pipeline: list[Document] = [
+            {"$match": {"instagram_account_id": to_object_id(instagram_account_id)}},
+            {"$unwind": "$instagram_story_ids"},
+            {"$group": {"_id": "$instagram_story_ids", "n": {"$sum": 1}}},
         ]
         return {
             str(doc["_id"]): doc["n"] async for doc in await self.collection.aggregate(pipeline)

@@ -81,6 +81,9 @@ class MockInstagramClient:
             name="Example Account",
         )
         self.media = media if media is not None else [_default_media()]
+        # Empty by default: most tests have no stories, and "no active stories"
+        # is the state a story rule must survive.
+        self.stories: list[MetaMedia] = []
         self.calls: list[MockCall] = []
         self.sent_private_replies: list[dict[str, Any]] = []
         self.sent_direct_messages: list[dict[str, Any]] = []
@@ -142,6 +145,10 @@ class MockInstagramClient:
     ) -> list[MetaMedia]:
         self._record("get_media", instagram_user_id=instagram_user_id, limit=limit)
         return self.media[:limit]
+
+    async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
+        self._record("get_stories", instagram_user_id=instagram_user_id)
+        return self.stories
 
     async def subscribe_webhooks(
         self,

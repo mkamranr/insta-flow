@@ -21,6 +21,7 @@ import {
   InstagramIcon,
   PlusIcon,
   PostsIcon,
+  StoriesIcon,
   SettingsIcon,
   TemplatesIcon,
 } from '../icons/Icons'
@@ -34,7 +35,10 @@ const TOP = [
   { to: '/templates', label: 'Templates', icon: <TemplatesIcon /> },
 ]
 
-const MY_CONTENT = [{ to: '/posts', label: 'Posts & Reels', icon: <PostsIcon /> }]
+const MY_CONTENT = [
+  { to: '/posts', label: 'Posts & Reels', icon: <PostsIcon /> },
+  { to: '/stories', label: 'Stories', icon: <StoriesIcon /> },
+]
 
 const ANALYTICS = [
   { to: '/analytics', label: 'Overview', icon: <AnalyticsIcon /> },

@@ -1,4 +1,4 @@
-import type { Post } from '../../api/rules'
+import { mediaImage, type Post } from '../../api/rules'
 
 /** Instagram-style card: the post as it looks, with its automation state. */
 export function PostCard({
@@ -22,8 +22,8 @@ export function PostCard({
       </header>
 
       <div className="ig-media">
-        {post.thumbnail_url ? (
-          <img src={post.thumbnail_url} alt="" loading="lazy" />
+        {mediaImage(post) ? (
+          <img src={mediaImage(post)!} alt="" loading="lazy" />
         ) : (
           <div className="ig-media-empty">{post.media_product_type ?? 'POST'}</div>
         )}

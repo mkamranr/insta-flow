@@ -13,9 +13,18 @@ def index_named(collection: str, name: str) -> dict:
 
 
 def test_every_specified_collection_is_present():
-    assert len(COLLECTIONS) == 14
+    assert len(COLLECTIONS) == 15
     assert set(INDEXES) <= set(COLLECTIONS)
     assert "account_snapshots" in COLLECTIONS
+    assert "stories" in COLLECTIONS
+
+
+def test_a_story_is_unique_per_account():
+    """The sync upserts on this key. Without uniqueness an hourly job would
+    append a duplicate row every hour a story stayed live."""
+    doc = index_named("stories", "uq_account_story")
+    assert doc["unique"] is True
+    assert list(doc["key"]) == ["instagram_account_id", "instagram_story_id"]
 
 
 def test_account_snapshot_index_is_unique_per_day():

@@ -17,6 +17,7 @@ COLLECTIONS = [
     "users",
     "instagram_accounts",
     "media",
+    "stories",
     "rules",
     "link_clicks",
     "contacts",
@@ -65,6 +66,22 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel(
             [("instagram_account_id", ASCENDING), ("published_at", DESCENDING)],
             name="ix_account_published",
+        ),
+    ],
+    "stories": [
+        IndexModel(
+            [("instagram_account_id", ASCENDING), ("instagram_story_id", ASCENDING)],
+            unique=True,
+            name="uq_account_story",
+        ),
+        # The picker's query: active stories for one account, newest first.
+        IndexModel(
+            [
+                ("instagram_account_id", ASCENDING),
+                ("expired_at", ASCENDING),
+                ("first_seen_at", DESCENDING),
+            ],
+            name="ix_account_active_story",
         ),
     ],
     "rules": [

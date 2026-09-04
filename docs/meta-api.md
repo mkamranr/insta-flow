@@ -345,20 +345,23 @@ The earlier `200 {"data": []}` was **genuinely "no active stories"**, not the §
 trap. The two are indistinguishable without a story to test against, which is why this was
 held open rather than concluded either way.
 
-Readable fields, confirmed on live data:
+Readable fields, confirmed on live data (4 stories, 1 image + 3 video):
 
 | Field | Notes |
 | --- | --- |
 | `id` | matches `messaging[].message.reply_to.story.id` — this is what makes per-story rules possible |
 | `media_type` | `IMAGE` / `VIDEO` |
 | `media_product_type` | always `STORY` |
-| `permalink` | present on images; **absent on videos** in this sample |
-| `timestamp` | present on images; **absent on videos** in this sample |
-| `thumbnail_url` | present on videos; absent on images (use `media_url` there) |
-| `caption` | present when the story has text |
+| `permalink` | present on **both** image and video |
+| `timestamp` | present on **both** image and video |
+| `thumbnail_url` | video only; images carry `media_url` instead |
+| `caption` | present only when the story has text — absent on all three videos here |
 
-**The per-field gaps are the trap.** A picker must not assume `timestamp` or `permalink`
-exists — sorting on `timestamp` would silently drop every video story.
+An earlier note in this file claimed `timestamp` and `permalink` were missing on video
+stories. That was wrong, and worth recording as a method failure rather than quietly
+deleting: the check printed each story as JSON truncated to 300 characters, and
+`thumbnail_url` is long enough to push both fields past the cut. The absence was in the
+output, not in Meta's response. Re-checked by asking for field *presence* directly.
 
 Stories expire after 24 hours, so a rule pinned to a story id is dead a day later. Account-wide
 is the right default; per-story is an opt-in narrowing, and the UI has to say what happens when

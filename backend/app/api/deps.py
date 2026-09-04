@@ -24,6 +24,7 @@ from app.db.repositories import (
     LinkClicksRepository,
     MediaRepository,
     RulesRepository,
+    StoriesRepository,
     UsersRepository,
     WebhookEventsRepository,
 )
@@ -51,6 +52,10 @@ def accounts_repo(db: DbDep) -> InstagramAccountsRepository:
 
 def media_repo(db: DbDep) -> MediaRepository:
     return MediaRepository(db)
+
+
+def stories_repo(db: DbDep) -> StoriesRepository:
+    return StoriesRepository(db)
 
 
 def account_snapshots_repo(db: DbDep) -> AccountSnapshotsRepository:
@@ -107,6 +112,7 @@ def audit_repo(db: DbDep) -> AuditLogsRepository:
 UsersRepo = Annotated[UsersRepository, Depends(users_repo)]
 AccountsRepo = Annotated[InstagramAccountsRepository, Depends(accounts_repo)]
 MediaRepo = Annotated[MediaRepository, Depends(media_repo)]
+StoriesRepo = Annotated[StoriesRepository, Depends(stories_repo)]
 SnapshotsRepo = Annotated[AccountSnapshotsRepository, Depends(account_snapshots_repo)]
 AppSettingsRepo = Annotated[AppSettingsRepository, Depends(app_settings_repo)]
 ClickEventsRepo = Annotated[ClickEventsRepository, Depends(click_events_repo)]

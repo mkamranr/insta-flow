@@ -131,6 +131,13 @@ class RuleBase(BaseModel):
     trigger: RuleTrigger = "comment"
     scope: RuleScope = "specific"
     instagram_media_ids: list[str] = Field(default_factory=list)
+    # Story-reply rules only. Empty means every story, which is the default
+    # because a story lives 24 hours -- pinning a rule to one makes it expire
+    # with the story, and `expire_with_story` governs what happens then.
+    instagram_story_ids: list[str] = Field(default_factory=list)
+    # When the last story a rule targets expires, disable the rule rather than
+    # leave it enabled and silently unmatchable.
+    expire_with_story: bool = True
 
     keywords: list[str] = Field(default_factory=list)
     any_word: bool = False
@@ -188,6 +195,8 @@ class RuleUpdate(BaseModel):
     trigger: RuleTrigger | None = None
     scope: RuleScope | None = None
     instagram_media_ids: list[str] | None = None
+    instagram_story_ids: list[str] | None = None
+    expire_with_story: bool | None = None
     keywords: list[str] | None = None
     any_word: bool | None = None
     match_mode: MatchMode | None = None
@@ -223,7 +232,9 @@ class PostPublic(BaseModel):
     media_product_type: str | None = None
     caption: str | None = None
     permalink: str | None = None
+    # `thumbnail_url` is video-only; images and carousels use `media_url`.
     thumbnail_url: str | None = None
+    media_url: str | None = None
     published_at: datetime | None = None
     like_count: int | None = None
     comments_count: int | None = None
@@ -239,8 +250,44 @@ class PostPublic(BaseModel):
             caption=document.get("caption"),
             permalink=document.get("permalink"),
             thumbnail_url=document.get("thumbnail_url"),
+            media_url=document.get("media_url"),
             published_at=document.get("published_at"),
             like_count=document.get("like_count"),
             comments_count=document.get("comments_count"),
+            rule_count=rule_count,
+        )
+
+
+class StoryPublic(BaseModel):
+    """An active story, for the per-story picker.
+
+    `permalink` and `published_at` are optional because Meta omits them for
+    video stories (docs/meta-api.md §4d) -- `first_seen_at` is the only
+    ordering key every story has.
+    """
+
+    id: str
+    instagram_story_id: str
+    media_type: str | None = None
+    caption: str | None = None
+    permalink: str | None = None
+    thumbnail_url: str | None = None
+    media_url: str | None = None
+    published_at: datetime | None = None
+    first_seen_at: datetime | None = None
+    rule_count: int = 0
+
+    @classmethod
+    def from_document(cls, document: dict, rule_count: int = 0) -> "StoryPublic":
+        return cls(
+            id=str(document["_id"]),
+            instagram_story_id=str(document.get("instagram_story_id", "")),
+            media_type=document.get("media_type"),
+            caption=document.get("caption"),
+            permalink=document.get("permalink"),
+            thumbnail_url=document.get("thumbnail_url"),
+            media_url=document.get("media_url"),
+            published_at=document.get("published_at"),
+            first_seen_at=document.get("first_seen_at"),
             rule_count=rule_count,
         )
