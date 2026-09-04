@@ -416,3 +416,20 @@ async def test_a_refused_profile_lookup_still_sends_the_message(database, client
     # value rather than dropping the surrounding text, and inventing a name
     # would be worse than a stray space.
     assert client.sent_direct_messages[0]["text"].startswith("Hi ! Here you go.")
+
+
+async def test_the_execution_records_the_message_that_was_actually_sent(
+    database, client, account
+):
+    """The disclosure is appended at send time.
+
+    Storing the pre-disclosure render would make the activity log show the
+    operator a message the recipient never received.
+    """
+    await add_rule(database, account, "dm_keyword", message="Here you go.")
+
+    await deliver(database, client)
+
+    execution = await database["executions"].find_one({"action": "direct_message"})
+    assert execution["message_text"] == client.sent_direct_messages[0]["text"]
+    assert "Automated reply." in execution["message_text"]

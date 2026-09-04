@@ -1240,13 +1240,18 @@ async def _match_inbound_message(
         await events.mark_processed(event["_id"])
         return {"status": "dry_run", "execution_id": str(execution["_id"])}
 
+    # Resolved before the send so the execution can record what actually went
+    # out. Storing the pre-disclosure render would make the activity log show a
+    # message the recipient never received.
+    sent_text = await _with_disclosure(db, message)
+
     try:
         access_token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
         result = await client.send_direct_message(
             access_token,
             account["instagram_user_id"],
             sender_id,
-            await _with_disclosure(db, message),
+            sent_text,
             await tracked_buttons(db, settings, rule, account, execution["_id"], sender_id),
         )
     except MetaTokenError as exc:
@@ -1263,7 +1268,7 @@ async def _match_inbound_message(
     await executions.complete(
         execution["_id"],
         status="success",
-        message_text=message,
+        message_text=sent_text,
         meta_message_id=result.message_id,
         meta_recipient_id=result.recipient_id,
     )
