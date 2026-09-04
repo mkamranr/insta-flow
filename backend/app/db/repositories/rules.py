@@ -139,3 +139,33 @@ class RulesRepository(BaseRepository[Any]):
         return await self.collection.count_documents(
             {"instagram_account_id": to_object_id(instagram_account_id), "scope": "any"}
         )
+
+    async def count_for_media(self, instagram_account_id: Any, instagram_media_id: str) -> int:
+        """How many rules target this post, enabled or not.
+
+        Deliberately unfiltered by `enabled`: a paused rule still makes the post
+        read "Automated" in the UI (`counts_by_media` does not filter either), so
+        the clone picker must treat it as taken rather than quietly stacking a
+        second automation on top of it.
+        """
+        return await self.count(
+            {
+                "instagram_account_id": to_object_id(instagram_account_id),
+                "instagram_media_ids": str(instagram_media_id),
+            }
+        )
+
+    async def count_referencing_attachment(self, storage_key: str, exclude_id: Any) -> int:
+        """How many OTHER rules point at this stored file.
+
+        `attachments.delete` removes the whole upload folder, so deleting a rule
+        that shares a `storage_key` with another would take the file out from
+        under it -- and the worker only logs a warning when a send fails, so the
+        recipient silently gets the text and no file. Checked before every
+        delete; no index needed, `rules` is per-account and small.
+        """
+        if not storage_key:
+            return 0
+        return await self.count(
+            {"attachment.storage_key": storage_key, "_id": {"$ne": to_object_id(exclude_id)}}
+        )

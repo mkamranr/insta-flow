@@ -15,6 +15,13 @@ PRIVATE_REPLY_WINDOW_DAYS: Final = 7
 # Private replies to comments on posts and reels, per IG professional account.
 PRIVATE_REPLY_CALLS_PER_HOUR: Final = 750
 
+# How many posts one clone may fan out to. Two independent ceilings meet here:
+# a rule's `limits.per_hour` is counted per rule, so N clones authorise N x that
+# against the 750/hour above; and `RulesRepository.list_for_account` returns at
+# most 50, past which the Automations page and per-rule analytics silently stop
+# showing rules. 25 leaves room under both.
+MAX_CLONE_TARGETS: Final = 25
+
 # Long-lived token lifetime, and the minimum age before it may be refreshed.
 TOKEN_LIFETIME_DAYS: Final = 60
 TOKEN_MIN_REFRESH_AGE_HOURS: Final = 24

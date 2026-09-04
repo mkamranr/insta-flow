@@ -12,10 +12,10 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import CurrentUser, SettingsDep
+from app.api.deps import CurrentUser, SettingsDep, require, require_any
 from app.errors import NotFoundError, ValidationError
 from app.services.attachments import MEDIA_KINDS, AttachmentError, resolve, store
 
@@ -39,7 +39,7 @@ def upload_root(settings: Any) -> Path:
     return root
 
 
-@router.get("/limits")
+@router.get("/limits", dependencies=[Depends(require("automations.view"))])
 async def limits(user: CurrentUser) -> dict[str, Any]:
     """What the picker should accept. Meta's numbers, surfaced to the UI."""
     return {
@@ -54,7 +54,12 @@ async def limits(user: CurrentUser) -> dict[str, Any]:
     }
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    # Attaching a file belongs to whoever may create *or* edit an automation.
+    dependencies=[Depends(require_any("automations.create", "automations.edit"))],
+)
 async def upload(
     user: CurrentUser,
     settings: SettingsDep,

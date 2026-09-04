@@ -57,9 +57,9 @@ export function Login() {
         </button>
 
         <p className="muted small">
-          No account yet? Run <code>make bootstrap-admin</code> on the server, or set{' '}
-          <code>ADMIN_SETUP_SECRET</code> in <code>.env</code> to create the first admin from
-          this page.
+          No account yet? Ask an administrator to add you on the Users page. Setting up this
+          deployment for the first time? Set <code>ADMIN_SETUP_SECRET</code> in{' '}
+          <code>.env</code> to create the first admin from this page.
         </p>
       </form>
     </div>

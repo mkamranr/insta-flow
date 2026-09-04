@@ -40,6 +40,16 @@ Work through this before pointing a real audience at the deployment.
 - [ ] Token expiry is understood: 60 days, refreshed daily by cron, dead if the
       machine is off long enough
 
+## Roles and people
+
+- [ ] Everyone is on the narrowest role that lets them work — the upgrade puts every
+      pre-existing account on Owner, which is the right default but not a resting place
+- [ ] **At least two Owners.** The last active Owner cannot be deactivated, deleted or
+      moved to another role. That guard stops you stranding the deployment, and you will
+      meet it at an inconvenient moment if there is only ever one
+- [ ] `make bootstrap-admin` still works — it is the recovery path if you lock yourself out
+- [ ] Nobody shares a login. Roles are only meaningful if each person has their own
+
 ## Meta
 
 - [ ] Webhook subscription verified from Meta's side, not just ours

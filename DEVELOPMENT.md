@@ -64,6 +64,16 @@ Layout: `backend/app/{api,db,models,services,workers}`, `frontend/src`, `infra/c
   functions over plain data — that is what makes them cheap to test.
 - **Repositories own all DB access.** API routes and workers never touch a collection
   directly.
+- **An attachment is only deleted once nothing references it.** `attachments.delete` removes
+  the whole upload folder, and rules can share a `storage_key` — cloning and the Duplicate
+  button both produce that. Deleting unconditionally takes the file out from under the
+  survivor, and the worker only logs a warning when a send fails, so the recipient silently
+  gets the text and no file. Go through `_drop_attachment_if_unused`.
+- **Every `/api` route declares its permission in the decorator**, never in the handler body.
+  `app/permissions.py` is the single catalogue: the API enforces from it and the admin grid
+  renders from it, so the two cannot drift. `tests/test_authorization.py` walks the route
+  table and fails on any route that declares nothing, with a short allowlist for the handful
+  that legitimately cannot (login, `/me`, and the callbacks Meta drives).
 - **Template rendering is `{{var}}` substitution against a fixed allowlist** — no Jinja, no
   `eval`, no arbitrary attribute access. Unknown variables are rejected at save time.
 - **Structured JSON logs.** Never log a token, password, session secret, encryption key, or
@@ -100,6 +110,29 @@ key error means another worker already has it — skip, do not send.
 | `account_snapshots` | Instagram gives a follower total and no history. Growth is only knowable if we write it down daily. One row per account per day, unique index. |
 | `click_events` | One row per click. `link_clicks` is a counter with a first/last timestamp — it knows how many, never when, so an hourly chart cannot come from it. |
 | `app_settings` | A single document for things an operator may edit from the dashboard. Currently the MaxMind credentials; the license key is encrypted like a Meta token. |
+| `roles` | A named set of permissions, assigned to users via `users.role_id`. `owner` is seeded from the whole catalogue and re-synced on every boot, so a new permission reaches it with no migration; `manager` and `viewer` are seeded once and then belong to the operator. |
+
+## Cloning an automation
+
+`POST /api/rules/{rule_id}/clone` copies a rule onto other posts as **one independent rule
+per post** — its own stats, its own send limits, its own once-per-person ledger. The source
+is untouched.
+
+Three constraints the endpoint enforces, each for a reason worth knowing:
+
+- Only `trigger: "comment"` with `scope: "specific"` can be cloned. `list_for_media` filters
+  on trigger, so a cloned story-reply rule's media ids would never be read; and an
+  account-wide rule already covers every post, so clones would merely shadow it (equal
+  priority, and `select_rule` breaks the tie on the newer `_id`).
+- A target that already has a rule is **skipped and reported**, not failed. Partial success
+  is the normal case.
+- Fan-out is capped at `MAX_CLONE_TARGETS`. Send limits are counted per rule, so N clones
+  authorise N x `limits.per_hour` against Meta's 750/hour account ceiling, and
+  `list_for_account` only returns 50 rules.
+
+Build each clone's payload **inside** the loop: `BaseRepository.insert` mutates the dict it
+is given and pymongo writes `_id` back into it, so a reused dict makes every insert after the
+first collide.
 
 ## Known gaps
 

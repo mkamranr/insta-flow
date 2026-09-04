@@ -15,8 +15,8 @@ from getpass import getpass
 
 from app.config import get_settings
 from app.db import mongodb
-from app.db.indexes import create_indexes
-from app.db.repositories import UsersRepository
+from app.db.bootstrap import prepare
+from app.db.repositories import RolesRepository, UsersRepository
 from app.logging import configure_logging
 from app.services.security.passwords import MIN_PASSWORD_LENGTH, hash_password
 
@@ -57,15 +57,20 @@ async def main() -> int:
 
     database = await mongodb.connect(settings.mongo_url, settings.mongo_database)
     try:
-        await create_indexes(database)
+        await prepare(database)
         users = UsersRepository(database)
+        roles = RolesRepository(database)
 
         if await users.get_by_email(email) is not None:
             print(f"A user with email {email} already exists. Nothing to do.")
             return 0
 
-        user = await users.create(email, hash_password(password))
-        print(f"Created admin user {email} (id {user['_id']}).")
+        # Owner, not a lesser role: this is the documented recovery path, and a
+        # user created here who could see nothing would be worse than useless.
+        user = await users.create(
+            email, hash_password(password), role_id=await roles.ensure_owner()
+        )
+        print(f"Created admin user {email} (id {user['_id']}) with the Owner role.")
         return 0
     finally:
         await mongodb.disconnect()

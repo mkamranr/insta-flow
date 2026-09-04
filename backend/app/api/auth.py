@@ -6,9 +6,9 @@ import secrets
 from fastapi import APIRouter, Request, Response, status
 
 from app import queue
-from app.api.deps import AuditRepo, CurrentUser, SettingsDep, UsersRepo
+from app.api.deps import AuditRepo, CurrentGrant, CurrentUser, SettingsDep, UsersRepo
 from app.errors import AuthenticationError, RateLimitedError
-from app.models.users import LoginRequest, UserPublic
+from app.models.users import ChangeOwnPasswordRequest, LoginRequest, MePublic, UserPublic
 from app.services.security import sessions
 from app.services.security.passwords import hash_password, verify_password
 from app.services.security.throttle import Throttle
@@ -117,6 +117,46 @@ async def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT, headers=dict(response.headers))
 
 
-@router.get("/me", response_model=UserPublic)
-async def me(user: CurrentUser) -> UserPublic:
-    return UserPublic.from_document(user)
+@router.get("/me", response_model=MePublic)
+async def me(user: CurrentUser, grant: CurrentGrant) -> MePublic:
+    """Your own identity, role and effective permissions.
+
+    `grant` is already resolved and cached for this request, so carrying the role
+    here costs no extra lookup. This is what the frontend gates its navigation on
+    -- and it is UX only: every route re-checks server-side.
+    """
+    return MePublic.for_self(user, grant.role, sorted(grant.permissions))
+
+
+@router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_own_password(
+    payload: ChangeOwnPasswordRequest,
+    request: Request,
+    response: Response,
+    settings: SettingsDep,
+    user: CurrentUser,
+    users: UsersRepo,
+    audit: AuditRepo,
+) -> Response:
+    """Your own password. No permission required -- everyone may do this for
+    themselves, whatever their role."""
+    if not verify_password(payload.current_password, user.get("password_hash", "")):
+        logger.warning("password_change_rejected", extra={"user_id": str(user["_id"])})
+        raise AuthenticationError("That is not your current password.")
+
+    await users.set_password(user["_id"], hash_password(payload.password))
+    # Bumping the epoch signs out every other device, which is the point of
+    # changing a password. This session is then re-issued at the new epoch, so the
+    # person is not logged out of the tab they are standing in.
+    epoch = await users.bump_session_epoch(user["_id"])
+    _set_session_cookie(
+        response, settings, sessions.issue(settings.session_secret, str(user["_id"]), epoch)
+    )
+    await audit.record(
+        user_id=user["_id"],
+        action="auth.password_changed",
+        entity_type="user",
+        entity_id=user["_id"],
+        ip_address=request.client.host if request.client else None,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT, headers=dict(response.headers))

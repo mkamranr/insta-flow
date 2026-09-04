@@ -1480,3 +1480,180 @@ button.story-card.on { border-color: var(--text); box-shadow: 0 0 0 1px var(--te
 .steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
 .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* ---------- permission grid ------------------------------------------------
+   A real <table>: this is tabular data with both row and column headers, and
+   `scope` is what makes a checkbox announce as "Automations, Edit" rather than
+   as a bare checkbox. A div-grid would need a hand-written label per cell to
+   reach the same place.
+   --------------------------------------------------------------------------- */
+
+.perm-toolbar {
+  margin-bottom: 4px;
+}
+.perm-toolbar .muted {
+  margin-right: auto;
+}
+
+/* One scroll container owning BOTH axes. `overflow-x: auto` alone computes
+   overflow-y to auto as well, which would make the sticky header pin to a box
+   we did not choose. The height only bites once the catalogue passes about a
+   dozen modules. */
+.perm-scroll {
+  overflow: auto;
+  max-height: min(62vh, 620px);
+}
+.perm-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.perm-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 99px;
+}
+
+.perm-grid {
+  min-width: 620px;
+}
+.perm-grid th,
+.perm-grid td {
+  vertical-align: middle;
+}
+
+.perm-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  /* border-collapse paints borders on the table rather than the cell, so a
+     sticky cell loses its edge and rows slide visibly underneath it. A
+     box-shadow is the only rule that survives. */
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.perm-grid .perm-module {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+  box-shadow: 1px 0 0 var(--border);
+  min-width: 200px;
+  padding: 12px 16px 12px 0;
+  /* Undo the uppercase micro-label treatment `.table th` applies: this is a row
+     label carrying prose, not a column heading. */
+  text-align: left;
+  font-weight: 400;
+  font-size: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  color: inherit;
+}
+.perm-grid thead th.perm-module-head {
+  z-index: 3;
+}
+/* The sticky cell's own opaque background would otherwise eat the row hover. */
+.perm-grid tbody tr:hover .perm-module {
+  background: var(--surface-alt);
+}
+
+.perm-module-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 650;
+}
+
+.perm-grid th.perm-action {
+  text-align: center;
+  min-width: 96px;
+  padding: 0 8px 9px;
+}
+.perm-action-label {
+  display: block;
+}
+
+button.perm-all {
+  padding: 1px 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+button.perm-all:hover:not(:disabled) {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.perm-cell {
+  text-align: center;
+  padding: 8px 0;
+}
+/* "This module has no such action" is a different claim from "not granted", so
+   it gets a different mark. A disabled unchecked box would read as "off". */
+.perm-na {
+  color: var(--faint);
+}
+
+/* A generous hit area: the checkbox itself is 16px, which is below a comfortable
+   target size on a coarse pointer. */
+.perm-check {
+  display: inline-flex;
+  margin: 0;
+  padding: 9px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.perm-check:hover {
+  background: var(--surface-alt);
+}
+.perm-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--dark);
+  cursor: pointer;
+}
+.perm-check input:disabled {
+  cursor: not-allowed;
+}
+
+.perm-note {
+  margin-top: 12px;
+}
+
+/* Narrow screens: the matrix scrolls sideways with the module column pinned,
+   which is the one affordance that keeps a matrix readable. The per-module
+   description goes first -- it costs more width than it earns. There is no
+   phone layout here on purpose: `.layout` is a hard two-column grid with no
+   collapse and no hamburger, so the app has no mobile shell to belong to. */
+@media (max-width: 900px) {
+  .perm-grid .perm-module {
+    min-width: 148px;
+  }
+  .perm-grid .perm-module .muted {
+    display: none;
+  }
+  .perm-grid th.perm-action {
+    min-width: 78px;
+  }
+}
+
+/* ---------- card footer ----------
+   The .modal-foot treatment for a card. The negative margins match .card's own
+   20px/22px padding so the strip bleeds to the card edge. */
+.card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 18px -22px -20px;
+  padding: 14px 22px;
+  background: var(--surface-alt);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.card-foot p {
+  margin: 0;
+  margin-right: auto;
+}

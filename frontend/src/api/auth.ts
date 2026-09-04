@@ -1,15 +1,37 @@
 import { apiGet, apiPost } from './client'
 
+/** Mirrors MIN_PASSWORD_LENGTH in backend/app/services/security/passwords.py. */
+export const MIN_PASSWORD = 12
+
+/** A role as it appears on a user. Never carries the permission list. */
+export interface RoleSummary {
+  id: string
+  slug: string
+  name: string
+}
+
 export interface User {
   id: string
   email: string
   is_active: boolean
+  role: RoleSummary | null
   last_login_at: string | null
 }
 
-export const getMe = () => apiGet<User>('/api/auth/me')
+/**
+ * Your own identity. `permissions` is the fully expanded list -- the server does
+ * any wildcard expansion, so the client only ever does an exact set lookup.
+ */
+export interface Me extends User {
+  permissions: string[]
+}
+
+export const getMe = () => apiGet<Me>('/api/auth/me')
 export const login = (email: string, password: string) =>
   apiPost<User>('/api/auth/login', { email, password })
+
+export const changeOwnPassword = (current_password: string, password: string) =>
+  apiPost<void>('/api/auth/password', { current_password, password })
 export const logout = () => apiPost<void>('/api/auth/logout')
 
 /** Whether this deployment still needs its first admin. */

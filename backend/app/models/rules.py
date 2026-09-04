@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.constants import MAX_CLONE_TARGETS
+
 MatchMode = Literal["exact", "contains", "word"]
 # "specific" = the listed posts. "any" = every post, including future ones.
 RuleScope = Literal["specific", "any"]
@@ -291,3 +293,14 @@ class StoryPublic(BaseModel):
             first_seen_at=document.get("first_seen_at"),
             rule_count=rule_count,
         )
+
+
+class RuleCloneRequest(BaseModel):
+    """Which posts to copy an automation onto.
+
+    The source is a *rule* id in the path, not a post id: a post may hold more
+    than one automation, so "clone this post's automation" is ambiguous and the
+    caller has to say which one.
+    """
+
+    instagram_media_ids: list[str] = Field(min_length=1, max_length=MAX_CLONE_TARGETS)

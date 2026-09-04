@@ -24,7 +24,7 @@ from fastapi import APIRouter, Request, Response, status
 from pymongo.errors import DuplicateKeyError
 
 from app import queue
-from app.api.deps import AuditRepo, SettingsDep, UsersRepo
+from app.api.deps import AuditRepo, RolesRepo, SettingsDep, UsersRepo
 from app.errors import AuthenticationError, ConflictError, NotFoundError, RateLimitedError
 from app.models.setup import MIN_SETUP_SECRET_LENGTH, SetupAdminRequest, SetupSecretRequest
 from app.models.users import UserPublic
@@ -108,6 +108,7 @@ async def create_admin(
     response: Response,
     settings: SettingsDep,
     users: UsersRepo,
+    roles: RolesRepo,
     audit: AuditRepo,
 ) -> UserPublic:
     """Create the first admin and sign them in."""
@@ -115,7 +116,12 @@ async def create_admin(
 
     try:
         user = await users.create(
-            payload.email, hash_password(payload.password), is_bootstrap=True
+            payload.email,
+            hash_password(payload.password),
+            # The first account through the door owns the deployment; there is
+            # nobody else who could grant it anything later.
+            role_id=await roles.ensure_owner(),
+            is_bootstrap=True,
         )
     except DuplicateKeyError as exc:
         # Another request won the race between the count check and this insert.

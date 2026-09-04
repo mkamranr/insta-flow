@@ -8,10 +8,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from app.api.deps import AppSettingsRepo, AuditRepo, CurrentUser, SettingsDep
+from app.api.deps import AppSettingsRepo, AuditRepo, CurrentUser, SettingsDep, require
 from app.errors import ValidationError
 from app.services.geoip import GeoIpError, database_path, download, remote_build_date
 from app.services.security.encryption import EncryptionError, decrypt, encrypt
@@ -45,7 +45,7 @@ def _database_state(settings: Any) -> dict[str, Any]:
 DEFAULT_DISCLOSURE = "Automated reply."
 
 
-@router.get("/disclosure")
+@router.get("/disclosure", dependencies=[Depends(require("settings.view"))])
 async def get_disclosure(user: CurrentUser, store: AppSettingsRepo) -> dict[str, Any]:
     """The automated-experience notice appended to the first automated message."""
     saved = await store.load()
@@ -55,7 +55,7 @@ async def get_disclosure(user: CurrentUser, store: AppSettingsRepo) -> dict[str,
     }
 
 
-@router.put("/disclosure")
+@router.put("/disclosure", dependencies=[Depends(require("settings.edit"))])
 async def save_disclosure(
     payload: Disclosure, user: CurrentUser, store: AppSettingsRepo
 ) -> dict[str, Any]:
@@ -72,7 +72,7 @@ async def save_disclosure(
     return {"saved": True}
 
 
-@router.get("/geoip")
+@router.get("/geoip", dependencies=[Depends(require("settings.view"))])
 async def geoip_status(
     user: CurrentUser, store: AppSettingsRepo, settings: SettingsDep
 ) -> dict[str, Any]:
@@ -87,7 +87,7 @@ async def geoip_status(
     }
 
 
-@router.put("/geoip")
+@router.put("/geoip", dependencies=[Depends(require("settings.edit"))])
 async def save_geoip(
     payload: GeoIpCredentials,
     request: Request,
@@ -136,7 +136,7 @@ async def save_geoip(
     return {"saved": True, "database": _database_state(settings)}
 
 
-@router.post("/geoip/refresh")
+@router.post("/geoip/refresh", dependencies=[Depends(require("settings.edit"))])
 async def refresh_geoip(
     user: CurrentUser, store: AppSettingsRepo, settings: SettingsDep
 ) -> dict[str, Any]:
@@ -156,7 +156,7 @@ async def refresh_geoip(
     return {"database": _database_state(settings)}
 
 
-@router.delete("/geoip")
+@router.delete("/geoip", dependencies=[Depends(require("settings.edit"))])
 async def clear_geoip(
     user: CurrentUser, store: AppSettingsRepo, settings: SettingsDep
 ) -> dict[str, Any]:

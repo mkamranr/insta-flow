@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 COLLECTIONS = [
     "users",
+    "roles",
     "instagram_accounts",
     "media",
     "stories",
@@ -33,6 +34,9 @@ COLLECTIONS = [
 ]
 
 INDEXES: dict[str, list[IndexModel]] = {
+    "roles": [
+        IndexModel([("slug", ASCENDING)], unique=True, name="uq_role_slug"),
+    ],
     "users": [
         IndexModel([("email", ASCENDING)], unique=True, name="uq_email"),
         # At most one user may ever carry `is_bootstrap`. Two requests that both

@@ -11,7 +11,7 @@ import pytest
 from bson import ObjectId
 
 from app.config import get_settings
-from app.db.repositories import UsersRepository
+from app.db.repositories import RolesRepository, UsersRepository
 from app.services.security.encryption import encrypt
 from app.services.security.passwords import hash_password
 from tests.conftest import TEST_PASSWORD
@@ -33,8 +33,11 @@ async def two_admins(database, admin):
             "token_expires_at": datetime.now(UTC) + timedelta(days=59),
         }
     )
-    other = await UsersRepository(database).create(
-        "other@example.com", hash_password(TEST_PASSWORD)
+    users = UsersRepository(database)
+    other = await users.create(
+        "other@example.com",
+        hash_password(TEST_PASSWORD),
+        role_id=await RolesRepository(database).ensure_owner(),
     )
     return {"account_id": account_id, "other": other}
 
@@ -101,3 +104,81 @@ async def test_no_token_reaches_either_admin(api, two_admins, admin):
     body = (await api.get("/api/instagram/accounts")).text
     assert "secret-token" not in body
     assert "access_token" not in body
+
+
+@pytest.fixture
+async def rule_of_the_first_admin(database, two_admins):
+    """A rule owned by the first admin, with the second admin holding an account too.
+
+    Giving the second admin their own connected account is what makes these tests
+    mean anything. `two_admins` alone leaves them with none, so every request would
+    stop at the "no Instagram account is connected yet" check (422) and never reach
+    the ownership comparison -- a green test that proves nothing about scoping.
+    """
+    settings = get_settings()
+    await database["instagram_accounts"].insert_one(
+        {
+            "_id": ObjectId(),
+            "user_id": two_admins["other"]["_id"],
+            "instagram_user_id": "17841499999999999",
+            "username": "second_admins_account",
+            "status": "connected",
+            "access_token_encrypted": encrypt("other-token", settings.encryption_key),
+            "token_expires_at": datetime.now(UTC) + timedelta(days=59),
+        }
+    )
+    rule_id = ObjectId()
+    await database["rules"].insert_one(
+        {
+            "_id": rule_id,
+            "instagram_account_id": two_admins["account_id"],
+            "name": "First admin's rule",
+            "trigger": "comment",
+            "scope": "any",
+            "keywords": ["link"],
+            "any_word": False,
+            "message": "Here you go.",
+            "is_active": True,
+        }
+    )
+    return rule_id
+
+
+async def test_another_admin_cannot_read_a_rule_by_id(api, rule_of_the_first_admin):
+    await sign_in_as(api, "other@example.com")
+    response = await api.get(f"/api/rules/{rule_of_the_first_admin}")
+    # 404, not 403: the response must not reveal that the id exists.
+    assert response.status_code == 404
+
+
+async def test_another_admin_cannot_update_a_rule(api, database, rule_of_the_first_admin):
+    await sign_in_as(api, "other@example.com")
+    response = await api.patch(
+        f"/api/rules/{rule_of_the_first_admin}", json={"message": "Hijacked."}
+    )
+    assert response.status_code == 404
+    # The status code alone would pass if the write had already happened.
+    stored = await database["rules"].find_one({"_id": rule_of_the_first_admin})
+    assert stored["message"] == "Here you go."
+
+
+async def test_another_admin_cannot_delete_a_rule(api, database, rule_of_the_first_admin):
+    await sign_in_as(api, "other@example.com")
+    response = await api.delete(f"/api/rules/{rule_of_the_first_admin}")
+    assert response.status_code == 404
+    assert await database["rules"].count_documents({"_id": rule_of_the_first_admin}) == 1
+
+
+async def test_the_owner_can_still_read_update_and_delete(
+    api, database, admin, rule_of_the_first_admin
+):
+    """The guard must not lock the rightful owner out -- the other half of the fix."""
+    await sign_in_as(api, admin["email"])
+    assert (await api.get(f"/api/rules/{rule_of_the_first_admin}")).status_code == 200
+
+    updated = await api.patch(f"/api/rules/{rule_of_the_first_admin}", json={"message": "Mine."})
+    assert updated.status_code == 200
+    assert updated.json()["message"] == "Mine."
+
+    assert (await api.delete(f"/api/rules/{rule_of_the_first_admin}")).status_code == 204
+    assert await database["rules"].count_documents({"_id": rule_of_the_first_admin}) == 0

@@ -48,6 +48,25 @@ the operator out of their own dashboard is worse than the risk it prevents.
 increments the epoch, revoking every cookie already issued rather than only the
 one in the current browser.
 
+**Authorization** — every route under `/api` declares the permission it needs in
+its decorator (`dependencies=[Depends(require("automations.edit"))]`), and a test
+walks the route table and fails if one does not. The check is in the decorator
+rather than the handler body precisely because a body check is opt-in and
+therefore forgettable — three handlers in `rules.py` once loaded a record with no
+ownership check at all for exactly that reason.
+
+Permissions resolve from the database on every request. The session cookie
+carries no claims, so revoking a permission takes effect on the person's next
+request rather than at their next login.
+
+Two escalation paths are closed explicitly: you cannot grant a permission you do
+not hold yourself, and you cannot administer a user whose permissions are not a
+subset of your own. Without the second, a role carrying `users.manage` but not
+`roles.manage` could reset the owner's password and take the deployment.
+
+The frontend hides what you cannot use, but that is presentation only — the
+permission list reaches the browser as ordinary JSON. The server is the authority.
+
 **CSRF** — `SameSite=Lax` blocks cross-site form posts. All state-changing routes
 take JSON, which forces a CORS preflight, and no CORS middleware is installed,
 so no cross-origin app can call them. There is no separate CSRF token because
@@ -111,8 +130,10 @@ they matter before this serves anyone else.
    200 so the Meta dashboard is satisfied, but do not verify Meta's signed
    request or delete anything. If this ever serves accounts other than your own,
    both become a compliance obligation rather than a formality.
-3. **Single admin role.** There is no role model — any authenticated user can do
-   anything. Fine for one operator; not for a team.
+3. **Permissions are per-role, not per-record.** A role says *what* someone may
+   do, not *which* rows they may do it to. Everyone who can see automations sees
+   all of them. That is correct while a deployment serves one Instagram account;
+   serving several would need record-level scoping as well.
 4. **No CSP nonces.** `style-src` allows `unsafe-inline` because the build
    inlines styles. Tightening it needs a build change.
 5. **Link tokens are unguessable but not expiring.** A leaked tracking URL keeps

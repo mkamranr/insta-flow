@@ -9,7 +9,7 @@ admin-account factory.
 import pytest
 
 from app.db.indexes import create_indexes
-from app.db.repositories import UsersRepository
+from app.db.repositories import RolesRepository, UsersRepository
 from app.services.security.passwords import hash_password
 
 SECRET = "s" * 32
@@ -82,7 +82,11 @@ async def test_a_wrong_secret_is_refused(api, database):
 async def test_setup_is_refused_once_any_user_exists(api, database):
     """Not "any admin" -- any user. Otherwise a leaked secret is a permanent
     backdoor into a running deployment."""
-    await UsersRepository(database).create("someone@example.com", hash_password("x" * 14))
+    await UsersRepository(database).create(
+        "someone@example.com",
+        hash_password("x" * 14),
+        role_id=await RolesRepository(database).ensure_owner(),
+    )
 
     response = await api.post("/api/auth/setup", json=GOOD)
 
@@ -130,13 +134,24 @@ async def test_only_one_bootstrap_admin_can_ever_exist(api, database):
     not stop them -- so a partial unique index on `is_bootstrap` does."""
     await create_indexes(database)
     users = UsersRepository(database)
+    owner_id = await RolesRepository(database).ensure_owner()
 
-    await users.create("first@example.com", hash_password("x" * 14), is_bootstrap=True)
+    await users.create(
+        "first@example.com",
+        hash_password("x" * 14),
+        role_id=owner_id,
+        is_bootstrap=True,
+    )
 
     from pymongo.errors import DuplicateKeyError
 
     with pytest.raises(DuplicateKeyError):
-        await users.create("second@example.com", hash_password("x" * 14), is_bootstrap=True)
+        await users.create(
+            "second@example.com",
+            hash_password("x" * 14),
+            role_id=owner_id,
+            is_bootstrap=True,
+        )
 
 
 async def test_ordinary_users_are_not_covered_by_the_bootstrap_index(api, database):
@@ -144,9 +159,10 @@ async def test_ordinary_users_are_not_covered_by_the_bootstrap_index(api, databa
     omit the field entirely -- must still be creatable in numbers."""
     await create_indexes(database)
     users = UsersRepository(database)
+    owner_id = await RolesRepository(database).ensure_owner()
 
-    await users.create("a@example.com", hash_password("x" * 14))
-    await users.create("b@example.com", hash_password("x" * 14))
+    await users.create("a@example.com", hash_password("x" * 14), role_id=owner_id)
+    await users.create("b@example.com", hash_password("x" * 14), role_id=owner_id)
 
     assert await database["users"].count_documents({}) == 2
 

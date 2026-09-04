@@ -4,7 +4,7 @@ import { NewAutomationDialog } from '../rules/NewAutomationDialog'
 import { RuleEditor } from '../rules/RuleEditor'
 import type { RuleTrigger } from '../../api/rules'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { getMe, logout } from '../../api/auth'
 import { getSummary } from '../../api/analytics'
@@ -24,34 +24,117 @@ import {
   StoriesIcon,
   UpcomingIcon,
   SettingsIcon,
+  ShieldIcon,
   TemplatesIcon,
+  UsersIcon,
+  KeyIcon,
 } from '../icons/Icons'
 import { AnalyticsDrawer } from '../common/AnalyticsDrawer'
 import { DryRunBanner } from '../common/DryRunBanner'
 import { StatsRail } from '../common/StatsRail'
+import { usePermissions } from '../../hooks/usePermissions'
 
-const TOP = [
+interface NavItem {
+  to: string
+  label: string
+  icon: ReactNode
+  end?: boolean
+  /** Undefined means "everyone who can sign in". */
+  permission?: string
+}
+
+// Home carries no permission on purpose: it is the target of the logo, of the
+// "go back" link on the no-access card, and of every post-login redirect. A `/`
+// that can refuse you needs a redirect matrix and can strand a narrow role on a
+// blank screen, so the Dashboard gates its own sections instead.
+const TOP: NavItem[] = [
   { to: '/', label: 'Home', icon: <HomeIcon />, end: true },
-  { to: '/automations', label: 'Automations', icon: <AutomationIcon /> },
-  { to: '/templates', label: 'Templates', icon: <TemplatesIcon /> },
+  {
+    to: '/automations',
+    label: 'Automations',
+    icon: <AutomationIcon />,
+    permission: 'automations.view',
+  },
+  {
+    to: '/templates',
+    label: 'Templates',
+    icon: <TemplatesIcon />,
+    permission: 'automations.view',
+  },
 ]
 
-const MY_CONTENT = [
-  { to: '/posts', label: 'Posts & Reels', icon: <PostsIcon /> },
-  { to: '/stories', label: 'Stories', icon: <StoriesIcon /> },
-  { to: '/upcoming', label: 'Upcoming post', icon: <UpcomingIcon /> },
+const MY_CONTENT: NavItem[] = [
+  { to: '/posts', label: 'Posts & Reels', icon: <PostsIcon />, permission: 'content.view' },
+  { to: '/stories', label: 'Stories', icon: <StoriesIcon />, permission: 'content.view' },
+  {
+    to: '/upcoming',
+    label: 'Upcoming post',
+    icon: <UpcomingIcon />,
+    permission: 'automations.view',
+  },
 ]
 
-const ANALYTICS = [
-  { to: '/analytics', label: 'Overview', icon: <AnalyticsIcon /> },
-  { to: '/insights', label: 'Audience insights', icon: <ContactsIcon /> },
+const ANALYTICS: NavItem[] = [
+  { to: '/analytics', label: 'Overview', icon: <AnalyticsIcon />, permission: 'analytics.view' },
+  {
+    to: '/insights',
+    label: 'Audience insights',
+    icon: <ContactsIcon />,
+    permission: 'analytics.view',
+  },
 ]
 
-const BOTTOM = [
-  { to: '/contacts', label: 'Contacts', icon: <ContactsIcon /> },
-  { to: '/instagram', label: 'Instagram', icon: <InstagramIcon /> },
-  { to: '/settings', label: 'Settings', icon: <SettingsIcon /> },
+const BOTTOM: NavItem[] = [
+  { to: '/contacts', label: 'Contacts', icon: <ContactsIcon />, permission: 'contacts.view' },
+  { to: '/instagram', label: 'Instagram', icon: <InstagramIcon />, permission: 'instagram.view' },
+  { to: '/settings', label: 'Settings', icon: <SettingsIcon />, permission: 'settings.view' },
 ]
+
+const ADMIN: NavItem[] = [
+  { to: '/users', label: 'Users', icon: <UsersIcon />, permission: 'users.view' },
+  { to: '/roles', label: 'Roles', icon: <KeyIcon />, permission: 'roles.view' },
+]
+
+function NavGroup({
+  label,
+  icon,
+  items,
+}: {
+  label: string
+  icon: ReactNode
+  items: NavItem[]
+}) {
+  const [open, setOpen] = useState(true)
+  // A header that opens onto nothing is worse than no header, so the whole group
+  // goes -- toggle included. The guard lives *inside* the component so that a
+  // background ['me'] refetch cannot unmount it and reset the open/closed choice.
+  if (items.length === 0) return null
+
+  return (
+    <div className="nav-group">
+      <button
+        className={open ? 'nav-toggle open' : 'nav-toggle'}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="nav-tile">{icon}</span>
+        {label}
+        <span className={open ? 'nav-chevron open' : 'nav-chevron'}>
+          <ChevronDownIcon />
+        </span>
+      </button>
+      {open && (
+        <div className="nav-sub">
+          {items.map(({ to, label: itemLabel, icon: itemIcon }) => (
+            <NavLink key={to} to={to}>
+              <span className="nav-tile">{itemIcon}</span>
+              {itemLabel}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** Meta's documented ceiling: 750 private replies per hour, per account. */
 const HOURLY_CEILING = 750
@@ -62,8 +145,11 @@ export function Layout() {
   // The two account-wide triggers open the editor with no post.
   const [newTrigger, setNewTrigger] = useState<RuleTrigger | null>(null)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [contentOpen, setContentOpen] = useState(true)
-  const [analyticsNavOpen, setAnalyticsNavOpen] = useState(true)
+  const { can } = usePermissions()
+
+  // ['me'] is already resolved by RequireAuth, so this filter runs with real data
+  // on the very first render -- nothing appears and then vanishes.
+  const visible = (items: NavItem[]) => items.filter((item) => can(item.permission))
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: getMe })
   const { data: accounts } = useQuery({ queryKey: ['instagram-accounts'], queryFn: listAccounts })
@@ -105,77 +191,40 @@ export function Layout() {
           </div>
         </div>
 
-        <button className="cta full" onClick={() => setStarting(true)} style={{ marginBottom: 18 }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-            <PlusIcon />
-            New automation
-          </span>
-        </button>
+        {can('automations.create') && (
+          <button
+            className="cta full"
+            onClick={() => setStarting(true)}
+            style={{ marginBottom: 18 }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <PlusIcon />
+              New automation
+            </span>
+          </button>
+        )}
 
         <nav className="nav">
-          {TOP.map(({ to, label, icon, end }) => (
+          {visible(TOP).map(({ to, label, icon, end }) => (
             <NavLink key={to} to={to} end={end}>
               <span className="nav-tile">{icon}</span>
               {label}
             </NavLink>
           ))}
 
-          <div className="nav-group">
-            <button
-              className={contentOpen ? 'nav-toggle open' : 'nav-toggle'}
-              onClick={() => setContentOpen((v) => !v)}
-            >
-              <span className="nav-tile">
-                <PostsIcon />
-              </span>
-              My content
-              <span className={contentOpen ? 'nav-chevron open' : 'nav-chevron'}>
-                <ChevronDownIcon />
-              </span>
-            </button>
-            {contentOpen && (
-              <div className="nav-sub">
-                {MY_CONTENT.map(({ to, label, icon }) => (
-                  <NavLink key={to} to={to}>
-                    <span className="nav-tile">{icon}</span>
-                    {label}
-                  </NavLink>
-                ))}
-              </div>
-            )}
-          </div>
+          <NavGroup label="My content" icon={<PostsIcon />} items={visible(MY_CONTENT)} />
+          <NavGroup label="Analytics" icon={<ActivityIcon />} items={visible(ANALYTICS)} />
 
-          <div className="nav-group">
-            <button
-              className={analyticsNavOpen ? 'nav-toggle open' : 'nav-toggle'}
-              onClick={() => setAnalyticsNavOpen((v) => !v)}
-            >
-              <span className="nav-tile">
-                <ActivityIcon />
-              </span>
-              Analytics
-              <span className={analyticsNavOpen ? 'nav-chevron open' : 'nav-chevron'}>
-                <ChevronDownIcon />
-              </span>
-            </button>
-            {analyticsNavOpen && (
-              <div className="nav-sub">
-                {ANALYTICS.map(({ to, label, icon }) => (
-                  <NavLink key={to} to={to}>
-                    <span className="nav-tile">{icon}</span>
-                    {label}
-                  </NavLink>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {BOTTOM.map(({ to, label, icon }) => (
+          {visible(BOTTOM).map(({ to, label, icon }) => (
             <NavLink key={to} to={to}>
               <span className="nav-tile">{icon}</span>
               {label}
             </NavLink>
           ))}
+
+          {/* Derived, not declared: the group exists exactly when a child does,
+              so a role with neither permission sees the sidebar it always saw. */}
+          <NavGroup label="Administration" icon={<ShieldIcon />} items={visible(ADMIN)} />
         </nav>
 
         <div className="sidebar-foot">

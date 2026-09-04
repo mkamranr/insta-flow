@@ -1,9 +1,10 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { getRulePerformance, getSummary, getTopCommenters } from '../api/analytics'
 import { listAccounts } from '../api/instagram'
-import { listPosts, type Post, type Rule } from '../api/rules'
+import { listPosts, syncPosts, type Post, type Rule } from '../api/rules'
+import { usePermissions } from '../hooks/usePermissions'
 import { PostCard } from '../components/common/PostCard'
 import { RuleEditor } from '../components/rules/RuleEditor'
 
@@ -44,6 +45,7 @@ const si = {
 export function Dashboard() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { can } = usePermissions()
   const [editing, setEditing] = useState<{ post: Post; initial?: Partial<Rule> } | null>(null)
 
   const { data: summary, isLoading } = useQuery({
@@ -73,6 +75,15 @@ export function Dashboard() {
     retry: false,
   })
   const railPosts = rail.data?.pages.flat() ?? []
+
+  const sync = useMutation({
+    mutationFn: syncPosts,
+    onSuccess: () => {
+      // Prefix match: this covers ['posts', 'rail'] as well.
+      queryClient.invalidateQueries({ queryKey: ['posts'] })
+      queryClient.invalidateQueries({ queryKey: ['summary'] })
+    },
+  })
 
   const onRailScroll = useCallback(
     (event: React.UIEvent<HTMLDivElement>) => {
@@ -117,6 +128,20 @@ export function Dashboard() {
     <>
       <h1>Welcome {account ? `@${account.username}` : ''}!</h1>
 
+      {/* Sections rather than the whole route: `/` is where the logo, the
+          no-access card and every post-login redirect land, so it must never
+          refuse anyone. A role that can see none of these gets the card below. */}
+      {!can('content.view') && !can('analytics.view') && !can('automations.view') && (
+        <div className="card">
+          <h2>Nothing to show yet</h2>
+          <p className="muted">
+            Your role does not include any of the dashboard&rsquo;s sections. Use the sidebar to
+            reach what you do have access to, or ask an administrator for more.
+          </p>
+        </div>
+      )}
+
+      {can('content.view') && (
       <section className="section">
         <div className="section-head">
           <div>
@@ -128,17 +153,30 @@ export function Dashboard() {
             </p>
           </div>
           <div className="section-actions">
-            <button
-              className="link"
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['posts'] })}
-            >
-              Refresh
-            </button>
+            {/* This used to only invalidate the react-query cache, which re-reads
+                what the server already had and so could never surface a new post.
+                Pulling from Instagram is a sync, exactly as the Posts page does. */}
+            {can('content.edit') && (
+              <button className="link" disabled={sync.isPending} onClick={() => sync.mutate()}>
+                {sync.isPending ? 'Syncing…' : 'Sync from Instagram'}
+              </button>
+            )}
             <button className="link" onClick={() => navigate('/posts')}>
               View all →
             </button>
           </div>
         </div>
+
+        {sync.error && (
+          <p className="err small" role="alert">
+            {(sync.error as Error).message}
+          </p>
+        )}
+        {sync.isSuccess && !sync.isPending && (
+          <p className="ok small">
+            Synced {sync.data?.synced ?? 0} post{sync.data?.synced === 1 ? '' : 's'} from Instagram.
+          </p>
+        )}
 
         {railPosts.length === 0 && !rail.isLoading ? (
           <div className="card">
@@ -156,6 +194,9 @@ export function Dashboard() {
                 onSetUp={() =>
                   post.rule_count > 0 ? navigate('/automations') : setEditing({ post })
                 }
+                onClone={
+                  can('automations.create') ? () => navigate(`/posts/${post.id}/clone`) : undefined
+                }
               />
             ))}
 
@@ -168,7 +209,9 @@ export function Dashboard() {
           </div>
         )}
       </section>
+      )}
 
+      {can('analytics.view') && (
       <section className="section">
         <h2>Performance snapshot</h2>
         <p className="muted small" style={{ marginBottom: 14 }}>
@@ -232,8 +275,9 @@ export function Dashboard() {
           />
         </div>
       </section>
+      )}
 
-      {rules && rules.length > 0 && (
+      {can('automations.view') && rules && rules.length > 0 && (
         <section className="section">
           <h2>Automation performance</h2>
           <div className="card">

@@ -61,6 +61,8 @@ export interface Rule {
   once_per_person: boolean
   enabled: boolean
   priority: number
+  /** Counted per rule, so cloning an automation multiplies the account total. */
+  limits: { per_minute: number; per_hour: number; per_day: number }
 }
 
 export interface Post {
@@ -136,6 +138,19 @@ export const syncPosts = () => apiPost<{ synced: number }>('/api/posts/sync')
 export const listRules = (mediaId?: string) =>
   apiGet<Rule[]>(mediaId ? `/api/rules?instagram_media_id=${encodeURIComponent(mediaId)}` : '/api/rules')
 export const createRule = (rule: Partial<Rule>) => apiPost<Rule>('/api/rules', rule)
+export interface CloneResult {
+  created: string[]
+  skipped: { instagram_media_id: string; reason: string }[]
+}
+
+/**
+ * Copy an automation onto other posts, one independent rule per post.
+ * Targets that already have an automation come back in `skipped` rather than
+ * failing the whole request.
+ */
+export const cloneRule = (sourceId: string, instagram_media_ids: string[]) =>
+  apiPost<CloneResult>(`/api/rules/${sourceId}/clone`, { instagram_media_ids })
+
 export const deleteRule = (id: string) => apiDelete<void>(`/api/rules/${id}`)
 export const getIntents = () =>
   apiGet<{ intents: string[]; ai_enabled: boolean; model: string | null }>('/api/rules/intents')

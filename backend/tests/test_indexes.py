@@ -13,11 +13,20 @@ def index_named(collection: str, name: str) -> dict:
 
 
 def test_every_specified_collection_is_present():
-    assert len(COLLECTIONS) == 16
+    assert len(COLLECTIONS) == 17
     assert set(INDEXES) <= set(COLLECTIONS)
     assert "account_snapshots" in COLLECTIONS
     assert "stories" in COLLECTIONS
     assert "upcoming_posts" in COLLECTIONS
+    assert "roles" in COLLECTIONS
+
+
+def test_role_slugs_are_unique():
+    """Two roles named the same thing would make role assignment ambiguous, and
+    the seeder's upsert relies on this index rather than on a prior existence
+    check to survive two processes starting at once."""
+    doc = index_named("roles", "uq_role_slug")
+    assert doc["unique"] is True
 
 
 def test_only_one_upcoming_post_can_be_pending():

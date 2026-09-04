@@ -5,10 +5,13 @@ export function PostCard({
   post,
   username,
   onSetUp,
+  onClone,
 }: {
   post: Post
   username: string
   onSetUp: () => void
+  /** Shown only on a post that already has an automation. */
+  onClone?: () => void
 }) {
   const automated = post.rule_count > 0
   const ago = post.published_at ? relativeDay(post.published_at) : ''
@@ -50,6 +53,14 @@ export function PostCard({
         <button className={automated ? 'secondary full' : 'ig-cta full'} onClick={onSetUp}>
           {automated ? 'View automation' : 'Set up automation'}
         </button>
+        {/* Stacked rather than beside: the card is 232px and `button` is
+            globally `white-space: nowrap`, so two of them will not fit. The
+            label stays one short word for the same reason. */}
+        {automated && onClone && (
+          <button className="secondary full" onClick={onClone}>
+            Clone
+          </button>
+        )}
       </div>
     </article>
   )

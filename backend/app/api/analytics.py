@@ -9,7 +9,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import (
     AccountsRepo,
@@ -22,6 +22,7 @@ from app.api.deps import (
     MediaRepo,
     RulesRepo,
     SnapshotsRepo,
+    require,
 )
 from app.db.repositories import serialise_required
 from app.errors import NotFoundError
@@ -50,7 +51,7 @@ async def _account_id(accounts: Any, user: dict[str, Any]) -> Any:
     return found[0]["_id"] if found else None
 
 
-@router.get("/summary")
+@router.get("/summary", dependencies=[Depends(require("analytics.view"))])
 async def summary(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -100,7 +101,7 @@ async def summary(
     }
 
 
-@router.get("/rules")
+@router.get("/rules", dependencies=[Depends(require("analytics.view"))])
 async def rule_performance(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -156,7 +157,7 @@ async def rule_performance(
     return out
 
 
-@router.get("/activity")
+@router.get("/activity", dependencies=[Depends(require("analytics.view"))])
 async def activity(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -203,7 +204,7 @@ async def activity(
     return out
 
 
-@router.get("/superfans")
+@router.get("/superfans", dependencies=[Depends(require("analytics.view"))])
 async def superfans(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -228,7 +229,7 @@ async def superfans(
     }
 
 
-@router.get("/top-commenters")
+@router.get("/top-commenters", dependencies=[Depends(require("analytics.view"))])
 async def top_commenters(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -282,7 +283,7 @@ def _densify(rows: list[dict[str, Any]], since: datetime, by_hour: bool) -> list
     return out
 
 
-@router.get("/trends")
+@router.get("/trends", dependencies=[Depends(require("analytics.view"))])
 async def trends(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -311,13 +312,11 @@ async def trends(
             since,
             by_hour,
         ),
-        "clicks": _densify(
-            await events.series(account_id, since, by_hour=by_hour), since, by_hour
-        ),
+        "clicks": _densify(await events.series(account_id, since, by_hour=by_hour), since, by_hour),
     }
 
 
-@router.get("/places")
+@router.get("/places", dependencies=[Depends(require("analytics.view"))])
 async def account_places(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -355,7 +354,7 @@ async def account_places(
     }
 
 
-@router.get("/highlights")
+@router.get("/highlights", dependencies=[Depends(require("analytics.view"))])
 async def highlights(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -413,7 +412,7 @@ async def highlights(
     }
 
 
-@router.get("/rules/{rule_id}/places")
+@router.get("/rules/{rule_id}/places", dependencies=[Depends(require("analytics.view"))])
 async def rule_places(
     rule_id: str,
     user: CurrentUser,
@@ -448,7 +447,7 @@ async def rule_places(
     }
 
 
-@router.get("/account")
+@router.get("/account", dependencies=[Depends(require("analytics.view"))])
 async def account_performance(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -516,7 +515,7 @@ async def account_performance(
     }
 
 
-@router.get("/posts")
+@router.get("/posts", dependencies=[Depends(require("analytics.view"))])
 async def post_performance(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -557,7 +556,7 @@ async def post_performance(
     return out
 
 
-@router.get("/contacts")
+@router.get("/contacts", dependencies=[Depends(require("contacts.view"))])
 async def contacts_list(
     user: CurrentUser, accounts: AccountsRepo, contacts: ContactsRepo
 ) -> list[dict[str, Any]]:

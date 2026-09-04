@@ -4,9 +4,11 @@ Routes depend on repositories, never on a collection handle, so the layering
 holds at the HTTP layer too.
 """
 
+import logging
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, NamedTuple
 
 from fastapi import Depends, Request
 
@@ -23,15 +25,19 @@ from app.db.repositories import (
     InstagramAccountsRepository,
     LinkClicksRepository,
     MediaRepository,
+    RolesRepository,
     RulesRepository,
     StoriesRepository,
     UpcomingPostsRepository,
     UsersRepository,
     WebhookEventsRepository,
 )
-from app.errors import AuthenticationError
+from app.errors import AuthenticationError, AuthorizationError
+from app.permissions import is_valid
 from app.services.geoip import GeoIpReader
 from app.services.security import sessions
+
+logger = logging.getLogger(__name__)
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -94,6 +100,10 @@ def link_clicks_repo(db: DbDep) -> LinkClicksRepository:
     return LinkClicksRepository(db)
 
 
+def roles_repo(db: DbDep) -> RolesRepository:
+    return RolesRepository(db)
+
+
 def rules_repo(db: DbDep) -> RulesRepository:
     return RulesRepository(db)
 
@@ -123,6 +133,7 @@ SnapshotsRepo = Annotated[AccountSnapshotsRepository, Depends(account_snapshots_
 AppSettingsRepo = Annotated[AppSettingsRepository, Depends(app_settings_repo)]
 ClickEventsRepo = Annotated[ClickEventsRepository, Depends(click_events_repo)]
 GeoIpDep = Annotated[GeoIpReader, Depends(geoip_reader)]
+RolesRepo = Annotated[RolesRepository, Depends(roles_repo)]
 RulesRepo = Annotated[RulesRepository, Depends(rules_repo)]
 LinkClicksRepo = Annotated[LinkClicksRepository, Depends(link_clicks_repo)]
 ContactsRepo = Annotated[ContactsRepository, Depends(contacts_repo)]
@@ -159,3 +170,90 @@ async def current_user(request: Request, settings: SettingsDep, users: UsersRepo
 
 
 CurrentUser = Annotated[dict[str, Any], Depends(current_user)]
+
+
+class Grant(NamedTuple):
+    """One request's resolved authorization decision."""
+
+    role: dict[str, Any] | None
+    permissions: frozenset[str]
+
+
+async def current_grant(user: CurrentUser, roles: RolesRepo) -> Grant:
+    """The signed-in user's role and the permissions it carries.
+
+    Resolved from the database on every request, deliberately. The session cookie
+    carries only `{uid, epoch}` (`services/security/sessions.py`), so a role change
+    takes effect on the caller's next request rather than at their next login. The
+    cost is one indexed lookup; the alternative is a permission you revoked that
+    keeps working until the cookie expires.
+
+    FastAPI caches dependencies per request, so a route that declares both
+    `Depends(require(...))` and `user: CurrentUser` still reads the user once.
+    """
+    role = await roles.get_for_user(user)
+    if role is None:
+        # No role, or a role that has since been deleted. Fail closed: an
+        # unresolvable user gets nothing rather than falling back to a default.
+        logger.warning("user_has_no_role", extra={"user_id": str(user["_id"])})
+        return Grant(role=None, permissions=frozenset())
+    return Grant(role, frozenset(str(p) for p in role.get("permissions", ())))
+
+
+CurrentGrant = Annotated[Grant, Depends(current_grant)]
+
+
+def _catalogued(permissions: tuple[str, ...]) -> tuple[str, ...]:
+    unknown = sorted(p for p in permissions if not is_valid(p))
+    if unknown:
+        # At import time, not request time. A typo must break the build: a
+        # permission nobody can hold silently locks a route, and there is no
+        # symptom until someone complains they cannot do their job.
+        raise ValueError(f"not in the permission catalogue: {', '.join(unknown)}")
+    return permissions
+
+
+def require(*permissions: str) -> Callable[[Grant], Awaitable[None]]:
+    """Route guard: every listed permission is required.
+
+    Written as a route dependency so the requirement sits on the same line as the
+    method and the path:
+
+        @router.patch("/{rule_id}", dependencies=[Depends(require("automations.edit"))])
+
+    rather than a call inside the handler, which is opt-in and therefore
+    forgettable -- which is exactly how three handlers in `rules.py` came to load a
+    rule with no ownership check at all. Being in the decorator also makes it
+    machine-checkable: `test_authorization.py` walks every route and fails if one
+    declares no permission.
+    """
+    wanted = _catalogued(permissions)
+
+    async def dependency(grant: CurrentGrant) -> None:
+        missing = [p for p in wanted if p not in grant.permissions]
+        if missing:
+            # 403 and not 404: this is about a capability, which reveals nothing
+            # about which rows exist. Ownership checks keep using 404. The reply
+            # stays generic; the detail goes to the log.
+            logger.info("permission_denied", extra={"missing": missing})
+            raise AuthorizationError("You do not have access to do that.")
+
+    dependency.__permissions__ = wanted  # type: ignore[attr-defined]
+    return dependency
+
+
+def require_any(*permissions: str) -> Callable[[Grant], Awaitable[None]]:
+    """Route guard: any one of the listed permissions is enough.
+
+    Only for an endpoint that genuinely serves two paths -- uploading an
+    attachment belongs to whoever may create *or* edit an automation.
+    """
+    wanted = _catalogued(permissions)
+
+    async def dependency(grant: CurrentGrant) -> None:
+        if not grant.permissions.intersection(wanted):
+            logger.info("permission_denied", extra={"needed_any": list(wanted)})
+            raise AuthorizationError("You do not have access to do that.")
+
+    dependency.__permissions__ = wanted  # type: ignore[attr-defined]
+    return dependency

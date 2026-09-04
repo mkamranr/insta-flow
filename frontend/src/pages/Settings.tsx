@@ -313,7 +313,7 @@ export function Settings() {
 make reload           # apply .env changes
 make funnel           # expose publicly via Tailscale
 make tunnel-status    # print the URLs for the Meta dashboard
-make bootstrap-admin  # create another admin user
+make bootstrap-admin  # recover access if you are locked out
 make test             # run the backend suite`}</pre>
       </div>
     </>

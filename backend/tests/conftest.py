@@ -6,8 +6,8 @@ from pymongo import AsyncMongoClient
 
 from app.api.deps import get_db
 from app.config import get_settings
-from app.db.indexes import create_indexes
-from app.db.repositories import UsersRepository
+from app.db.bootstrap import prepare
+from app.db.repositories import RolesRepository, UsersRepository
 from app.main import app
 from app.services.security.passwords import hash_password
 
@@ -30,7 +30,7 @@ async def database():
         pytest.skip(f"MongoDB not reachable at {MONGO_URL}")
     await client.drop_database(TEST_DB)
     db = client[TEST_DB]
-    await create_indexes(db)
+    await prepare(db)
     try:
         yield db
     finally:
@@ -86,9 +86,43 @@ async def api(database):
 
 @pytest.fixture
 async def admin(database):
-    """A known, active admin user."""
+    """A known, active admin user, holding the Owner role.
+
+    Owner and not something narrower: every other test in this suite predates
+    authorization and assumes the signed-in user can do anything. Giving this
+    fixture a lesser role would turn the whole suite red for a reason that has
+    nothing to do with what each test is checking.
+    """
     users = UsersRepository(database)
-    return await users.create("admin@example.com", hash_password(TEST_PASSWORD))
+    return await users.create(
+        "admin@example.com",
+        hash_password(TEST_PASSWORD),
+        role_id=await RolesRepository(database).ensure_owner(),
+    )
+
+
+@pytest.fixture
+async def role_factory(database):
+    """Build a role holding exactly the given permissions."""
+
+    async def make(name, permissions):
+        return await RolesRepository(database).create(
+            name=name, description=f"{name} test role", permissions=list(permissions)
+        )
+
+    return make
+
+
+@pytest.fixture
+async def user_factory(database):
+    """Build an active user holding a given role."""
+
+    async def make(email, role):
+        return await UsersRepository(database).create(
+            email, hash_password(TEST_PASSWORD), role_id=role["_id"]
+        )
+
+    return make
 
 
 @pytest.fixture
@@ -99,6 +133,20 @@ async def signed_in(api, admin):
     )
     assert response.status_code == 200, response.text
     return api
+
+
+@pytest.fixture
+async def other_client(database):
+    """A second, independent HTTP client with its own cookie jar.
+
+    `signed_in` returns the *same* object as `api`, so signing in as a second
+    person on `api` silently replaces the first person's session. Any test with
+    two simultaneous sessions needs this instead.
+    """
+    app.dependency_overrides[get_db] = lambda: database
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
 
 
 @pytest.fixture

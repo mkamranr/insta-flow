@@ -169,6 +169,9 @@ docker compose exec -T mongodb mongodump --archive --db=instaflow | gzip > backu
 
 Retain 7 daily and 4 weekly copies. Restore with `mongorestore --archive --drop`.
 
+Take one before every upgrade — `make backup` then `make verify-backup` do both halves. See
+`docs/upgrading.md`, which also covers why `make reload` alone does not deploy new code.
+
 ## Production checklist
 
 Written in Phase 18. The essentials already in place: pinned image tags, healthchecks on

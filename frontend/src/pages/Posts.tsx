@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { usePermissions } from '../hooks/usePermissions'
 import { ApiError } from '../api/client'
 import { listAccounts } from '../api/instagram'
 import { STARTER_TEMPLATES, listPosts, mediaImage, syncPosts, type Post, type Rule } from '../api/rules'
@@ -10,6 +11,7 @@ import { RuleEditor } from '../components/rules/RuleEditor'
 export function Posts() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const { can } = usePermissions()
   const [editing, setEditing] = useState<{ post: Post; initial?: Partial<Rule> } | null>(null)
   const [templateFor, setTemplateFor] = useState<Post | null>(null)
 
@@ -112,6 +114,11 @@ export function Posts() {
                   post={post}
                   username={username}
                   onSetUp={() => openFor(post)}
+                onClone={
+                  can('automations.create')
+                    ? () => navigate(`/posts/${post.id}/clone`)
+                    : undefined
+                }
                 />
               ))}
               {rail.isFetchingNextPage && (

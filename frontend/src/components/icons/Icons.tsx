@@ -131,3 +131,25 @@ export const GlobeIcon = () => (
     <path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18" />
   </svg>
 )
+
+export const ShieldIcon = () => (
+  <svg {...base}>
+    <path d="M12 3l7 3v5.5c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6l7-3z" />
+  </svg>
+)
+
+/** A person on a card: an account, not a contact. */
+export const UsersIcon = () => (
+  <svg {...base}>
+    <rect x="3" y="4" width="18" height="16" rx="3" />
+    <circle cx="12" cy="10.5" r="2.4" />
+    <path d="M8 17a4 4 0 0 1 8 0" />
+  </svg>
+)
+
+export const KeyIcon = () => (
+  <svg {...base}>
+    <circle cx="8" cy="15" r="3.4" />
+    <path d="m10.6 12.6 7.4-7.4M15.6 7.6l2 2M17.8 5.4l2 2" />
+  </svg>
+)

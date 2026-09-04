@@ -10,7 +10,8 @@ import sys
 
 from app.config import get_settings
 from app.db import mongodb
-from app.db.indexes import COLLECTIONS, create_indexes
+from app.db.bootstrap import prepare
+from app.db.indexes import COLLECTIONS
 from app.logging import configure_logging
 
 
@@ -20,7 +21,7 @@ async def main() -> int:
 
     database = await mongodb.connect(settings.mongo_url, settings.mongo_database)
     try:
-        created = await create_indexes(database)
+        created = await prepare(database)
         for collection in COLLECTIONS:
             names = created.get(collection, [])
             print(f"  {collection:<20} {', '.join(names) if names else '(no extra indexes)'}")

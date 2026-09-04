@@ -15,15 +15,17 @@ from app.api import (
     instagram,
     legal,
     links,
+    roles,
     rules,
     settings_api,
     setup,
     uploads,
+    users,
     webhooks,
 )
 from app.config import get_settings
 from app.db import mongodb
-from app.db.indexes import create_indexes
+from app.db.bootstrap import prepare
 from app.errors import SocialFlowError
 from app.logging import configure_logging
 
@@ -36,7 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging(settings.log_level, service="api")
 
     database = await mongodb.connect(settings.mongo_url, settings.mongo_database)
-    await create_indexes(database)
+    await prepare(database)
     await queue.connect(settings.redis_url)
 
     missing = settings.missing_required()
@@ -100,6 +102,9 @@ app.include_router(legal.router)
 app.include_router(uploads.router)
 app.include_router(uploads.public_router)
 app.include_router(settings_api.router)
+app.include_router(roles.router)
+app.include_router(roles.catalogue_router)
+app.include_router(users.router)
 
 
 @app.get("/health", tags=["health"])

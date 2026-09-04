@@ -8,11 +8,11 @@ token field at all.
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app import queue
-from app.api.deps import AccountsRepo, AuditRepo, CurrentUser, SettingsDep
+from app.api.deps import AccountsRepo, AuditRepo, CurrentUser, SettingsDep, require
 from app.db.repositories import to_object_id, utcnow
 from app.errors import MetaAPIError, NotFoundError, ValidationError
 from app.models.instagram import InstagramAccountPublic
@@ -60,7 +60,7 @@ def _access_token(account: dict[str, Any], settings: Any) -> str:
 # --- OAuth ------------------------------------------------------------------
 
 
-@auth_router.get("/start")
+@auth_router.get("/start", dependencies=[Depends(require("instagram.manage"))])
 async def start(user: CurrentUser, settings: SettingsDep) -> dict[str, str]:
     """Return the Meta consent URL plus a single-use state.
 
@@ -251,19 +251,31 @@ async def data_deletion_info(settings: SettingsDep) -> HTMLResponse:
 # --- account management -----------------------------------------------------
 
 
-@router.get("/accounts", response_model=list[InstagramAccountPublic])
+@router.get(
+    "/accounts",
+    response_model=list[InstagramAccountPublic],
+    dependencies=[Depends(require("instagram.view"))],
+)
 async def list_accounts(user: CurrentUser, accounts: AccountsRepo) -> list[InstagramAccountPublic]:
     return [_public(a) for a in await accounts.list({"user_id": user["_id"]})]
 
 
-@router.get("/{account_id}", response_model=InstagramAccountPublic)
+@router.get(
+    "/{account_id}",
+    response_model=InstagramAccountPublic,
+    dependencies=[Depends(require("instagram.view"))],
+)
 async def get_account(
     account_id: str, user: CurrentUser, accounts: AccountsRepo
 ) -> InstagramAccountPublic:
     return _public(await _load(accounts, account_id, user))
 
 
-@router.post("/{account_id}/subscribe", response_model=InstagramAccountPublic)
+@router.post(
+    "/{account_id}/subscribe",
+    response_model=InstagramAccountPublic,
+    dependencies=[Depends(require("instagram.manage"))],
+)
 async def subscribe(
     account_id: str,
     user: CurrentUser,
@@ -310,7 +322,7 @@ async def subscribe(
     return _public(updated or account)
 
 
-@router.get("/{account_id}/subscription")
+@router.get("/{account_id}/subscription", dependencies=[Depends(require("instagram.view"))])
 async def subscription_status(
     account_id: str, user: CurrentUser, settings: SettingsDep, accounts: AccountsRepo
 ) -> dict[str, Any]:
@@ -334,7 +346,11 @@ async def subscription_status(
     return {"subscribed": "comments" in fields, "fields": fields}
 
 
-@router.post("/{account_id}/refresh", response_model=InstagramAccountPublic)
+@router.post(
+    "/{account_id}/refresh",
+    response_model=InstagramAccountPublic,
+    dependencies=[Depends(require("instagram.manage"))],
+)
 async def refresh_token(
     account_id: str,
     user: CurrentUser,
@@ -369,7 +385,7 @@ async def refresh_token(
     return _public(updated or account)
 
 
-@router.get("/{account_id}/token-status")
+@router.get("/{account_id}/token-status", dependencies=[Depends(require("instagram.view"))])
 async def token_status(
     account_id: str, user: CurrentUser, accounts: AccountsRepo
 ) -> dict[str, Any]:
@@ -381,7 +397,11 @@ async def token_status(
     }
 
 
-@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{account_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require("instagram.manage"))],
+)
 async def disconnect(
     account_id: str, user: CurrentUser, accounts: AccountsRepo, audit: AuditRepo
 ) -> None:

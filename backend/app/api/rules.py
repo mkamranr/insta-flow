@@ -7,7 +7,7 @@ message. One row, one screen, nothing to keep in sync.
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pymongo.errors import DuplicateKeyError
 
 from app.api.deps import (
@@ -19,6 +19,7 @@ from app.api.deps import (
     SettingsDep,
     StoriesRepo,
     UpcomingRepo,
+    require,
 )
 from app.api.uploads import upload_root
 from app.db.repositories import serialise, serialise_required, to_object_id, utcnow
@@ -26,6 +27,7 @@ from app.errors import MetaAPIError, NotFoundError, ValidationError
 from app.models.rules import (
     MessagePreviewRequest,
     PostPublic,
+    RuleCloneRequest,
     RuleCreate,
     RuleUpdate,
     StoryPublic,
@@ -63,11 +65,80 @@ async def _only_account(accounts: Any, user: dict[str, Any]) -> dict[str, Any]:
     return found[0]
 
 
+async def _load_rule(rules: Any, rule_id: str, account: dict[str, Any]) -> dict[str, Any]:
+    """Load a rule belonging to this account.
+
+    A rule that does not exist and a rule belonging to someone else both raise
+    NotFoundError, so the response cannot be used to discover which ids exist --
+    the same rule `instagram.py::_load` follows for accounts.
+    """
+    rule = await rules.get(_object_id(rule_id, "rule_id"))
+    if rule is None or rule.get("instagram_account_id") != account["_id"]:
+        raise NotFoundError("Rule not found.")
+    return rule
+
+
+async def _drop_attachment_if_unused(
+    rules: Any, settings: Any, storage_key: str | None, rule_id: Any
+) -> None:
+    """Delete a stored attachment only when no other rule still points at it.
+
+    `attachments.delete` removes the whole upload folder, so an unconditional
+    delete would take the file out from under any rule sharing the key -- which
+    the Duplicate button on the Automations page has been creating all along, by
+    copying `attachment` verbatim. The survivor's URL would then 404, and
+    `send_attachment_if_any` only logs a warning, so the recipient gets the text
+    and silently no file.
+    """
+    if not storage_key:
+        return
+    if await rules.count_referencing_attachment(storage_key, rule_id):
+        logger.info("attachment_kept_still_referenced", extra={"storage_key": storage_key})
+        return
+    delete_attachment(upload_root(settings), storage_key)
+
+
+async def _validate_and_insert(
+    payload: RuleCreate, account: dict[str, Any], media: Any, rules: Any, stories: Any
+) -> Any:
+    """Validate a rule and write it. Shared by `create_rule` and `clone_rule`.
+
+    Extracted so the clone path cannot drift from the create path: a check that
+    lives in only one of them is a check the other silently skips.
+    """
+    # Validate the message now, so a broken one can never reach the worker where
+    # it would only surface when a real comment arrived.
+    validate(payload.message)
+    if payload.opening_dm.enabled and payload.opening_dm.message.strip():
+        validate(payload.opening_dm.message)
+
+    # Only a comment rule targets posts. A story reply or an inbound DM is not
+    # attached to one, so requiring a post would make those rules impossible.
+    if payload.trigger == "comment" and payload.scope == "specific":
+        if not payload.instagram_media_ids:
+            raise ValidationError("Select at least one post, or set the rule to every post.")
+        for media_id in payload.instagram_media_ids:
+            if await media.get_by_instagram_media_id(account["_id"], media_id) is None:
+                raise ValidationError(f"Post {media_id} is not synced. Sync posts and retry.")
+
+    if not payload.any_word and not payload.keywords:
+        raise ValidationError("Add at least one keyword, or switch on 'any word'.")
+
+    await _check_story_targets(payload.trigger, payload.instagram_story_ids, account, stories)
+    _refuse_unsupported_features(payload.trigger, payload.model_dump())
+
+    # A fresh dict every call, deliberately. `BaseRepository.insert` mutates what
+    # it is given and pymongo writes `_id` back into it, so a dict reused across
+    # a clone loop would carry the first insert's `_id` into every later one.
+    document = payload.model_dump()
+    document["instagram_account_id"] = account["_id"]
+    return await rules.insert(document)
+
 
 # --- upcoming post ----------------------------------------------------------
 
 
-@upcoming_router.get("")
+@upcoming_router.get("", dependencies=[Depends(require("automations.view"))])
 async def get_upcoming(
     user: CurrentUser, accounts: AccountsRepo, upcoming: UpcomingRepo
 ) -> dict[str, Any]:
@@ -80,7 +151,9 @@ async def get_upcoming(
     }
 
 
-@upcoming_router.post("", status_code=status.HTTP_201_CREATED)
+@upcoming_router.post(
+    "", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require("automations.create"))]
+)
 async def create_upcoming(
     payload: RuleCreate,
     request: Request,
@@ -137,7 +210,11 @@ async def create_upcoming(
     return {"id": str(upcoming_id)}
 
 
-@upcoming_router.delete("/{upcoming_id}", status_code=status.HTTP_204_NO_CONTENT)
+@upcoming_router.delete(
+    "/{upcoming_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require("automations.delete"))],
+)
 async def delete_upcoming(
     upcoming_id: str,
     request: Request,
@@ -163,7 +240,9 @@ async def delete_upcoming(
 # --- stories ----------------------------------------------------------------
 
 
-@stories_router.get("", response_model=list[StoryPublic])
+@stories_router.get(
+    "", response_model=list[StoryPublic], dependencies=[Depends(require("content.view"))]
+)
 async def list_stories(
     user: CurrentUser, accounts: AccountsRepo, stories: StoriesRepo, rules: RulesRepo
 ) -> list[StoryPublic]:
@@ -180,7 +259,7 @@ async def list_stories(
     ]
 
 
-@stories_router.post("/sync")
+@stories_router.post("/sync", dependencies=[Depends(require("content.edit"))])
 async def sync_stories_now(
     request: Request,
     user: CurrentUser,
@@ -239,7 +318,9 @@ async def sync_stories_now(
 # --- posts ------------------------------------------------------------------
 
 
-@posts_router.get("", response_model=list[PostPublic])
+@posts_router.get(
+    "", response_model=list[PostPublic], dependencies=[Depends(require("content.view"))]
+)
 async def list_posts(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -268,7 +349,7 @@ async def list_posts(
     ]
 
 
-@posts_router.post("/sync")
+@posts_router.post("/sync", dependencies=[Depends(require("content.edit"))])
 async def sync_posts(
     request: Request,
     user: CurrentUser,
@@ -394,7 +475,7 @@ def _refuse_unsupported_features(trigger: str, values: dict[str, Any]) -> None:
         )
 
 
-@router.get("/intents")
+@router.get("/intents", dependencies=[Depends(require("automations.view"))])
 async def list_intents(user: CurrentUser, settings: SettingsDep) -> dict[str, Any]:
     """Intents the classifier may return, for the rule editor."""
     from app.services.ai.classifier import INTENTS
@@ -406,12 +487,12 @@ async def list_intents(user: CurrentUser, settings: SettingsDep) -> dict[str, An
     }
 
 
-@router.get("/variables")
+@router.get("/variables", dependencies=[Depends(require("automations.view"))])
 async def list_variables(user: CurrentUser) -> dict[str, list[str]]:
     return {"variables": sorted(ALLOWED_VARIABLES)}
 
 
-@router.post("/preview")
+@router.post("/preview", dependencies=[Depends(require("automations.view"))])
 async def preview(payload: MessagePreviewRequest, user: CurrentUser) -> dict[str, str]:
     """Render against sample values so the editor shows the real message."""
     context = payload.model_dump(exclude={"message"})
@@ -420,7 +501,7 @@ async def preview(payload: MessagePreviewRequest, user: CurrentUser) -> dict[str
     return {"rendered": render(payload.message, context)}
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require("automations.view"))])
 async def list_rules(
     user: CurrentUser,
     accounts: AccountsRepo,
@@ -435,7 +516,9 @@ async def list_rules(
     return [serialise_required(r) for r in found]
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require("automations.create"))]
+)
 async def create_rule(
     payload: RuleCreate,
     request: Request,
@@ -447,31 +530,7 @@ async def create_rule(
     audit: AuditRepo,
 ) -> dict[str, Any]:
     account = await _only_account(accounts, user)
-
-    # Validate the message now, so a broken one can never reach the worker where
-    # it would only surface when a real comment arrived.
-    validate(payload.message)
-    if payload.opening_dm.enabled and payload.opening_dm.message.strip():
-        validate(payload.opening_dm.message)
-
-    # Only a comment rule targets posts. A story reply or an inbound DM is not
-    # attached to one, so requiring a post would make those rules impossible.
-    if payload.trigger == "comment" and payload.scope == "specific":
-        if not payload.instagram_media_ids:
-            raise ValidationError("Select at least one post, or set the rule to every post.")
-        for media_id in payload.instagram_media_ids:
-            if await media.get_by_instagram_media_id(account["_id"], media_id) is None:
-                raise ValidationError(f"Post {media_id} is not synced. Sync posts and retry.")
-
-    if not payload.any_word and not payload.keywords:
-        raise ValidationError("Add at least one keyword, or switch on 'any word'.")
-
-    await _check_story_targets(payload.trigger, payload.instagram_story_ids, account, stories)
-    _refuse_unsupported_features(payload.trigger, payload.model_dump())
-
-    document = payload.model_dump()
-    document["instagram_account_id"] = account["_id"]
-    rule_id = await rules.insert(document)
+    rule_id = await _validate_and_insert(payload, account, media, rules, stories)
 
     await audit.record(
         user_id=user["_id"],
@@ -485,15 +544,97 @@ async def create_rule(
     return serialise_required(await rules.get(rule_id))
 
 
-@router.get("/{rule_id}")
-async def get_rule(rule_id: str, user: CurrentUser, rules: RulesRepo) -> dict[str, Any]:
-    rule = await rules.get(_object_id(rule_id, "rule_id"))
-    if rule is None:
-        raise NotFoundError("Rule not found.")
-    return serialise_required(rule)
+@router.post(
+    "/{rule_id}/clone",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require("automations.create"))],
+)
+async def clone_rule(
+    rule_id: str,
+    payload: RuleCloneRequest,
+    request: Request,
+    user: CurrentUser,
+    accounts: AccountsRepo,
+    media: MediaRepo,
+    rules: RulesRepo,
+    stories: StoriesRepo,
+    audit: AuditRepo,
+) -> dict[str, Any]:
+    """Copy an automation onto other posts, one independent rule per post.
+
+    An independent copy rather than adding posts to the source rule's target
+    list: each clone then carries its own stats, its own send limits and its own
+    "once per person" ledger, and can be edited without touching the others.
+
+    The source is left exactly as it was.
+    """
+    account = await _only_account(accounts, user)
+    source = await _load_rule(rules, rule_id, account)
+
+    trigger = str(source.get("trigger") or "comment")
+    if trigger != "comment":
+        # `list_for_media` filters on trigger, so a cloned story-reply or
+        # DM-keyword rule's media ids would never be read by anything.
+        raise ValidationError(
+            "Only comment automations are attached to a post, so only those can be cloned."
+        )
+    if source.get("scope") == "any":
+        # Cloning would produce redundant rules that shadow the original: equal
+        # priority, and `select_rule` breaks the tie on the newer _id.
+        raise ValidationError(
+            "This automation already runs on every post — there is nothing to clone it to."
+        )
+
+    # The source document carries fields the model does not (`_id`, timestamps,
+    # `created_from_upcoming`, `disabled_reason`). Building the payload through
+    # RuleCreate drops them, so a clone cannot inherit provenance that is not its.
+    template = RuleCreate(**{k: v for k, v in source.items() if k in RuleCreate.model_fields})
+
+    created: list[str] = []
+    skipped: list[dict[str, str]] = []
+
+    for media_id in dict.fromkeys(payload.instagram_media_ids):
+        if media_id in (source.get("instagram_media_ids") or []):
+            skipped.append({"instagram_media_id": media_id, "reason": "This is the source post."})
+            continue
+        if await rules.count_for_media(account["_id"], media_id):
+            skipped.append(
+                {"instagram_media_id": media_id, "reason": "That post already has an automation."}
+            )
+            continue
+
+        # model_copy inside the loop: `_validate_and_insert` dumps a fresh dict
+        # each call, which is what keeps pymongo from reusing the previous _id.
+        clone = template.model_copy(update={"scope": "specific", "instagram_media_ids": [media_id]})
+        created.append(str(await _validate_and_insert(clone, account, media, rules, stories)))
+
+    if created:
+        # A distinct action, so a bulk clone is one identifiable event in the
+        # audit log rather than N indistinguishable hand-made rules.
+        await audit.record(
+            user_id=user["_id"],
+            action="rule.cloned",
+            entity_type="rule",
+            entity_id=source["_id"],
+            changes={"created": ",".join(created), "targets": str(len(created))},
+            ip_address=request.client.host if request.client else None,
+        )
+    logger.info(
+        "rule_cloned",
+        extra={"source_rule_id": rule_id, "created": len(created), "skipped": len(skipped)},
+    )
+    return {"created": created, "skipped": skipped}
 
 
-@router.patch("/{rule_id}")
+@router.get("/{rule_id}", dependencies=[Depends(require("automations.view"))])
+async def get_rule(
+    rule_id: str, user: CurrentUser, accounts: AccountsRepo, rules: RulesRepo
+) -> dict[str, Any]:
+    account = await _only_account(accounts, user)
+    return serialise_required(await _load_rule(rules, rule_id, account))
+
+
+@router.patch("/{rule_id}", dependencies=[Depends(require("automations.edit"))])
 async def update_rule(
     rule_id: str,
     payload: RuleUpdate,
@@ -505,9 +646,8 @@ async def update_rule(
     audit: AuditRepo,
     settings: SettingsDep,
 ) -> dict[str, Any]:
-    existing = await rules.get(_object_id(rule_id, "rule_id"))
-    if existing is None:
-        raise NotFoundError("Rule not found.")
+    account = await _only_account(accounts, user)
+    existing = await _load_rule(rules, rule_id, account)
 
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
@@ -519,7 +659,7 @@ async def update_rule(
         old_key = ((existing.get("attachment") or {}) or {}).get("storage_key")
         new_key = (changes.get("attachment") or {}).get("storage_key")
         if old_key and old_key != new_key:
-            delete_attachment(upload_root(settings), old_key)
+            await _drop_attachment_if_unused(rules, settings, old_key, existing["_id"])
     if "message" in changes:
         validate(changes["message"])
     if changes.get("keywords") == [] and not changes.get("any_word"):
@@ -533,7 +673,7 @@ async def update_rule(
         await _check_story_targets(
             str(merged.get("trigger") or "comment"),
             changes["instagram_story_ids"] or [],
-            await _only_account(accounts, user),
+            account,
             stories,
         )
 
@@ -549,22 +689,28 @@ async def update_rule(
     return serialise_required(updated)
 
 
-@router.delete("/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require("automations.delete"))],
+)
 async def delete_rule(
     rule_id: str,
     request: Request,
     user: CurrentUser,
+    accounts: AccountsRepo,
     rules: RulesRepo,
     audit: AuditRepo,
     settings: SettingsDep,
 ) -> None:
-    doomed = await rules.get(_object_id(rule_id, "rule_id"))
-    if not await rules.delete(_object_id(rule_id, "rule_id")):
-        raise NotFoundError("Rule not found.")
-    if doomed:
-        delete_attachment(
-            upload_root(settings), ((doomed.get("attachment") or {}) or {}).get("storage_key")
-        )
+    account = await _only_account(accounts, user)
+    # Loaded before the delete because the attachment path is only knowable from
+    # the document, and `_load_rule` is what refuses another account's rule.
+    doomed = await _load_rule(rules, rule_id, account)
+    await rules.delete(_object_id(rule_id, "rule_id"))
+    await _drop_attachment_if_unused(
+        rules, settings, ((doomed.get("attachment") or {}) or {}).get("storage_key"), doomed["_id"]
+    )
     await audit.record(
         user_id=user["_id"],
         action="rule.deleted",
