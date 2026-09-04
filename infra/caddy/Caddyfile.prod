@@ -1,0 +1,107 @@
+# Production: Caddy is the edge. It terminates TLS itself with a certificate it
+# obtains from Let's Encrypt, so this file DOES carry a public hostname --
+# the opposite of the local Caddyfile, which sits behind Tailscale Funnel.
+#
+# {$SITE_DOMAIN} comes from the environment (see docker-compose.prod.yml), so
+# the domain lives in .env rather than being edited into this file.
+#
+# Ports 80 AND 443 must both be open: 80 serves the ACME HTTP-01 challenge and
+# is then redirected to HTTPS automatically.
+{
+	servers {
+		# Caddy v2 does NOT trust an inbound X-Forwarded-For unless the sender
+		# is declared trusted -- it replaces it with the immediate peer. Behind
+		# Tailscale Funnel that peer is the Docker gateway, so the visitor's
+		# real address was being discarded and every click recorded as
+		# unlocatable. Verified live: Caddy received 94.59.71.70 and the app
+		# saw a private chain.
+		#
+		# Here Caddy is reached DIRECTLY by the public, so this cuts the other
+		# way and is still correct: a real visitor's address is not in a private
+		# range, so Caddy refuses their X-Forwarded-For and substitutes the
+		# address it actually saw. Only something already inside the Docker
+		# network could spoof one, and nothing but Caddy is published.
+		trusted_proxies static private_ranges
+	}
+}
+
+{$SITE_DOMAIN} {
+	encode gzip
+
+	# Access logging, on deliberately. Without it a silent webhook is
+	# undiagnosable: "Meta never sent it" and "we dropped it at the edge" look
+	# identical, and only this log separates them. Diagnosing a missing story
+	# reply once cost an hour for exactly that reason.
+	log {
+		output stdout
+		# The webhook verification handshake carries the verify token in the
+		# QUERY STRING, so logging raw URIs writes a secret to the container
+		# log. Redacted here rather than by turning logging off, because
+		# without it "Meta never sent the request" and "we dropped it" are
+		# indistinguishable.
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace hub.verify_token REDACTED
+					replace hub_verify_token REDACTED
+				}
+			}
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle /webhooks/* {
+		reverse_proxy api:8000
+	}
+
+	handle /health {
+		reverse_proxy api:8000
+	}
+
+	# Public pages Meta requires to publish the app.
+	handle /privacy {
+		reverse_proxy api:8000
+	}
+
+	handle /data-deletion {
+		reverse_proxy api:8000
+	}
+
+	# Trackable link redirects.
+	handle /r/* {
+		reverse_proxy api:8000
+	}
+
+	# Uploaded attachments. Public and unauthenticated by necessity: Meta
+	# fetches these itself when sending a DM and carries none of our
+	# credentials (docs/meta-api.md §4c). Without this route they fall through
+	# to the SPA, and Meta silently receives an HTML page instead of the file.
+	handle /files/* {
+		reverse_proxy api:8000
+	}
+
+	handle /ready {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		# The dashboard loads no third-party code. img-src allows https so
+		# Instagram post thumbnails render; they are served from Meta's CDN.
+		Content-Security-Policy "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		# Caddy does not send HSTS on its own even when it manages the
+		# certificate, so this stays. Safe now that 80 redirects to 443.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}

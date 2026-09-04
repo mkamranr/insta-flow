@@ -49,6 +49,13 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.workers.worker"]
     env_file: [.env]
+    volumes:
+      # The same uploads directory the API mounts. `refresh_geoip_database` runs
+      # HERE, on the Wed/Sat cron, and writes to /app/uploads/.geoip -- without
+      # this mount it wrote into the worker's own layer, where the API could
+      # never read it and a restart discarded it. Attachments are read here too
+      # when a rule sends a file.
+      - ./uploads:/app/uploads
     depends_on:
       mongodb:
         condition: service_healthy

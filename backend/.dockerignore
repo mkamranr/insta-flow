@@ -1,0 +1,20 @@
+# Tool caches. .mypy_cache alone is ~46MB and would ship in every image.
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.py[cod]
+.coverage
+htmlcov
+
+# Tests are run against a bind mount (`make test`), never from the image.
+tests
+
+# Runtime data, not source. The real uploads directory is mounted at /app/uploads
+# from the host; a copy baked into the image would shadow it on some platforms.
+uploads
+
+.venv
+venv
+.env
+.env.*
