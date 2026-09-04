@@ -1,4 +1,4 @@
-.PHONY: help up down reload logs build test lint format shell-api shell-worker backup restore \
+.PHONY: help up down reload logs build test lint format shell-api shell-worker backup restore db-preflight verify-backup \
         bootstrap-admin indexes funnel funnel-preflight funnel-off tunnel-status secrets
 
 COMPOSE := docker compose
@@ -23,6 +23,12 @@ logs: ## Follow logs from all services
 build: ## Rebuild all images
 	$(COMPOSE) build
 
+# Mount the source so the edit/test loop does not need an image rebuild. The
+# image deliberately excludes tests/ (see backend/.dockerignore), so without
+# this the test target runs a stale copy baked at build time -- or, once the
+# image is rebuilt, finds no tests at all.
+DEV_MOUNT := -v $(CURDIR)/backend:/app
+
 test: ## Run the backend test suite
 	$(COMPOSE) run --rm $(DEV_MOUNT) api pytest -q
 
@@ -44,7 +50,33 @@ bootstrap-admin: ## Create the initial admin user
 indexes: ## Create/verify all MongoDB indexes
 	$(COMPOSE) run --rm api python scripts/create_indexes.py
 
-backup: ## Dump MongoDB and uploads to ./backups/ (run before moving servers)
+db-preflight: ## Verify MongoDB is actually up, not merely started
+	@# `docker compose up -d` returns as soon as the container is created. It
+	@# says nothing about whether the process inside survived, so a crash-looping
+	@# mongod looks like success until something tries to use it.
+	@if ! $(COMPOSE) ps --status running --services 2>/dev/null | grep -qx mongodb; then \
+		echo "MongoDB is not running."; \
+		echo; \
+		$(COMPOSE) ps -a --format '  {{.Service}}  {{.Status}}' 2>/dev/null | grep mongodb || true; \
+		echo; \
+		echo "If it says 'Restarting', mongod is crash-looping. The reason is in:"; \
+		echo "  docker compose logs mongodb --tail 40"; \
+		echo; \
+		echo "Most common causes on a new server:"; \
+		echo "  'Illegal instruction' / signal=ILL  -> CPU has no AVX; MongoDB 5.0+ requires it"; \
+		echo "  exit code 137 / OOMKilled           -> not enough memory"; \
+		echo "  WiredTiger / unclean shutdown       -> data volume from a different MongoDB"; \
+		echo; \
+		echo "See docs/server-migration.md, Troubleshooting."; \
+		exit 1; \
+	fi
+	@if ! $(COMPOSE) exec -T mongodb mongosh --quiet --eval 'db.adminCommand("ping").ok' >/dev/null 2>&1; then \
+		echo "MongoDB is running but not answering. It may still be starting up."; \
+		echo "  docker compose logs mongodb --tail 40"; \
+		exit 1; \
+	fi
+
+backup: db-preflight ## Dump MongoDB and uploads to ./backups/ (run before moving servers)
 	@mkdir -p backups
 	@stamp=$$(date +%F-%H%M); \
 	$(COMPOSE) exec -T mongodb mongodump --archive --db=$${MONGO_DATABASE:-instaflow} \
@@ -57,8 +89,9 @@ backup: ## Dump MongoDB and uploads to ./backups/ (run before moving servers)
 	echo "A dump you have never restored is not a backup. Verify it:"; \
 	echo "  make verify-backup ARCHIVE=backups/mongo-$$stamp.archive"
 
-verify-backup: ## Restore ARCHIVE into a scratch database and count it, without touching live data
+verify-backup: db-preflight ## Restore ARCHIVE into a scratch database and count it, without touching live data
 	@test -n "$(ARCHIVE)" || { echo "Usage: make verify-backup ARCHIVE=backups/mongo-....archive"; exit 1; }
+	@test -s "$(ARCHIVE)" || { echo "$(ARCHIVE) does not exist, or is empty."; exit 1; }
 	@echo "Restoring into a scratch database. Live data is not touched."
 	@$(COMPOSE) exec -T mongodb mongorestore --archive --drop --nsFrom='instaflow.*' --nsTo='backupcheck.*' < $(ARCHIVE) 2>&1 | tail -1
 	@$(COMPOSE) exec -T mongodb mongosh backupcheck --quiet --eval 'print("");["users","rules","instagram_accounts","media","executions","comments"].forEach(c=>print("  "+c.padEnd(22)+db.getCollection(c).countDocuments({})))'
@@ -66,9 +99,14 @@ verify-backup: ## Restore ARCHIVE into a scratch database and count it, without 
 	@echo ""
 	@echo "  scratch database dropped; live data untouched"
 
-restore: ## Restore ARCHIVE into the live database (DESTRUCTIVE — drops matching collections)
+restore: db-preflight ## Restore ARCHIVE into the live database (DESTRUCTIVE — drops matching collections)
+	@# Every check runs BEFORE the confirmation prompt. Asking someone to
+	@# authorise a destructive action and only then discovering it cannot be
+	@# performed teaches them to type past the prompt.
 	@test -n "$(ARCHIVE)" || { echo "Usage: make restore ARCHIVE=backups/mongo-....archive"; exit 1; }
-	@echo "This DROPS the current $${MONGO_DATABASE:-instaflow} collections and replaces them."
+	@test -s "$(ARCHIVE)" || { echo "$(ARCHIVE) does not exist, or is empty."; exit 1; }
+	@echo "This DROPS the current $${MONGO_DATABASE:-instaflow} collections and replaces them"
+	@echo "with $(ARCHIVE) ($$(du -h $(ARCHIVE) | cut -f1))."
 	@printf "Type the database name to confirm: "; read ans; \
 	test "$$ans" = "$${MONGO_DATABASE:-instaflow}" || { echo "Aborted."; exit 1; }
 	$(COMPOSE) exec -T mongodb mongorestore --archive --drop < $(ARCHIVE)

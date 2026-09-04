@@ -151,6 +151,11 @@ docker compose ps          # all six healthy
 curl localhost:8090/health # {"status":"ok","service":"social-flow"}
 ```
 
+**Check `docker compose ps` before moving on.** `up -d` returns as soon as containers are
+created and tells you nothing about whether the processes inside survived — a crash-looping
+MongoDB looks exactly like success here. Look for `healthy`, not just `Up`. If anything says
+`Restarting`, stop and read [Troubleshooting](#troubleshooting).
+
 Indexes need no step — they are created automatically on API and worker startup.
 
 ## Step 7 — Start the funnel and learn the new URL
@@ -236,6 +241,104 @@ docker compose logs -f api worker | grep -E "webhook_received|message_reply_sent
 ```
 
 ---
+
+---
+
+## Troubleshooting
+
+### "Container is restarting, wait until the container is running"
+
+You ran `make restore` (or `make backup`) and got this from Docker. **The problem is not the
+restore — MongoDB never started.**
+
+`docker compose up -d mongodb` returns as soon as the container is *created*. It says nothing
+about whether the process inside survived, so a crash-looping `mongod` looks like success right
+up until something tries to use it.
+
+Find the actual reason:
+
+```bash
+docker compose logs mongodb --tail 40
+docker inspect --format '{{.State.ExitCode}} {{.State.OOMKilled}}' $(docker compose ps -q mongodb)
+```
+
+Three causes cover almost all of these:
+
+| The log says | Cause | Fix |
+| --- | --- | --- |
+| `Illegal instruction`, `signal=ILL`, or a warning about AVX | **The CPU has no AVX.** MongoDB 5.0 and later require it and will not start without it. Common on older VPS hardware and some virtualised CPUs | Pin an older MongoDB — see below |
+| Exit code `137`, `OOMKilled: true` | Out of memory. MongoDB wants ~1 GB to itself | Add RAM, or add a swap file |
+| `WiredTiger` errors, "unclean shutdown", a version complaint | The data volume was written by a different MongoDB version | `docker compose down -v` to discard it — **only** if nothing on that server matters yet |
+
+Check AVX directly:
+
+```bash
+grep -o -m1 avx /proc/cpuinfo || echo "NO AVX — mongo:8.0 cannot run on this machine"
+```
+
+### If the server has no AVX
+
+MongoDB 4.4 does not require AVX and supports everything this app uses, including the four
+partial unique indexes that provide duplicate-send protection. Nothing in the code needs 8.0.
+
+Create `docker-compose.override.yml` **on the server only** — Compose merges it automatically,
+and it is untracked, so the laptop stays on 8.0:
+
+```yaml
+services:
+  mongodb:
+    image: mongo:4.4
+```
+
+Then start clean, because a volume written by 8.0 cannot be read by 4.4:
+
+```bash
+docker compose down -v
+docker compose up -d mongodb
+make restore ARCHIVE=backups/mongo-<stamp>.archive
+```
+
+The dump restores fine across versions; it is the on-disk volume format that does not.
+
+### `docker compose up -d` worked but the app is broken
+
+Compose starting a container is not the same as the program inside staying alive. Always
+follow it with:
+
+```bash
+docker compose ps          # look for "healthy", not just "Up"
+```
+
+`make backup`, `make verify-backup` and `make restore` all check this first and refuse with an
+explanation rather than letting Docker's raw error surface.
+
+### Instagram shows as disconnected after the restore
+
+`ENCRYPTION_KEY` did not survive the move. Meta tokens are AES-256-GCM encrypted at rest with
+that key, so a different one makes every stored token unreadable. Copy the original value from
+the laptop's `.env` and `make reload`. If the key is genuinely lost, reconnect the account
+through the dashboard.
+
+### Everything looks healthy but no automation ever fires
+
+Almost always the funnel hostname. Check, in this order:
+
+```bash
+make tunnel-status                     # is the funnel even up, and what is the hostname?
+grep PUBLIC_BASE_URL .env              # does it match?
+docker compose logs api --since 1h | grep webhook_received
+```
+
+If `PUBLIC_BASE_URL` is right but nothing arrives, the **Meta dashboard** still points at the
+old machine. Update the webhook callback URL and re-verify it. Watch the handshake land:
+
+```bash
+docker compose logs -f caddy | grep webhooks
+```
+
+And confirm the endpoint is reachable **from outside the tailnet** — a phone on mobile data.
+A `curl` on the server itself can resolve the `.ts.net` name locally and never leave the box,
+so it proves nothing.
 
 ## Notes for a Linux server
 
