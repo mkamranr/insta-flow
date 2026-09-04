@@ -19,6 +19,11 @@ _SECRET_PATTERNS = [
     re.compile(r"(access_token=)[^&\s\"']+", re.I),
     re.compile(r"(client_secret=)[^&\s\"']+", re.I),
     re.compile(r"(\bcode=)[^&\s\"']+", re.I),
+    # The webhook verification handshake carries the verify token in the query
+    # string, and Meta sends it under BOTH spellings in the same request --
+    # `hub.verify_token` and `hub_verify_token`. Redacting only the documented
+    # dotted form leaves the value in the log twice over.
+    re.compile(r"(hub[._]verify_token=)[^&\s\"']+", re.I),
     re.compile(
         r"(\"(?:access_token|password|token|secret|encryption_key|"
         r"session_secret|client_secret)\"\s*:\s*\")[^\"]*",

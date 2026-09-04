@@ -397,6 +397,25 @@ thread-control transfers between apps (`pass_thread_control`, `take_thread_contr
 `request_thread_control`); `messaging_optins` carries opt-in events. Neither carries story
 replies — the `messages` field does.
 
+**The verification handshake sends the token twice.** Meta's `GET` carries *both* spellings
+in the same request:
+
+```
+?hub.mode=subscribe&hub.verify_token=<TOKEN>&hub_mode=subscribe&hub_verify_token=<TOKEN>
+```
+
+Only the dotted form is documented. Anything that redacts secrets from logs has to cover the
+underscored one too, or the value survives in the log regardless — observed live 2026-09-04.
+
+**A Tailscale Funnel can serve traffic while Meta cannot validate it.** With the funnel up and
+answering external requests correctly (a wrong-token `GET` from outside the tailnet returned
+`403`), Meta's own validation still failed and no request reached the server at all. Stopping
+the funnel and restarting it — same hostname, same callback URL, nothing else changed — fixed
+it immediately. Webhook delivery had been dead for roughly 70 minutes.
+
+Test the funnel from **outside the tailnet**. A `curl` on the host may resolve the `.ts.net`
+name locally and never leave the machine, so it proves nothing about public reachability.
+
 ## 5. Webhooks
 
 ### 5.1 Verification (GET)

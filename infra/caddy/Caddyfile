@@ -21,6 +21,7 @@
 			fields {
 				request>uri query {
 					replace hub.verify_token REDACTED
+					replace hub_verify_token REDACTED
 				}
 			}
 		}
