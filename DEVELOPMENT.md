@@ -112,6 +112,13 @@ with no backfill. Without that clause every existing rule would also fire on DMs
 `select_rule` and `rule_matches` were always generic over text; only the caller was
 comment-coupled.
 
+**Story replies are account-wide, but need not stay that way.** The webhook carries
+`reply_to.story.id`, and `GET /me/stories` is confirmed working under Instagram Login
+(docs/meta-api.md §4d), so a per-story picker is buildable. It is not built: stories expire
+after 24 hours, so a rule pinned to one is dead a day later, and the UI has to answer what
+happens then. `story_id` and `story_url` are captured on every execution so the narrowing can
+be added without a migration.
+
 **Story *reactions* are still not a trigger.** Meta does not document how a bare emoji tap on
 a story is delivered, and the one reaction this account has received was a reaction to a
 *message*, carried only `mid` + emoji, and had **no sender** — nobody to reply to. The

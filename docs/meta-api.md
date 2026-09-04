@@ -335,12 +335,34 @@ rather than guessed at.
 that they are interacting with automation. Social Flow appends a configurable line, on by
 default, editable in Settings.
 
-**`GET /{ig-user-id}/stories` is unconfirmed for Instagram Login.** It is documented only for
-Facebook Login (`instagram_basic` + `pages_read_engagement`). Called live with an Instagram
-Login token it returned `200 {"data": []}` with no active stories — the same shape that misled
-this project in §7. Until a story exists to test against, "works, none active" cannot be
-distinguished from "silently filtered". Not depended on: the story trigger reads
-`reply_to.story` from the webhook and needs no story listing.
+**`GET /{ig-user-id}/stories` works under Instagram Login — verified 2026-09-04.**
+Meta documents this edge only for Facebook Login (`instagram_basic` +
+`pages_read_engagement`), so it was assumed unavailable here. It is not. Called with an
+Instagram Login token against a live account it returned four active stories on both
+`me/stories` and `{ig-user-id}/stories`.
+
+The earlier `200 {"data": []}` was **genuinely "no active stories"**, not the §7 silent-filter
+trap. The two are indistinguishable without a story to test against, which is why this was
+held open rather than concluded either way.
+
+Readable fields, confirmed on live data:
+
+| Field | Notes |
+| --- | --- |
+| `id` | matches `messaging[].message.reply_to.story.id` — this is what makes per-story rules possible |
+| `media_type` | `IMAGE` / `VIDEO` |
+| `media_product_type` | always `STORY` |
+| `permalink` | present on images; **absent on videos** in this sample |
+| `timestamp` | present on images; **absent on videos** in this sample |
+| `thumbnail_url` | present on videos; absent on images (use `media_url` there) |
+| `caption` | present when the story has text |
+
+**The per-field gaps are the trap.** A picker must not assume `timestamp` or `permalink`
+exists — sorting on `timestamp` would silently drop every video story.
+
+Stories expire after 24 hours, so a rule pinned to a story id is dead a day later. Account-wide
+is the right default; per-story is an opt-in narrowing, and the UI has to say what happens when
+the story expires.
 
 ## 5. Webhooks
 
