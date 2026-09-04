@@ -100,6 +100,25 @@ async def receive(
                     "webhook_messaging_event_unhandled",
                     extra={"keys": ",".join(sorted(event.keys()))},
                 )
+    # Standby means another app holds thread control, so Meta routes messaging
+    # events here instead of `messaging` (docs/meta-api.md 4e). Logged, never
+    # acted on: an app without thread control cannot send, so replying to one
+    # would fail at Meta. Recorded because the two states are otherwise
+    # indistinguishable from our side -- a message on standby and a message
+    # never sent both look like silence.
+    for entry in payload.get("entry") or []:
+        standby = (entry or {}).get("standby") or []
+        if standby:
+            logger.warning(
+                "webhook_standby_events",
+                extra={
+                    "count": len(standby),
+                    "keys_": ",".join(
+                        sorted({k for e in standby if isinstance(e, dict) for k in e})
+                    ),
+                },
+            )
+
     comments = parse_comment_events(payload)
 
     if not comments and not postbacks and not messages:

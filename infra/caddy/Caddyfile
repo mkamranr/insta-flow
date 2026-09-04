@@ -5,6 +5,15 @@
 :8080 {
 	encode gzip
 
+	# Access logging, on deliberately. Without it a silent webhook is
+	# undiagnosable: "Meta never sent it" and "we dropped it at the edge" look
+	# identical, and only this log separates them. Diagnosing a missing story
+	# reply once cost an hour for exactly that reason.
+	log {
+		output stdout
+		format json
+	}
+
 	handle /api/* {
 		reverse_proxy api:8000
 	}

@@ -367,6 +367,36 @@ Stories expire after 24 hours, so a rule pinned to a story id is dead a day late
 is the right default; per-story is an opt-in narrowing, and the UI has to say what happens when
 the story expires.
 
+## 4e. The standby channel — verified 2026-09-04
+
+Under the **handover protocol** an app that does not hold thread control still receives
+messaging events, but at `entry[].standby[]` rather than `entry[].messaging[]`. Meta's
+reference: a standby event fires when *"a message has been sent to your page, but your
+application is not the current thread owner."*
+
+**This is invisible unless you subscribe to `standby` and read that key.** Both layers matter:
+
+- `standby` is a separate app-level webhook field. Not subscribing means Meta sends nothing.
+- Even subscribed, a parser that reads only `entry[].messaging[]` drops them silently and
+  answers `200`.
+
+So "another app has thread control" and "Meta never sent anything" look **identical** from the
+server: no request, or a request with nothing in it. Social Flow logs `webhook_standby_events`
+with the count and key names for exactly this reason.
+
+**Standby events are never acted on.** An app without thread control cannot send, so a reply
+would be rejected at Meta. Taking control (`POST /me/take_thread_control`) would seize the
+conversation from whatever holds it — including the Instagram inbox — and is not done
+implicitly.
+
+`messaging_postbacks` delivered on standby **omit the postback payload**, so a rule keyed on
+`instaflow:<rule>:<comment>` could not be resolved from one even in principle.
+
+Unrelated fields, checked so they are not tried as fixes: `messaging_handover` carries
+thread-control transfers between apps (`pass_thread_control`, `take_thread_control`,
+`request_thread_control`); `messaging_optins` carries opt-in events. Neither carries story
+replies — the `messages` field does.
+
 ## 5. Webhooks
 
 ### 5.1 Verification (GET)
