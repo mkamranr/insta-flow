@@ -1,4 +1,4 @@
-.PHONY: help up down reload logs build push test lint format shell-api shell-worker \
+.PHONY: help up down reload logs build test lint format shell-api shell-worker \
         bootstrap-admin indexes funnel funnel-preflight funnel-off tunnel-status secrets
 
 COMPOSE := docker compose
@@ -22,40 +22,6 @@ logs: ## Follow logs from all services
 
 build: ## Rebuild all images
 	$(COMPOSE) build
-
-# --- AWS ---------------------------------------------------------------------
-# One ECR repository holds both images, told apart by tag prefix. `api` is used
-# by BOTH the api and worker services -- they are the same image with a
-# different command, so there is nothing separate to push for the worker.
-# Read from .env, which is gitignored. An AWS account ID is not a credential,
-# but it identifies the account in every ARN and does not belong in a repo that
-# might one day be public.
-ECR_REGISTRY ?= $(shell grep -E '^ECR_REGISTRY=' .env 2>/dev/null | cut -d= -f2- | tr -d ' ')
-ECR_REPO     ?= $(shell grep -E '^ECR_REPO=' .env 2>/dev/null | cut -d= -f2- | tr -d ' ')
-AWS_REGION   ?= $(shell grep -E '^AWS_REGION=' .env 2>/dev/null | cut -d= -f2- | tr -d ' ')
-SHA          := $(shell git rev-parse --short HEAD)
-
-ecr-login: ## Authenticate Docker against ECR
-	@test -n "$(ECR_REGISTRY)" || { echo "Set ECR_REGISTRY, ECR_REPO and AWS_REGION in .env"; exit 1; }
-	aws ecr get-login-password --region $(AWS_REGION) \
-		| docker login --username AWS --password-stdin $(ECR_REGISTRY)
-
-push: ecr-login ## Build both images and push them to ECR
-	@test -z "$$(git status --porcelain)" || \
-		{ echo "Working tree is dirty. $(SHA) would not describe what you are pushing."; exit 1; }
-	docker build -t $(ECR_REGISTRY)/$(ECR_REPO):api-$(SHA) ./backend
-	docker build -t $(ECR_REGISTRY)/$(ECR_REPO):web-$(SHA) ./frontend
-	docker tag $(ECR_REGISTRY)/$(ECR_REPO):api-$(SHA) $(ECR_REGISTRY)/$(ECR_REPO):api
-	docker tag $(ECR_REGISTRY)/$(ECR_REPO):web-$(SHA) $(ECR_REGISTRY)/$(ECR_REPO):web
-	docker push $(ECR_REGISTRY)/$(ECR_REPO):api-$(SHA)
-	docker push $(ECR_REGISTRY)/$(ECR_REPO):web-$(SHA)
-	docker push $(ECR_REGISTRY)/$(ECR_REPO):api
-	docker push $(ECR_REGISTRY)/$(ECR_REPO):web
-	@echo
-	@echo "Pushed $(SHA). On the server:  make -f Makefile deploy   (or docker compose -f docker-compose.prod.yml pull && up -d)"
-
-# Mount the source so the edit/test loop does not need an image rebuild.
-DEV_MOUNT := -v $(CURDIR)/backend:/app
 
 test: ## Run the backend test suite
 	$(COMPOSE) run --rm $(DEV_MOUNT) api pytest -q
