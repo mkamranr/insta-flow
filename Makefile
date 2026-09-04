@@ -1,4 +1,4 @@
-.PHONY: help up down reload logs build test lint format shell-api shell-worker \
+.PHONY: help up down reload logs build test lint format shell-api shell-worker backup restore \
         bootstrap-admin indexes funnel funnel-preflight funnel-off tunnel-status secrets
 
 COMPOSE := docker compose
@@ -43,6 +43,36 @@ bootstrap-admin: ## Create the initial admin user
 
 indexes: ## Create/verify all MongoDB indexes
 	$(COMPOSE) run --rm api python scripts/create_indexes.py
+
+backup: ## Dump MongoDB and uploads to ./backups/ (run before moving servers)
+	@mkdir -p backups
+	@stamp=$$(date +%F-%H%M); \
+	$(COMPOSE) exec -T mongodb mongodump --archive --db=$${MONGO_DATABASE:-instaflow} \
+		> backups/mongo-$$stamp.archive; \
+	tar czf backups/uploads-$$stamp.tar.gz uploads; \
+	echo; \
+	echo "  backups/mongo-$$stamp.archive   $$(du -h backups/mongo-$$stamp.archive | cut -f1)"; \
+	echo "  backups/uploads-$$stamp.tar.gz  $$(du -h backups/uploads-$$stamp.tar.gz | cut -f1)"; \
+	echo; \
+	echo "A dump you have never restored is not a backup. Verify it:"; \
+	echo "  make verify-backup ARCHIVE=backups/mongo-$$stamp.archive"
+
+verify-backup: ## Restore ARCHIVE into a scratch database and count it, without touching live data
+	@test -n "$(ARCHIVE)" || { echo "Usage: make verify-backup ARCHIVE=backups/mongo-....archive"; exit 1; }
+	@echo "Restoring into a scratch database. Live data is not touched."
+	@$(COMPOSE) exec -T mongodb mongorestore --archive --drop --nsFrom='instaflow.*' --nsTo='backupcheck.*' < $(ARCHIVE) 2>&1 | tail -1
+	@$(COMPOSE) exec -T mongodb mongosh backupcheck --quiet --eval 'print("");["users","rules","instagram_accounts","media","executions","comments"].forEach(c=>print("  "+c.padEnd(22)+db.getCollection(c).countDocuments({})))'
+	@$(COMPOSE) exec -T mongodb mongosh backupcheck --quiet --eval 'db.dropDatabase()' > /dev/null
+	@echo ""
+	@echo "  scratch database dropped; live data untouched"
+
+restore: ## Restore ARCHIVE into the live database (DESTRUCTIVE — drops matching collections)
+	@test -n "$(ARCHIVE)" || { echo "Usage: make restore ARCHIVE=backups/mongo-....archive"; exit 1; }
+	@echo "This DROPS the current $${MONGO_DATABASE:-instaflow} collections and replaces them."
+	@printf "Type the database name to confirm: "; read ans; \
+	test "$$ans" = "$${MONGO_DATABASE:-instaflow}" || { echo "Aborted."; exit 1; }
+	$(COMPOSE) exec -T mongodb mongorestore --archive --drop < $(ARCHIVE)
+	@echo "Restored. Now: make reload"
 
 secrets: ## Print freshly generated values for the .env secrets
 	@echo "META_WEBHOOK_VERIFY_TOKEN=$$(openssl rand -hex 32)"

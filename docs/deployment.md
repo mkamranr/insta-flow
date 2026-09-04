@@ -2,6 +2,11 @@
 
 ## Public HTTPS endpoint
 
+> **Moving to another machine?** See [server-migration.md](server-migration.md) for the
+> step-by-step, including what the funnel is actually for and the two things that must be
+> re-pointed when the hostname changes.
+
+
 Meta requires a publicly reachable HTTPS URL for the OAuth redirect and the webhook callback.
 Three free-or-cheap options; this deployment uses **A**.
 

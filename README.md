@@ -130,6 +130,7 @@ a service for clients.
 | [`docs/meta-api.md`](docs/meta-api.md) | Verified Meta API reference and app setup, with dates |
 | [`docs/architecture.md`](docs/architecture.md) | Components, data flow, idempotency, the AI layer |
 | [`docs/deployment.md`](docs/deployment.md) | Public URL options, container runtimes, production notes |
+| [`docs/server-migration.md`](docs/server-migration.md) | Moving to another machine, and what Tailscale Funnel is for |
 | [`docs/publishing.md`](docs/publishing.md) | Getting the Meta app published and reviewed |
 | [`docs/security.md`](docs/security.md) | Threat model, controls, and an honest list of known gaps |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | Ordered by how often things actually go wrong |
