@@ -1,6 +1,7 @@
 import { CloseIcon } from '../components/icons/Icons'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { listPosts, mediaImage, STARTER_TEMPLATES, TEMPLATE_GROUPS, type Post, type Rule } from '../api/rules'
 import { Avatar } from '../components/common/Avatar'
 import { RuleEditor } from '../components/rules/RuleEditor'
@@ -20,6 +21,12 @@ export function Templates() {
   const [filter, setFilter] = useState<string>('All')
 
   const groups = TEMPLATE_GROUPS.filter((g) => filter === 'All' || g === filter)
+
+  // Only posts without an automation. A template starts a new one, and Posts
+  // already takes this line -- `rule_count > 0` sends you to Automations there
+  // rather than into the template flow. Adding a second automation to a post is
+  // a different job, done from Automations or by cloning one across posts.
+  const free = posts?.filter((post) => post.rule_count === 0) ?? []
 
   return (
     <>
@@ -82,19 +89,32 @@ export function Templates() {
         <div className="modal-backdrop" onClick={() => setChosen(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <header className="modal-head">
-              <h2>Which post?</h2>
+              <div>
+                <h2>Which post?</h2>
+                <p className="muted small">Posts that don’t have an automation yet.</p>
+              </div>
               <button className="link" onClick={() => setChosen(null)} aria-label="Close">
                 <CloseIcon />
               </button>
             </header>
             <div className="modal-body">
-              {!posts?.length && (
+              {!posts?.length ? (
                 <p className="muted">
                   No posts synced yet. Go to Posts &amp; Reels and hit Refresh first.
                 </p>
+              ) : (
+                free.length === 0 && (
+                  <div className="empty-state">
+                    <p className="empty-title">Every synced post already has an automation</p>
+                    <p className="muted small">
+                      Edit one on <Link to="/automations">Automations</Link>, or copy an existing
+                      automation onto more posts from there.
+                    </p>
+                  </div>
+                )
               )}
               <div className="template-grid">
-                {posts?.map((post) => (
+                {free.map((post) => (
                   <button
                     key={post.id}
                     className="template-card"
