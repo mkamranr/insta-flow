@@ -93,7 +93,8 @@ The Activity page shows the reason. The common ones:
 | `outside_reply_window` | Comment older than Meta's 7-day private-reply limit |
 | `not_following` | Follow gate is on and they do not follow you |
 | `rate_limited_*` | Your own per-rule safety limits, not Meta's |
-| `rule_disabled` | The automation is paused |
+| `rule_disabled` | The automation is switched off |
+| `automation_paused` | Auto DM was paused for the account; the comment is held, and the Auto DM pause page offers to send or discard it |
 
 **6. Was it a dry run?**
 

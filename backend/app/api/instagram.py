@@ -6,6 +6,7 @@ token field at all.
 """
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, status
@@ -17,15 +18,24 @@ from app.api.deps import (
     AuditRepo,
     CurrentUser,
     CurrentWorkspace,
+    ExecutionsRepo,
     PublicCredentials,
     SettingsDep,
     Workspace,
     WorkspaceCredentials,
     require,
 )
+from app.constants import PRIVATE_REPLY_WINDOW_DAYS
 from app.db.repositories import to_object_id, utcnow
 from app.errors import MetaAPIError, NotFoundError, ValidationError
-from app.models.instagram import InstagramAccountPublic
+from app.models.instagram import (
+    MAX_PAUSE_DAYS,
+    AccountPauseStatus,
+    InstagramAccountPublic,
+    PauseBacklogAction,
+    PauseRequest,
+)
+from app.services.campaigns.policy import pause_active
 from app.services.meta import auth as meta_auth
 from app.services.meta import signed_request
 from app.services.meta.client import DEFAULT_WEBHOOK_FIELDS
@@ -39,6 +49,10 @@ logger = logging.getLogger(__name__)
 auth_router = APIRouter(prefix="/api/auth/instagram", tags=["instagram"])
 router = APIRouter(prefix="/api/instagram", tags=["instagram"])
 
+# Named rather than inlined, mirroring webhooks.py: the worker and the route
+# have to agree on the string, and a typo here fails only at consumption.
+DELIVER_BACKLOG_TASK = "deliver_paused_backlog"
+
 
 def _object_id(value: str, field: str) -> Any:
     try:
@@ -48,7 +62,9 @@ def _object_id(value: str, field: str) -> Any:
 
 
 def _public(account: dict[str, Any]) -> InstagramAccountPublic:
-    return InstagramAccountPublic.from_document(account, token_expired=is_expired(account))
+    return InstagramAccountPublic.from_document(
+        account, token_expired=is_expired(account), automation_paused=pause_active(account)
+    )
 
 
 async def _load(accounts: Any, account_id: str, workspace: Workspace) -> dict[str, Any]:
@@ -512,3 +528,143 @@ async def disconnect(
         changes={"username": account.get("username")},
     )
     logger.info("instagram_disconnected", extra={"account_id": account_id})
+
+
+# --- Auto DM pause ----------------------------------------------------------
+#
+# Every route here carries a second path segment, so none of them is ambiguous
+# with `GET /{account_id}` above. A workspace-level `/api/instagram/pause` would
+# not be: FastAPI matches in registration order, so it would be swallowed and
+# 422 on `to_object_id("pause")`.
+
+
+@router.post(
+    "/{account_id}/pause",
+    response_model=InstagramAccountPublic,
+    dependencies=[Depends(require("instagram.manage"))],
+)
+async def pause_automation(
+    account_id: str,
+    payload: PauseRequest,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    audit: AuditRepo,
+) -> InstagramAccountPublic:
+    """Hold every automated send for this account until a chosen instant.
+
+    Gated on `instagram.manage` for the reason spelled out at `make_default`: it
+    already covers connecting and disconnecting, both strictly larger than
+    silencing an account for an afternoon, and a new `Module` would have to be
+    excluded from Viewer by hand for no gain.
+
+    Range-checked here rather than in the model so a refusal comes back in the
+    app's error shape rather than pydantic's.
+    """
+    account = await _load(accounts, account_id, workspace)
+    now = utcnow()
+    if payload.until <= now:
+        raise ValidationError("Choose a time in the future.")
+    if payload.until - now > timedelta(days=MAX_PAUSE_DAYS):
+        raise ValidationError(f"A pause can last at most {MAX_PAUSE_DAYS} days.")
+
+    updated = await accounts.pause_automation(account["_id"], until=payload.until, now=now)
+    await audit.record(
+        user_id=user["_id"],
+        action="instagram.paused",
+        entity_type="instagram_account",
+        entity_id=account["_id"],
+        changes={"username": account.get("username"), "until": payload.until.isoformat()},
+    )
+    logger.info("automation_paused", extra={"account_id": account_id})
+    return _public(updated or account)
+
+
+@router.delete(
+    "/{account_id}/pause",
+    response_model=InstagramAccountPublic,
+    dependencies=[Depends(require("instagram.manage"))],
+)
+async def resume_automation(
+    account_id: str,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    audit: AuditRepo,
+) -> InstagramAccountPublic:
+    """Start sending again, now.
+
+    Idempotent on an account that is not paused. Deliberately does NOT settle the
+    backlog: what to do with the comments the pause held is a separate decision,
+    and it is still owed after this call.
+    """
+    account = await _load(accounts, account_id, workspace)
+    updated = await accounts.resume_automation(account["_id"], now=utcnow())
+    await audit.record(
+        user_id=user["_id"],
+        action="instagram.resumed",
+        entity_type="instagram_account",
+        entity_id=account["_id"],
+        changes={"username": account.get("username")},
+    )
+    logger.info("automation_resumed", extra={"account_id": account_id})
+    return _public(updated or account)
+
+
+@router.get("/{account_id}/pause", dependencies=[Depends(require("instagram.view"))])
+async def pause_status(
+    account_id: str,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    executions: ExecutionsRepo,
+) -> AccountPauseStatus:
+    """The pause, and what it is holding.
+
+    `held` and `deliverable` differ because a pause may run longer than Meta's
+    7-day reply window, so part of a long backlog cannot be sent whatever the
+    operator picks.
+
+    Answers after the pause has lapsed, too -- nothing runs at expiry, so a pause
+    nobody was present for still has its comments waiting here.
+    """
+    account = await _load(accounts, account_id, workspace)
+    now = utcnow()
+    counts = await executions.pause_backlog_counts(
+        account["_id"],
+        since=account.get("automation_backlog_since"),
+        replayable_since=now - timedelta(days=PRIVATE_REPLY_WINDOW_DAYS),
+    )
+    return AccountPauseStatus(
+        paused=pause_active(account, now),
+        paused_until=account.get("automation_paused_until"),
+        paused_at=account.get("automation_paused_at"),
+        held=counts["held"],
+        deliverable=counts["deliverable"],
+    )
+
+
+@router.post("/{account_id}/pause/backlog", dependencies=[Depends(require("instagram.manage"))])
+async def act_on_pause_backlog(
+    account_id: str,
+    payload: PauseBacklogAction,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+) -> dict[str, Any]:
+    """Deliver or discard the comments the pause held. The only way to settle them."""
+    account = await _load(accounts, account_id, workspace)
+
+    if payload.action == "ignore":
+        await accounts.close_pause_backlog(account["_id"], now=utcnow())
+        logger.info("pause_backlog_ignored", extra={"account_id": account_id})
+        return {"status": "ignored"}
+
+    if pause_active(account):
+        # Replaying into a live pause would just hold everything again.
+        raise ValidationError("Resume sending before delivering the held comments.")
+
+    # The window is advanced by the task, not here: if the queue were down, the
+    # offer has to still be standing next time this page is opened.
+    await queue.enqueue(DELIVER_BACKLOG_TASK, str(account["_id"]))
+    logger.info("pause_backlog_delivery_queued", extra={"account_id": account_id})
+    return {"status": "queued"}

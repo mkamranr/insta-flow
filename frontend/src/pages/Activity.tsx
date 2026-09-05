@@ -23,7 +23,10 @@ const REASONS: Record<string, string> = {
   already_messaged: 'Already messaged this person',
   outside_reply_window: 'Comment older than 7 days',
   not_following: 'Not following you',
-  rule_disabled: 'Automation is paused',
+  // Not "paused": Auto DM pause is a real feature now, and two reasons that
+  // both read as "paused" would be indistinguishable in the log.
+  rule_disabled: 'Automation is switched off',
+  automation_paused: 'Held — Auto DM was paused',
   account_not_connected: 'Instagram account not connected',
   no_message: 'Automation has no message',
   rate_limited_minute: 'Rate limit (per minute)',

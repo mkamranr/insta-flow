@@ -9,6 +9,9 @@ from .base import BaseRepository, Document, to_object_id, utcnow
 # the two never drift apart.
 NOT_FOLLOWING = "not_following"
 AWAITING_FOLLOW = "awaiting_follow"
+# Mirrors app.services.campaigns.policy.AUTOMATION_PAUSED, for the same reason
+# and pinned by the same kind of test.
+AUTOMATION_PAUSED = "automation_paused"
 
 # §62 state machine. An execution never leaves this set.
 STATUSES = (
@@ -163,6 +166,91 @@ class ExecutionsRepository(BaseRepository[Any]):
             {"_id": to_object_id(execution_id)},
             {"$set": {"status": AWAITING_FOLLOW, "updated_at": utcnow()}},
         )
+
+    async def claim_paused_skip(self, execution_id: Any) -> Document | None:
+        """Take a row an Auto DM pause held back into flight.
+
+        Compare-and-swap, like `claim_awaiting_follow`: the backlog is drained by
+        fanning out one job per held row, and two jobs reaching the same row must
+        not both send. The loser gets None and stops.
+
+        The filter names the reason as well as the status, so this can only ever
+        revive a row a pause held -- never one skipped for being outside the
+        reply window, rate limited, or already messaged.
+        """
+        return await self.collection.find_one_and_update(
+            {
+                "_id": to_object_id(execution_id),
+                "status": "skipped",
+                "policy_decision": AUTOMATION_PAUSED,
+            },
+            {
+                "$set": {
+                    "status": "processing",
+                    "policy_decision": None,
+                    "completed_at": None,
+                    "updated_at": utcnow(),
+                }
+            },
+            return_document=True,
+        )
+
+    async def list_paused_skips(
+        self, instagram_account_id: Any, *, since: Any = None, limit: int = 500
+    ) -> list[Document]:
+        """Comment-triggered rows an Auto DM pause held, oldest first.
+
+        Oldest first because whoever waited longest is closest to Meta's 7-day
+        reply window closing on them.
+
+        Comment-keyed only. A story-reply or DM-keyword row cannot be replayed:
+        it lives under the 24-hour messaging window, not the 7-day comment one.
+        `$type` rather than `$exists`, matching `find_reservation` -- an explicit
+        null would otherwise slip through.
+        """
+        query: Document = {
+            "instagram_account_id": to_object_id(instagram_account_id),
+            "status": "skipped",
+            "policy_decision": AUTOMATION_PAUSED,
+            "comment_id": {"$type": "objectId"},
+        }
+        if since is not None:
+            query["created_at"] = {"$gt": since}
+        cursor = self.collection.find(query).sort("created_at", 1).limit(limit)
+        return [doc async for doc in cursor]
+
+    async def pause_backlog_counts(
+        self, instagram_account_id: Any, *, since: Any = None, replayable_since: Any = None
+    ) -> dict[str, int]:
+        """How much a pause held, and how much of it can still be delivered.
+
+        Two numbers, not one. A pause may run longer than Meta's 7-day reply
+        window, so part of a long backlog is undeliverable whatever the operator
+        chooses -- and the dialog must not promise what it cannot send.
+
+        `deliverable` is an estimate, measured on the execution's own
+        `created_at` rather than the comment's `commented_at`, so it costs no
+        join. The two are seconds apart in practice. The authority is still the
+        policy engine: a replay that turns out to be too late is denied with
+        `outside_reply_window` and sends nothing.
+        """
+        held_query: Document = {
+            "instagram_account_id": to_object_id(instagram_account_id),
+            "status": "skipped",
+            "policy_decision": AUTOMATION_PAUSED,
+        }
+        if since is not None:
+            held_query["created_at"] = {"$gt": since}
+
+        deliverable_query: Document = {**held_query, "comment_id": {"$type": "objectId"}}
+        if replayable_since is not None:
+            floor = replayable_since if since is None else max(since, replayable_since)
+            deliverable_query["created_at"] = {"$gt": floor}
+
+        return {
+            "held": await self.collection.count_documents(held_query),
+            "deliverable": await self.collection.count_documents(deliverable_query),
+        }
 
     async def already_sent_to(self, rule_id: Any, instagram_user_id: str) -> bool:
         """Has this rule already DMed this person?

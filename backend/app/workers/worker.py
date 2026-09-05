@@ -14,6 +14,7 @@ from app.services.ai.client import AiClient
 from app.services.meta.factory import build_client
 from app.workers.tasks import (
     MAX_ATTEMPTS,
+    deliver_paused_backlog,
     ping,
     process_comment_event,
     process_message_event,
@@ -72,6 +73,7 @@ class WorkerSettings:
         process_postback_event,
         process_message_event,
         recheck_follow,
+        deliver_paused_backlog,
         refresh_expiring_tokens,
         refresh_geoip_database,
         snapshot_account_metrics,

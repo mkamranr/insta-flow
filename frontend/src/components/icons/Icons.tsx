@@ -65,6 +65,15 @@ export const ContactsIcon = () => (
   </svg>
 )
 
+/** A ringed pause. The other sidebar glyphs are all circle- or frame-shaped,
+    so two bare bars would read lighter than its neighbours. */
+export const PauseIcon = () => (
+  <svg {...base}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M10 9v6M14 9v6" />
+  </svg>
+)
+
 export const InstagramIcon = () => (
   <svg {...base}>
     <rect x="3" y="3" width="18" height="18" rx="5" />

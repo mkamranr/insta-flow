@@ -45,7 +45,7 @@ from app.services.campaigns import (
     select_rule,
     select_rule_by_intent,
 )
-from app.services.campaigns.policy import DRY_RUN, NOT_FOLLOWING
+from app.services.campaigns.policy import AUTOMATION_PAUSED, DRY_RUN, NOT_FOLLOWING, pause_active
 from app.services.contacts import extract_email
 from app.services.links import is_safe_target, new_token, tracking_url
 from app.services.meta import auth as meta_auth
@@ -70,6 +70,15 @@ TERMINAL_STATUSES = ("success", "dry_run", "failed", "skipped")
 
 ACTION_OPENING_DM = "opening_dm"
 ACTION_PUBLIC_REPLY = "public_reply"
+
+# Draining an Auto DM pause's backlog. Meta allows PRIVATE_REPLY_CALLS_PER_HOUR
+# (750) per account, which is one every 4.8 seconds; five, rounded up, so a
+# backlog cannot spend the whole hour's budget in a burst.
+PAUSED_REPLAY_SPACING_SECONDS = 5
+# One pass queues at most an hour's worth. A longer backlog is drained by the
+# next pass, oldest first, because the window marker only advances as far as
+# this one reached.
+MAX_PAUSED_REPLAY = 500
 
 
 async def tracked_buttons(
@@ -156,7 +165,16 @@ async def process_comment_event(
     instagram_account_id: str,
     instagram_comment_id: str,
     delayed: bool = False,
+    replay: bool = False,
 ) -> dict[str, Any]:
+    """Answer a comment.
+
+    `replay` is set only by `deliver_paused_backlog`, and only for a comment an
+    Auto DM pause held. It is what allows the reservation collision below to
+    revive that row instead of reading it as a duplicate. Defaulted, so jobs
+    queued before this argument existed still resume -- the same reasoning as
+    `mid` on `process_message_event`.
+    """
     db = ctx["db"]
     settings = ctx["settings"]
     client = ctx["client"]
@@ -341,10 +359,20 @@ async def process_comment_event(
         if existing is None:  # pragma: no cover - concurrent delete
             return {"status": "skipped", "reason": "reservation_vanished"}
         if existing.get("status") in TERMINAL_STATUSES:
-            logger.info("duplicate_job_ignored", extra=log)
-            return {"status": "duplicate", "execution_id": str(existing["_id"])}
-        # Still processing: this is our own retry, so continue it.
-        execution = existing
+            held_by_pause = existing.get("policy_decision") == AUTOMATION_PAUSED
+            if not (replay and held_by_pause):
+                logger.info("duplicate_job_ignored", extra=log)
+                return {"status": "duplicate", "execution_id": str(existing["_id"])}
+            # A comment the pause held, now being delivered. Claimed rather than
+            # simply continued: the backlog fans out one job per row and two of
+            # them reaching this line would otherwise both send.
+            execution = await executions.claim_paused_skip(existing["_id"])
+            if execution is None:
+                logger.info("duplicate_replay_ignored", extra=log)
+                return {"status": "duplicate", "execution_id": str(existing["_id"])}
+        else:
+            # Still processing: this is our own retry, so continue it.
+            execution = existing
 
     log["execution_id"] = str(execution["_id"])
     await executions.increment_attempts(execution["_id"])
@@ -599,6 +627,19 @@ async def process_postback_event(
     account = await accounts.get_by_instagram_user_id(instagram_account_id)
     if account is None:
         return {"status": "skipped", "reason": "unknown_account"}
+
+    if pause_active(account):
+        # Records nothing, deliberately, and returns before the reservation. A
+        # terminal `skipped` row here would make this button permanently dead --
+        # `find_reservation` answers "duplicate" for a terminal row forever. With
+        # no row at all, the tap they make once the pause is over is an ordinary
+        # first tap and works.
+        #
+        # The cost, accepted: a tap made during a pause is invisible and relies
+        # on them tapping again. It cannot join the backlog either, which only
+        # carries comments.
+        logger.info("postback_held_by_pause", extra=log)
+        return {"status": "skipped", "reason": AUTOMATION_PAUSED}
 
     rules = RulesRepository(db)
     try:
@@ -1172,6 +1213,14 @@ async def recheck_follow(ctx: dict[str, Any], execution_id: str, attempt: int) -
         await executions.complete(execution["_id"], status="skipped", policy_decision=NOT_FOLLOWING)
         return {"status": "skipped", "reason": "missing_context"}
 
+    if pause_active(account):
+        # Before the profile lookup, which costs a Meta round trip. The row stays
+        # parked at `awaiting_follow` and the timer keeps running, so a pause that
+        # outlasts `follow_deadline` lets it expire exactly as it would have.
+        await _schedule_follow_recheck(ctx, execution["_id"], attempt)
+        logger.info("follow_recheck_held_by_pause", extra=log)
+        return {"status": AWAITING_FOLLOW, "reason": AUTOMATION_PAUSED}
+
     recipient = str(
         execution.get("instagram_user_id") or comment_doc.get("instagram_user_id") or ""
     )
@@ -1240,6 +1289,87 @@ async def recheck_follow(ctx: dict[str, Any], execution_id: str, attempt: int) -
     )
     logger.info("link_delivered_after_follow", extra=log)
     return {"status": "success", "execution_id": str(execution["_id"])}
+
+
+async def deliver_paused_backlog(ctx: dict[str, Any], account_id: str) -> dict[str, int]:
+    """Re-run the comments an Auto DM pause held.
+
+    Nothing here is deleted or rewritten. Each held row is re-queued, and the job
+    that picks it up claims it atomically (`claim_paused_skip`), so a crash
+    between listing and enqueuing loses nothing -- the rows are still held and the
+    next pass finds them. `_job_id` collapses a double fan-out, which matters:
+    the reservation collision in `process_comment_event` continues any row it
+    finds mid-flight, so two live replay jobs for one comment would both send.
+
+    Comment-triggered rows only. A story-reply or DM-keyword row looks replayable
+    -- its `trigger_text` and `trigger_message_id` are on the record -- but it
+    lives under Meta's 24-hour messaging window rather than the 7-day comment
+    one, so any pause worth setting has outlived it; and replaying one means
+    re-entering `process_message_event`, whose first act is the awaiting-email
+    branch, where a replayed message could be misrouted into somebody's email
+    capture. Counted, never queued.
+
+    The whole pipeline re-runs for each one, so the 7-day window, "only once per
+    person", the rate limits, the disclosure and dry run all re-apply without
+    being restated here. A comment that aged out during the pause comes back
+    `outside_reply_window` and sends nothing.
+
+    Depends on the original `webhook_events` row still existing. Nothing prunes
+    that collection today; adding a TTL would silently degrade this to
+    `event_missing`.
+    """
+    db = ctx["db"]
+    redis = ctx.get("redis")
+    log = {"instagram_account_id": account_id}
+
+    accounts = InstagramAccountsRepository(db)
+    account = await accounts.get(account_id)
+    if account is None:  # pragma: no cover - the account was deleted mid-flight
+        return {"queued": 0, "held": 0}
+
+    executions = ExecutionsRepository(db)
+    comments = CommentsRepository(db)
+    events = WebhookEventsRepository(db)
+    rows = await executions.list_paused_skips(
+        account["_id"], since=account.get("automation_backlog_since"), limit=MAX_PAUSED_REPLAY
+    )
+
+    queued = 0
+    for row in rows:
+        comment = await comments.get(row["comment_id"])
+        if comment is None or not comment.get("webhook_event_id"):
+            continue
+        if await events.get(comment["webhook_event_id"]) is None:
+            # Without the stored payload there is nothing to re-parse. Left held;
+            # advancing the window below is what retires it.
+            continue
+        if redis is None:  # pragma: no cover - only when a test drives this directly
+            continue
+        await redis.enqueue_job(
+            "process_comment_event",
+            str(comment["webhook_event_id"]),
+            str(account["instagram_user_id"]),
+            str(comment["instagram_comment_id"]),
+            True,  # delayed: the rule's reply delay was served many times over
+            True,  # replay
+            _job_id=f"paused-replay:{row['_id']}",
+            _defer_by=timedelta(seconds=queued * PAUSED_REPLAY_SPACING_SECONDS),
+        )
+        queued += 1
+
+    # Advance the window last, and only as far as this pass actually reached, so
+    # a capped backlog resumes exactly here next time. Stamped by the task rather
+    # than by the route that enqueued it: if the queue were down, the offer must
+    # still be standing next time the page is opened.
+    cutoff = (
+        rows[-1]["created_at"]
+        if len(rows) == MAX_PAUSED_REPLAY and rows[-1].get("created_at")
+        else datetime.now(UTC)
+    )
+    await accounts.close_pause_backlog(account["_id"], now=cutoff)
+
+    logger.info("paused_backlog_delivered", extra={**log, "queued": queued, "held": len(rows)})
+    return {"queued": queued, "held": len(rows)}
 
 
 async def refresh_geoip_database(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1587,6 +1717,17 @@ async def process_message_event(
         },
     )
     logger.info("email_captured", extra=log)
+
+    if pause_active(account):
+        # After the contact write, before the send. The email is a database write,
+        # not a Meta call, and a volunteered address is the one thing here nobody
+        # offers twice. The execution stays parked at `awaiting_email`, so their
+        # next message once the pause is over resumes it.
+        #
+        # The cost, accepted: if they never message again this row is never
+        # delivered, and it is not in the backlog -- that carries only comments.
+        logger.info("payoff_after_email_held_by_pause", extra=log)
+        return {"status": "awaiting_email", "reason": AUTOMATION_PAUSED, "email_captured": True}
 
     context = CommentContext(text="", username="", instagram_user_id=sender_id)
     try:

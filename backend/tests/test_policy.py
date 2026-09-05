@@ -9,6 +9,7 @@ from app.services.campaigns.policy import (
     ACTION_PRIVATE_REPLY,
     ALLOWED,
     ALREADY_MESSAGED,
+    AUTOMATION_PAUSED,
     DRY_RUN,
     NO_MESSAGE,
     OUTSIDE_REPLY_WINDOW,
@@ -18,6 +19,7 @@ from app.services.campaigns.policy import (
     RULE_DISABLED,
     PolicyContext,
     evaluate,
+    pause_active,
     within_reply_window,
 )
 
@@ -93,7 +95,7 @@ def test_a_comment_outside_the_window_is_denied():
 
 
 def test_already_messaged_denies():
-    """"Only send this DM once per person"."""
+    """ "Only send this DM once per person"."""
     assert evaluate(context(already_messaged=True)).reason == ALREADY_MESSAGED
 
 
@@ -131,3 +133,68 @@ def test_a_denial_beats_dry_run():
 def test_the_decision_reason_is_recorded_for_debugging():
     decision = evaluate(context(sent_last_day=500))
     assert decision.detail == "500/500"
+
+
+# --- Auto DM pause ----------------------------------------------------------
+
+
+def paused(until):
+    """An account dict shaped the way Mongo hands one back."""
+    return {"status": "connected", "automation_paused_until": until}
+
+
+def test_a_paused_account_is_denied():
+    decision = evaluate(context(account=paused(NOW + timedelta(minutes=30))))
+    assert decision.allowed is False and decision.reason == AUTOMATION_PAUSED
+
+
+def test_the_denial_says_when_sending_resumes():
+    """The Activity log has to explain a held comment months later."""
+    until = NOW + timedelta(hours=3)
+    assert evaluate(context(account=paused(until))).detail == until.isoformat()
+
+
+def test_an_expired_pause_no_longer_denies():
+    assert evaluate(context(account=paused(NOW - timedelta(seconds=1)))).allowed is True
+
+
+def test_a_cancelled_pause_is_over_immediately():
+    """Cancelling writes `until = now` rather than unsetting it, so `now < until`
+    has to be strict or a cancel would not take effect until the next second."""
+    assert pause_active(paused(NOW), NOW) is False
+
+
+def test_an_account_that_was_never_paused_is_not_paused():
+    """Absent means running -- which is why the field needs no backfill."""
+    assert pause_active({"status": "connected"}, NOW) is False
+
+
+def test_a_naive_paused_until_is_assumed_utc():
+    """Mongo can hand back a naive datetime; comparing it would raise."""
+    naive = (NOW + timedelta(hours=1)).replace(tzinfo=None)
+    assert pause_active(paused(naive), NOW) is True
+
+
+def test_a_disabled_rule_beats_the_pause():
+    """A disabled rule's comments must not pile up as a deliverable backlog:
+    nobody paused them, and resuming must not suddenly answer them."""
+    decision = evaluate(context(rule={"enabled": False}, account=paused(NOW + timedelta(hours=1))))
+    assert decision.reason == RULE_DISABLED
+
+
+def test_a_dead_token_beats_the_pause():
+    account = {"status": "token_error", "automation_paused_until": NOW + timedelta(hours=1)}
+    assert evaluate(context(account=account)).reason == ACCOUNT_NOT_CONNECTED
+
+
+def test_the_pause_beats_dry_run():
+    """A held send is held, not a dry run -- otherwise a DRY_RUN deployment
+    would record it as delivered and drop it out of the backlog."""
+    decision = evaluate(context(account=paused(NOW + timedelta(hours=1)), dry_run=True))
+    assert decision.allowed is False and decision.reason == AUTOMATION_PAUSED
+
+
+def test_the_pause_is_checked_before_the_rate_limits():
+    """Both would deny, but the reason decides whether it can be replayed."""
+    decision = evaluate(context(account=paused(NOW + timedelta(hours=1)), sent_last_day=500))
+    assert decision.reason == AUTOMATION_PAUSED

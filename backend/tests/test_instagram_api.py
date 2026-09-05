@@ -12,6 +12,7 @@ from app.services.meta import MetaAccount, MockInstagramClient
 from app.services.meta.auth import TokenBundle
 from app.services.security import oauth_state
 from app.services.security.encryption import decrypt, encrypt
+from tests.conftest import TEST_PASSWORD
 
 IG_ID = "17841400000000000"
 LONG_TOKEN = "IGQVJlong-lived-token-value"
@@ -30,8 +31,9 @@ def meta(monkeypatch):
     # per-workspace fact. `refresh_long_lived` takes neither: `ig_refresh_token`
     # authenticates with the token itself.
     async def fake_exchange_code(creds, code, **kw):
-        return TokenBundle(access_token="short", instagram_user_id=IG_ID,
-                           permissions=("instagram_business_basic",))
+        return TokenBundle(
+            access_token="short", instagram_user_id=IG_ID, permissions=("instagram_business_basic",)
+        )
 
     async def fake_long_lived(creds, token, **kw):
         return TokenBundle(
@@ -155,9 +157,7 @@ async def test_a_failed_exchange_redirects_rather_than_500s(api, redis, meta, mo
 
     monkeypatch.setattr("app.api.instagram.meta_auth.exchange_code", boom)
     state = await oauth_state.issue(redis, get_settings().session_secret, str(ObjectId()))
-    response = await api.get(
-        "/api/auth/instagram/callback", params={"code": "bad", "state": state}
-    )
+    response = await api.get("/api/auth/instagram/callback", params={"code": "bad", "state": state})
     assert "error=exchange_failed" in response.headers["location"]
 
 
@@ -379,3 +379,223 @@ async def test_the_last_page_is_short_which_is_how_the_rail_knows_to_stop(
     page = (await signed_in.get("/api/posts?limit=5&offset=0")).json()
 
     assert len(page) == 3
+
+
+# --- Auto DM pause ----------------------------------------------------------
+
+
+def in_hours(hours: float) -> str:
+    return (datetime.now(UTC) + timedelta(hours=hours)).isoformat()
+
+
+async def held_comment(database, account_id, *, age=timedelta(0), comment_id="c1"):
+    """An execution shaped the way a pause leaves one behind.
+
+    Created now by default, because a comment a pause held necessarily arrived
+    after the pause began -- and the backlog window is what enforces that.
+    """
+    comment = await database["comments"].insert_one(
+        {
+            "instagram_account_id": account_id,
+            "instagram_comment_id": comment_id,
+            "instagram_user_id": "999",
+            "text": "link",
+        }
+    )
+    await database["executions"].insert_one(
+        {
+            "instagram_account_id": account_id,
+            "comment_id": comment.inserted_id,
+            "rule_id": ObjectId(),
+            "action": "private_reply",
+            "status": "skipped",
+            "policy_decision": "automation_paused",
+            "created_at": datetime.now(UTC) - age,
+        }
+    )
+
+
+async def test_pausing_and_resuming_round_trips(signed_in, connected, database):
+    paused = await signed_in.post(
+        f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(3)}
+    )
+    assert paused.status_code == 200
+    assert paused.json()["automation_paused"] is True
+
+    status = (await signed_in.get(f"/api/instagram/{connected['_id']}/pause")).json()
+    assert status["paused"] is True
+
+    resumed = await signed_in.delete(f"/api/instagram/{connected['_id']}/pause")
+    assert resumed.status_code == 200
+    assert resumed.json()["automation_paused"] is False
+
+
+async def test_a_pause_in_the_past_is_refused(signed_in, connected):
+    response = await signed_in.post(
+        f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(-1)}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+async def test_a_pause_beyond_the_cap_is_refused(signed_in, connected):
+    """A mistyped year would otherwise silence the account until then."""
+    response = await signed_in.post(
+        f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(24 * 31)}
+    )
+    assert response.status_code == 422
+
+
+async def test_a_naive_instant_is_read_as_utc(signed_in, connected, database):
+    naive = (datetime.now(UTC) + timedelta(hours=2)).replace(tzinfo=None).isoformat()
+
+    response = await signed_in.post(
+        f"/api/instagram/{connected['_id']}/pause", json={"until": naive}
+    )
+
+    assert response.status_code == 200
+    account = await database["instagram_accounts"].find_one({"_id": connected["_id"]})
+    assert account["automation_paused_until"].tzinfo is not None
+
+
+async def test_pausing_another_workspaces_account_is_not_found(
+    signed_in, database, role_factory, user_factory
+):
+    """404 rather than 403, so ids cannot be discovered by probing."""
+    role = await role_factory("other-owner", ["instagram.manage", "instagram.view"])
+    other = await user_factory("someone@example.com", role)
+    account_id = (
+        await database["instagram_accounts"].insert_one(
+            {"user_id": other["_id"], "instagram_user_id": "999", "status": "connected"}
+        )
+    ).inserted_id
+
+    response = await signed_in.post(
+        f"/api/instagram/{account_id}/pause", json={"until": in_hours(1)}
+    )
+
+    assert response.status_code == 404
+
+
+async def test_the_backlog_is_still_offered_after_a_pause_expired_unattended(
+    signed_in, connected, database
+):
+    """Nothing runs at expiry, so a pause nobody was present for still has its
+    comments waiting to be decided on."""
+    await database["instagram_accounts"].update_one(
+        {"_id": connected["_id"]},
+        {
+            "$set": {
+                "automation_paused_until": datetime.now(UTC) - timedelta(hours=1),
+                "automation_backlog_since": datetime.now(UTC) - timedelta(hours=3),
+            }
+        },
+    )
+    await held_comment(database, connected["_id"])
+
+    status = (await signed_in.get(f"/api/instagram/{connected['_id']}/pause")).json()
+
+    assert status["paused"] is False
+    assert status["held"] == 1 and status["deliverable"] == 1
+
+
+async def test_deliverable_excludes_comments_past_metas_reply_window(
+    signed_in, connected, database
+):
+    """A long pause holds more than it can ever send; the count must say so."""
+    await held_comment(database, connected["_id"], age=timedelta(days=8), comment_id="old")
+    await held_comment(database, connected["_id"], age=timedelta(hours=2), comment_id="new")
+
+    status = (await signed_in.get(f"/api/instagram/{connected['_id']}/pause")).json()
+
+    assert status["held"] == 2
+    assert status["deliverable"] == 1
+
+
+async def test_ignoring_the_backlog_clears_it_and_queues_nothing(
+    signed_in, connected, database, monkeypatch
+):
+    queued: list[tuple] = []
+    monkeypatch.setattr("app.queue.enqueue", lambda *a, **kw: queued.append(a))
+    await held_comment(database, connected["_id"])
+
+    response = await signed_in.post(
+        f"/api/instagram/{connected['_id']}/pause/backlog", json={"action": "ignore"}
+    )
+
+    assert response.json() == {"status": "ignored"}
+    assert queued == []
+    status = (await signed_in.get(f"/api/instagram/{connected['_id']}/pause")).json()
+    assert status["held"] == 0
+
+
+async def test_delivering_the_backlog_enqueues_the_drain(
+    signed_in, connected, database, monkeypatch
+):
+    queued: list[tuple] = []
+
+    async def fake_enqueue(*args, **kwargs):
+        queued.append(args)
+
+    monkeypatch.setattr("app.queue.enqueue", fake_enqueue)
+    await held_comment(database, connected["_id"])
+
+    response = await signed_in.post(
+        f"/api/instagram/{connected['_id']}/pause/backlog", json={"action": "deliver"}
+    )
+
+    assert response.json() == {"status": "queued"}
+    assert queued == [("deliver_paused_backlog", str(connected["_id"]))]
+
+
+async def test_delivering_while_still_paused_is_refused(signed_in, connected):
+    """Replaying into a live pause would just hold everything again."""
+    await signed_in.post(f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(2)})
+
+    response = await signed_in.post(
+        f"/api/instagram/{connected['_id']}/pause/backlog", json={"action": "deliver"}
+    )
+
+    assert response.status_code == 422
+
+
+async def test_cancelling_a_pause_leaves_the_backlog_offer_standing(signed_in, connected, database):
+    """Cancelling is not the same as deciding what to do with what piled up."""
+    await signed_in.post(f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(2)})
+    await held_comment(database, connected["_id"])
+
+    await signed_in.delete(f"/api/instagram/{connected['_id']}/pause")
+
+    status = (await signed_in.get(f"/api/instagram/{connected['_id']}/pause")).json()
+    assert status["paused"] is False
+    assert status["held"] == 1
+
+
+async def test_a_second_pause_does_not_hide_the_first_ones_held_comments(
+    signed_in, connected, database
+):
+    """The backlog window is monotonic: only a decision advances it."""
+    await signed_in.post(f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(1)})
+    await held_comment(database, connected["_id"])
+    await signed_in.delete(f"/api/instagram/{connected['_id']}/pause")
+
+    await signed_in.post(f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(1)})
+
+    status = (await signed_in.get(f"/api/instagram/{connected['_id']}/pause")).json()
+    assert status["held"] == 1, "the second pause moved the window and hid the first"
+
+
+async def test_pausing_needs_more_than_read_access(
+    api, connected, database, role_factory, user_factory, admin
+):
+    """A Viewer can see the pause but must not be able to set one."""
+    role = await role_factory("pause-viewer", ["instagram.view"])
+    viewer = await user_factory("viewer@example.com", role)
+    await database["instagram_accounts"].update_one(
+        {"_id": connected["_id"]}, {"$set": {"user_id": viewer["_id"]}}
+    )
+    await api.post("/api/auth/login", json={"email": viewer["email"], "password": TEST_PASSWORD})
+
+    assert (await api.get(f"/api/instagram/{connected['_id']}/pause")).status_code == 200
+    denied = await api.post(f"/api/instagram/{connected['_id']}/pause", json={"until": in_hours(1)})
+    assert denied.status_code == 403

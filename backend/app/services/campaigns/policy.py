@@ -23,6 +23,7 @@ ALLOWED = "allowed"
 DRY_RUN = "dry_run"
 RULE_DISABLED = "rule_disabled"
 ACCOUNT_NOT_CONNECTED = "account_not_connected"
+AUTOMATION_PAUSED = "automation_paused"
 NO_MESSAGE = "no_message"
 OUTSIDE_REPLY_WINDOW = "outside_reply_window"
 OUTSIDE_MESSAGE_WINDOW = "outside_message_window"
@@ -93,6 +94,30 @@ def within_reply_window(commented_at: datetime | None, now: datetime | None = No
     return now - commented_at <= timedelta(days=PRIVATE_REPLY_WINDOW_DAYS)
 
 
+def paused_until(account: dict[str, Any]) -> datetime | None:
+    """When this account's Auto DM pause ends, or None if it was never paused.
+
+    Mongo can hand back a naive datetime, and comparing one would raise, so an
+    absent tzinfo is read as UTC -- the same coercion `within_reply_window` does.
+    """
+    until = account.get("automation_paused_until")
+    if not isinstance(until, datetime):
+        return None
+    return until.replace(tzinfo=UTC) if until.tzinfo is None else until
+
+
+def pause_active(account: dict[str, Any], now: datetime | None = None) -> bool:
+    """Is every automated send for this account being held right now?
+
+    Strictly `now < until`, so cancelling -- which writes `until = now` rather
+    than unsetting it -- is already over by the time anyone reads it. That is
+    what makes a cancelled pause and one that lapsed on its own the same state,
+    with no job to run at expiry.
+    """
+    until = paused_until(account)
+    return until is not None and (now or datetime.now(UTC)) < until
+
+
 def evaluate(context: PolicyContext) -> PolicyDecision:
     """Decide whether `action` may be performed. Cheapest, most definitive checks
     first, so a decision is never made on stale reasoning."""
@@ -104,6 +129,21 @@ def evaluate(context: PolicyContext) -> PolicyDecision:
 
     if context.account.get("status") != "connected":
         return PolicyDecision(False, ACCOUNT_NOT_CONNECTED, str(context.account.get("status")))
+
+    # Auto DM pause. Read off the account rather than carried as a context field
+    # on purpose: a field is something a call site can forget to pass, and the
+    # gate would then silently not fire. `status` above is read the same way, so
+    # neither caller has to change.
+    #
+    # Placement is load-bearing. After the two checks above, so a disabled rule
+    # or a dead token never builds a backlog that looks deliverable; before
+    # `already_messaged` and the rate limits, which are re-decided from scratch
+    # when the held comment is replayed.
+    if pause_active(context.account, now):
+        held_until = paused_until(context.account)
+        return PolicyDecision(
+            False, AUTOMATION_PAUSED, held_until.isoformat() if held_until else ""
+        )
 
     if not str(rule.get("message", "")).strip():
         return PolicyDecision(False, NO_MESSAGE)

@@ -1758,3 +1758,169 @@ button.perm-all:hover:not(:disabled) {
   margin: 0;
   margin-right: auto;
 }
+
+/* -- Auto DM pause ----------------------------------------------------------
+   Appended after the polish pass on purpose: that section re-declares `.card`,
+   `button`, `input` and the focus ring, so anything written above it loses. */
+
+/* Breadcrumb. `a` is globally `color: inherit; text-decoration: none`, so a
+   link here is invisible as a link unless it says so itself. */
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  font-size: 12.5px;
+}
+.crumbs a { color: var(--muted); }
+.crumbs a:hover { color: var(--text); text-decoration: underline; }
+.crumbs [aria-current='page'] { color: var(--text); font-weight: 600; }
+.crumb-sep { color: var(--faint); }
+.text-link { color: var(--muted); text-decoration: underline; }
+.text-link:hover { color: var(--text); }
+
+/* Switch. Every selector is `button.`-prefixed: the global `button` rule is a
+   dark nowrap pill and `button:hover:not(:disabled)` is (0,2,1), so a bare
+   `.switch` would be repainted dark the moment a pointer touched it.
+
+   No box-shadow on the track -- the polish pass paints `:focus-visible` with
+   one, and declaring our own here would erase the focus ring. */
+button.switch {
+  position: relative;
+  flex: none;
+  /* Explicit, not aspect-ratio: aspect-ratio loses to flex sizing, and this
+     lives in a flex row. */
+  width: 46px;
+  height: 26px;
+  padding: 0; /* the global button padding is 9px 18px */
+  border-radius: 999px;
+  border: 1px solid var(--control-border);
+  background: var(--surface-sunken);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+button.switch:hover:not(:disabled) { background: var(--surface-alt); }
+button.switch.on { background: var(--accent); border-color: var(--accent); }
+button.switch.on:hover:not(:disabled) { background: var(--accent-hover); }
+
+/* The knob carries the state as well as the colour does: the lime is 1.26:1 on
+   white and cannot be the only signal, and `prefers-reduced-motion` removes the
+   slide with !important -- the knob still lands right, it just gets there at
+   once. */
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition:
+    transform var(--t) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+button.switch.on .switch-knob { transform: translateX(20px); background: var(--accent-text); }
+
+/* Card head. A <span>, not a <label>: `label` is globally display:block with
+   14px/6px margins, and `for` cannot target a <button> regardless. The switch
+   is wired up with aria-labelledby instead. */
+.pause-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.pause-row-label { font-weight: 650; font-size: 15px; }
+
+/* Full-bleed rule. `hr` carries a UA border and margin, so reset both. The
+   -22px matches .card's own horizontal padding, as .card-foot does. */
+hr.card-divider {
+  border: none;
+  height: 1px;
+  background: var(--border);
+  margin: 16px -22px;
+}
+
+/* Status panel. min-height, not aspect-ratio, for the same reason as above. */
+.pause-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  min-height: 208px;
+  padding: 24px 20px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.pause-mark {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.pause-mark.running { background: var(--ok-bg); color: var(--ok); }
+.pause-state { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.pause-sub { margin: 0; }
+/* Tabular figures, or the clock jitters sideways once a second. */
+.pause-clock {
+  font-size: 38px;
+  line-height: 1.05;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0;
+}
+.pause-skipped { margin: 6px 0 0; }
+
+/* Duration picker. The presets reuse .chips / .chip / .chip-on. */
+.pause-picker { margin-top: 18px; }
+.pause-picker-label { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.pause-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+/* `input` is globally width:100%; without this each field takes a whole row.
+   The native date/time popups follow the theme for free -- `color-scheme` is
+   already set on :root in both blocks. */
+.pause-custom input[type='date'] { width: auto; flex: none; min-width: 152px; }
+.pause-custom input[type='time'] { width: auto; flex: none; min-width: 118px; }
+.pause-preview { margin: 8px 0 0; }
+
+/* Notes and Save. `margin: 0 auto` cannot centre a <button> (inline-block, no
+   width), so the centring needs its own row. */
+.pause-notes { margin: 18px 0 0; }
+.pause-save { display: flex; justify-content: center; margin-top: 18px; }
+.pause-feedback { text-align: center; margin: 10px 0 0; }
+
+/* Backlog dialog. */
+.backlog-choices { display: grid; gap: 10px; margin-top: 6px; }
+button.backlog-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: left;
+  /* Buttons are globally nowrap; these hold two lines of real prose. */
+  white-space: normal;
+}
+button.backlog-choice:hover:not(:disabled) {
+  background: var(--surface-alt);
+  border-color: var(--border-strong);
+  color: var(--text);
+}

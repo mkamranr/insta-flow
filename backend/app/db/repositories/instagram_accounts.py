@@ -54,6 +54,43 @@ class InstagramAccountsRepository(BaseRepository[Any]):
             return_document=True,
         )
 
+    async def pause_automation(self, account_id: Any, *, until: Any, now: Any) -> Document | None:
+        """Hold every automated send for this account until `until`.
+
+        The backlog window is written first, and only when it is missing or
+        null: a second pause started before the first one's held comments were
+        answered must not move the window forward and hide them.
+        """
+        await self.collection.update_one(
+            {"_id": to_object_id(account_id), "automation_backlog_since": None},
+            {"$set": {"automation_backlog_since": now}},
+        )
+        return await self.update(
+            account_id, {"automation_paused_until": until, "automation_paused_at": now}
+        )
+
+    async def resume_automation(self, account_id: Any, *, now: Any) -> Document | None:
+        """End the pause.
+
+        Writes `now` rather than unsetting the field, so a cancelled pause and
+        one that lapsed on its own are the same state and everything reading it
+        has one code path.
+
+        Deliberately does not touch `automation_backlog_since`: cancelling is not
+        the same as deciding what to do with what piled up, and that decision is
+        still owed.
+        """
+        return await self.update(account_id, {"automation_paused_until": now})
+
+    async def close_pause_backlog(self, account_id: Any, *, now: Any) -> Document | None:
+        """Answer the held comments -- by delivering or discarding them.
+
+        Advancing the window is what retires them, which is also how rows that
+        can never be replayed (their rule or webhook event is gone) stop being
+        offered forever.
+        """
+        return await self.update(account_id, {"automation_backlog_since": now})
+
     async def set_status(self, account_id: Any, status: str, error: str | None = None) -> None:
         await self.update(account_id, {"status": status, "status_error": error})
 

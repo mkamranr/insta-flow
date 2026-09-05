@@ -7,6 +7,7 @@ import { Layout } from '../components/layout/Layout'
 import { Analytics } from '../pages/Analytics'
 import { CloneAutomation } from '../pages/CloneAutomation'
 import { Automations } from '../pages/Automations'
+import { AutoDmPause } from '../pages/AutoDmPause'
 import { Contacts } from '../pages/Contacts'
 import { Dashboard } from '../pages/Dashboard'
 import { Insights } from '../pages/Insights'
@@ -98,6 +99,14 @@ export function Router() {
             element={
               <RequirePermission perm="analytics.view">
                 <Insights />
+              </RequirePermission>
+            }
+          />
+          <Route
+            path="auto-dm-pause"
+            element={
+              <RequirePermission perm="instagram.manage">
+                <AutoDmPause />
               </RequirePermission>
             }
           />

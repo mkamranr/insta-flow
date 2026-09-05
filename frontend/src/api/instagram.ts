@@ -15,6 +15,9 @@ export interface InstagramAccount {
   subscribed_fields: string[]
   token_expires_at: string | null
   token_expired: boolean
+  automation_paused: boolean
+  automation_paused_until: string | null
+  automation_paused_at: string | null
 }
 
 export const listAccounts = () => apiGet<InstagramAccount[]>('/api/instagram/accounts')

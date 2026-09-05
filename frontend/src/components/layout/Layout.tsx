@@ -19,6 +19,7 @@ import {
   ChevronDownIcon,
   AutomationIcon,
   ContactsIcon,
+  PauseIcon,
   HomeIcon,
   InstagramIcon,
   PlusIcon,
@@ -87,6 +88,12 @@ const ANALYTICS: NavItem[] = [
 ]
 
 const BOTTOM: NavItem[] = [
+  {
+    to: '/auto-dm-pause',
+    label: 'Auto DM pause',
+    icon: <PauseIcon />,
+    permission: 'instagram.manage',
+  },
   { to: '/contacts', label: 'Contacts', icon: <ContactsIcon />, permission: 'contacts.view' },
   { to: '/instagram', label: 'Instagram', icon: <InstagramIcon />, permission: 'instagram.view' },
   { to: '/settings', label: 'Settings', icon: <SettingsIcon />, permission: 'settings.view' },

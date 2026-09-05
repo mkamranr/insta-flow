@@ -53,6 +53,9 @@ Meta's own rate limits.
 - **18 starter templates** across five categories, pre-filled and ready to customise
 - "Only send once per person", per-rule rate limits, and a full activity log
 - **Optional local AI** — classify comments by intent with Ollama or vLLM when no keyword matches
+- **Auto DM pause** — hold every automated send for a set time (30 minutes to 30 days).
+  Comments that arrive meanwhile are recorded, not lost: when the pause ends you choose
+  whether to send the DMs they were owed or let them go
 - **Dry-run mode** that exercises the entire pipeline without sending anything
 - **Multiple accounts, one install** — each person gets a workspace at `/u/<slug>/` and
   connects their own Instagram account through their own Meta app. No App Review: every user
