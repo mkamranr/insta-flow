@@ -5,15 +5,20 @@ from datetime import UTC, datetime
 import pytest
 from bson import ObjectId
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.services.contacts import extract_email
 from app.services.meta import MockInstagramClient
-from app.services.meta.webhooks import parse_message_events
+from app.services.meta.webhooks import POSTBACK_PREFIX, parse_message_events
 from app.services.security.encryption import encrypt
-from app.workers.tasks import process_message_event
+from app.workers.tasks import (
+    process_comment_event,
+    process_message_event,
+    process_postback_event,
+)
 
 ACCOUNT_IG_ID = "17841400000000000"
 SENDER = "17800000000000000"
+MEDIA_ID = "17890000000000000"
 
 
 # --- extraction -------------------------------------------------------------
@@ -194,3 +199,225 @@ async def test_a_repeat_capture_updates_rather_than_duplicating(database, parked
 
     assert await database["contacts"].count_documents({}) == 1
     assert (await database["contacts"].find_one({}))["email"] == "two@x.com"
+
+
+# --- the seam that was missing -----------------------------------------------
+#
+# Everything above starts from a hand-planted `awaiting_email` execution, so the
+# path that creates one -- comment, opener, tap -- was never driven, and neither
+# was the API that is supposed to let anyone switch the gate on. The editor
+# shipped with no control for it and nothing failed.
+
+
+@pytest.fixture
+async def account_with_post(database, admin):
+    """An account and a synced post, owned by the signed-in admin."""
+    account_id = ObjectId()
+    await database["instagram_accounts"].insert_one(
+        {
+            "_id": account_id,
+            "user_id": admin["_id"],
+            "instagram_user_id": ACCOUNT_IG_ID,
+            "username": "myshop",
+            "status": "connected",
+            "access_token_encrypted": encrypt("tok", get_settings().encryption_key),
+        }
+    )
+    await database["media"].insert_one(
+        {
+            "instagram_account_id": account_id,
+            "instagram_media_id": MEDIA_ID,
+            "media_type": "IMAGE",
+            "published_at": datetime.now(UTC),
+        }
+    )
+    return account_id
+
+
+def rule_body(**overrides):
+    """A comment rule with a working opening DM, which the gate depends on."""
+    body = {
+        "name": "Guide",
+        "trigger": "comment",
+        "scope": "specific",
+        "instagram_media_ids": [MEDIA_ID],
+        "keywords": ["guide"],
+        "message": "Here is the guide.",
+        "opening_dm": {"enabled": True, "message": "Want the guide?", "button_text": "Send it"},
+        "collect_email": {"enabled": True, "prompt": "Drop your email."},
+    }
+    body.update(overrides)
+    return body
+
+
+async def test_the_email_gate_round_trips_through_the_api(signed_in, account_with_post):
+    """The test whose absence let a missing editor control ship unnoticed."""
+    created = await signed_in.post("/api/rules", json=rule_body())
+
+    assert created.status_code == 201, created.text
+    assert created.json()["collect_email"] == {"enabled": True, "prompt": "Drop your email."}
+
+    fetched = await signed_in.get(f"/api/rules/{created.json()['id']}")
+    assert fetched.json()["collect_email"]["enabled"] is True
+
+
+async def test_a_patch_that_says_nothing_about_the_gate_leaves_it_alone(
+    signed_in, account_with_post
+):
+    rule_id = (await signed_in.post("/api/rules", json=rule_body())).json()["id"]
+
+    patched = await signed_in.patch(f"/api/rules/{rule_id}", json={"name": "Renamed"})
+
+    assert patched.json()["collect_email"]["prompt"] == "Drop your email."
+
+
+async def test_the_gate_is_refused_without_an_opening_dm(signed_in, account_with_post):
+    """It would save cleanly and then ask nobody for anything: the prompt is sent
+    from the postback handler, which needs a button to be tapped."""
+    response = await signed_in.post(
+        "/api/rules",
+        json=rule_body(opening_dm={"enabled": False, "message": "", "button_text": ""}),
+    )
+
+    assert response.status_code == 422
+    assert "opening DM" in response.json()["error"]["message"]
+
+
+async def test_an_opening_dm_with_no_message_does_not_count(signed_in, account_with_post):
+    """`uses_opening_dm` wants text as well as the flag -- an empty opener sends
+    nothing, so it carries no button."""
+    response = await signed_in.post(
+        "/api/rules",
+        json=rule_body(opening_dm={"enabled": True, "message": "   ", "button_text": "Go"}),
+    )
+
+    assert response.status_code == 422
+
+
+async def test_the_gate_is_refused_on_a_dm_keyword_rule(signed_in, account_with_post):
+    """`_match_inbound_message` never reads the gate."""
+    response = await signed_in.post(
+        "/api/rules",
+        json=rule_body(
+            trigger="dm_keyword",
+            scope="any",
+            instagram_media_ids=[],
+            opening_dm={"enabled": False, "message": "", "button_text": ""},
+        ),
+    )
+
+    assert response.status_code == 422
+    assert "DM keyword" in response.json()["error"]["message"]
+
+
+async def test_switching_the_gate_off_is_always_allowed(signed_in, account_with_post):
+    """The refusal must not trap a rule in a state it cannot leave."""
+    rule_id = (await signed_in.post("/api/rules", json=rule_body())).json()["id"]
+
+    patched = await signed_in.patch(
+        f"/api/rules/{rule_id}",
+        json={
+            "collect_email": {"enabled": False, "prompt": ""},
+            "opening_dm": {"enabled": False, "message": "", "button_text": ""},
+        },
+    )
+
+    assert patched.status_code == 200
+    assert patched.json()["collect_email"]["enabled"] is False
+
+
+@pytest.fixture
+async def armed(database):
+    """An account and a two-step rule with the email gate on, ready for a comment."""
+    account_id = ObjectId()
+    await database["instagram_accounts"].insert_one(
+        {
+            "_id": account_id,
+            "instagram_user_id": ACCOUNT_IG_ID,
+            "username": "myshop",
+            "status": "connected",
+            "access_token_encrypted": encrypt("tok", "k" * 64),
+        }
+    )
+    await database["media"].insert_one(
+        {"instagram_account_id": account_id, "instagram_media_id": MEDIA_ID, "caption": "guide"}
+    )
+    rule_id = (
+        await database["rules"].insert_one(
+            {
+                "instagram_account_id": account_id,
+                "name": "Guide",
+                "trigger": "comment",
+                "scope": "specific",
+                "instagram_media_ids": [MEDIA_ID],
+                "keywords": ["guide"],
+                "match_mode": "contains",
+                "message": "Here is the guide.",
+                "buttons": [],
+                "opening_dm": {
+                    "enabled": True,
+                    "message": "Want the guide?",
+                    "button_text": "Send it",
+                },
+                "require_follow": {"enabled": False, "prompt": ""},
+                "collect_email": {"enabled": True, "prompt": "Drop your email."},
+                "once_per_person": False,
+                "enabled": True,
+                "priority": 100,
+                "limits": {"per_minute": 10, "per_hour": 100, "per_day": 500},
+            }
+        )
+    ).inserted_id
+    return {"account_id": account_id, "rule_id": rule_id}
+
+
+async def test_a_comment_then_a_tap_asks_for_the_email_and_parks(database, armed):
+    """The whole path the other tests start downstream of: comment, opener, tap,
+    prompt. Nothing here is hand-planted, so a break anywhere along it shows up."""
+    client = MockInstagramClient()
+    comment_id = "17900000000000000"
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": ACCOUNT_IG_ID,
+                "time": int(datetime.now(UTC).timestamp()),
+                "changes": [
+                    {
+                        "field": "comments",
+                        "value": {
+                            "from": {"id": SENDER, "username": "emma"},
+                            "comment_id": comment_id,
+                            "text": "send me the guide",
+                            "media": {"id": MEDIA_ID, "media_product_type": "FEED"},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    event_id = str(
+        (
+            await database["webhook_events"].insert_one(
+                {"event_hash": str(ObjectId()), "payload": payload, "status": "received"}
+            )
+        ).inserted_id
+    )
+
+    opener = await process_comment_event(ctx(database, client), event_id, ACCOUNT_IG_ID, comment_id)
+    assert opener["action"] == "opening_dm"
+    assert "Want the guide?" in client.sent_private_replies[0]["text"]
+
+    tapped = await process_postback_event(
+        ctx(database, client),
+        event_id,
+        ACCOUNT_IG_ID,
+        SENDER,
+        f"{POSTBACK_PREFIX}:{armed['rule_id']}:{comment_id}",
+    )
+
+    assert tapped["status"] == "awaiting_email"
+    assert [m["text"] for m in client.sent_direct_messages] == ["Drop your email."]
+    row = await database["executions"].find_one({"_id": ObjectId(tapped["execution_id"])})
+    assert row["status"] == "awaiting_email"
+    assert "Here is the guide." not in [m["text"] for m in client.sent_direct_messages]

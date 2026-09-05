@@ -390,6 +390,14 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     rule: {
       name: 'Collect emails first',
       keywords: ['guide'],
+      // The opener is not decoration here. The email prompt is sent when
+      // someone taps this button, so without it the gate below never fires --
+      // which is exactly what this template used to ship.
+      opening_dm: {
+        enabled: true,
+        message: 'Happy to send the guide over! Tap below and I\'ll get it to you.',
+        button_text: 'Send me the guide',
+      },
       message: 'Thanks! Here is the guide you asked for.',
       buttons: [{ title: 'Open guide', url: 'https://example.com/guide' }],
       collect_email: { enabled: true, prompt: "Drop your email and I'll send it straight over!" },

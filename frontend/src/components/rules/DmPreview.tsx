@@ -84,6 +84,10 @@ export function DmPreview({
   const opening = draft.opening_dm
   const usesOpener = Boolean(opening?.enabled && opening.message?.trim())
   const buttons = draft.buttons ?? []
+  // The gate only runs behind the opener, so the preview only shows it there
+  // -- matching the server, which refuses to save the other combination.
+  const emailGate = draft.collect_email
+  const asksForEmail = Boolean(usesOpener && emailGate?.enabled)
   const attachment = draft.attachment ?? null
   const delay = draft.reply_delay_seconds ?? 0
 
@@ -120,6 +124,20 @@ export function DmPreview({
               <div className="dm-row dm-row-them">
                 <span className="dm-tap">{opening!.button_text || 'Send me the link'}</span>
               </div>
+
+              {asksForEmail && (
+                <>
+                  <div className="dm-row">
+                    <AccountAvatar className="dm-face" url={avatarUrl} name={account} size={22} />
+                    <div className="dm-bubble">
+                      <p>{fill(emailGate!.prompt || "What's your email?")}</p>
+                    </div>
+                  </div>
+                  <div className="dm-row dm-row-them">
+                    <span className="dm-tap">them@example.com</span>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <p className="dm-note">No opening DM — the message below is sent straight away.</p>

@@ -29,7 +29,11 @@ from app.db.repositories import (
     WebhookEventsRepository,
 )
 from app.errors import MetaAPIError, MetaTokenError, TemplateError
-from app.models.rules import FOLLOW_PROMPT_NO_WINDOW, FOLLOW_PROMPT_WITH_WINDOW
+from app.models.rules import (
+    EMAIL_PROMPT_DEFAULT,
+    FOLLOW_PROMPT_NO_WINDOW,
+    FOLLOW_PROMPT_WITH_WINDOW,
+)
 from app.services import origins
 from app.services.ai.classifier import classify
 from app.services.campaigns import (
@@ -757,7 +761,7 @@ async def process_postback_event(
                 access_token,
                 account["instagram_user_id"],
                 sender_id,
-                gate.get("prompt") or "What's your email? I'll send it straight over.",
+                gate.get("prompt") or EMAIL_PROMPT_DEFAULT,
             )
         except (MetaAPIError, EncryptionError) as exc:
             await executions.complete(execution["_id"], status="failed", error=str(exc))

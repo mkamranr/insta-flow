@@ -38,6 +38,10 @@ const FOLLOW_PROMPT_WITH_WINDOW =
   "Follow me and I'll send the link straight over — no need to comment again."
 const FOLLOW_PROMPT_NO_WINDOW = 'Follow me first, then comment again and I\'ll send the link!'
 
+/** Mirrors `EMAIL_PROMPT_DEFAULT` in `backend/app/models/rules.py`, which the
+    worker falls back to when a rule carries no prompt of its own. */
+const EMAIL_PROMPT_DEFAULT = "What's your email? I'll send it straight over."
+
 const BLANK: Partial<Rule> = {
   name: '',
   scope: 'specific',
@@ -449,6 +453,43 @@ export function RuleEditor({
                   set({ public_reply: { ...draft.public_reply!, message: e.target.value } })
                 }
               />
+            )}
+
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={draft.collect_email?.enabled ?? false}
+                onChange={(e) =>
+                  set({
+                    collect_email: {
+                      enabled: e.target.checked,
+                      prompt: draft.collect_email?.prompt || EMAIL_PROMPT_DEFAULT,
+                    },
+                  })
+                }
+              />
+              Ask for their email first
+            </label>
+            {draft.collect_email?.enabled && (
+              <>
+                {/* Reads off `opensWithDm`, the same expression the follow gate's
+                    wording uses. The dependency is real: the prompt is sent from
+                    the postback handler, so with no button there is nothing to
+                    ask on, and the server refuses to save that combination. */}
+                <p className={opensWithDm ? 'muted small' : 'err small'}>
+                  {opensWithDm
+                    ? 'Asked after they tap the button. The link is held until they reply with an address, which is then saved to Contacts.'
+                    : 'This needs the opening DM in step 2 — the email is asked for when they tap its button, and there is no button without it.'}
+                </p>
+                <input
+                  value={draft.collect_email.prompt}
+                  maxLength={300}
+                  placeholder={EMAIL_PROMPT_DEFAULT}
+                  onChange={(e) =>
+                    set({ collect_email: { ...draft.collect_email!, prompt: e.target.value } })
+                  }
+                />
+              </>
             )}
           </section>
 

@@ -468,7 +468,28 @@ def _refuse_unsupported_features(trigger: str, values: dict[str, Any]) -> None:
     `any_word` on a DM trigger would answer every message anyone sends,
     including real customer questions. `process_message_event` says it plainly:
     this is not a chatbot.
+
+    The email gate is checked first, because it is the one combination that is
+    dead on a comment trigger too. The prompt is sent from the postback handler,
+    which only runs when someone taps the button on an opening DM, so a rule
+    that answers the comment directly asks nobody for anything. It saved
+    cleanly and did nothing, which is exactly what this function exists to stop.
     """
+    if (values.get("collect_email") or {}).get("enabled"):
+        if trigger != "comment":
+            label = "story reply" if trigger == "story_reply" else "DM keyword"
+            raise ValidationError(
+                f"Asking for an email only applies to comments, so it cannot apply to a {label}."
+            )
+        opening = values.get("opening_dm") or {}
+        # Enabled *and* non-blank, matching `uses_opening_dm` in the worker: an
+        # empty opener sends nothing, so it carries no button to tap.
+        if not (opening.get("enabled") and str(opening.get("message") or "").strip()):
+            raise ValidationError(
+                "Asking for an email needs the opening DM: the prompt is sent when they tap "
+                "its button. Turn on the opening DM, or switch off the email request."
+            )
+
     if trigger == "comment":
         return
 

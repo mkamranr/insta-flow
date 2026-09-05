@@ -100,11 +100,23 @@ class FollowGate(BaseModel):
     prompt: str = Field(default=FOLLOW_PROMPT_WITH_WINDOW, max_length=300)
 
 
+# Named for the same reason as the two above: the model default and the
+# worker's fallback were the same string written twice, which is the drift that
+# comment describes, one copy away from happening again.
+EMAIL_PROMPT_DEFAULT = "What's your email? I'll send it straight over."
+
+
 class EmailGate(BaseModel):
-    """Ask for an email in the DM before sending the payoff."""
+    """Ask for an email in the DM before sending the payoff.
+
+    Only reachable through the opening DM. The prompt is sent from the postback
+    handler -- the moment someone taps the button -- so a rule that replies
+    directly to the comment has nothing to ask on. `rules._refuse_unsupported_features`
+    enforces that pairing rather than letting the setting sit there doing nothing.
+    """
 
     enabled: bool = False
-    prompt: str = Field(default="What's your email? I'll send it straight over.", max_length=300)
+    prompt: str = Field(default=EMAIL_PROMPT_DEFAULT, max_length=300)
 
 
 class AiMatching(BaseModel):
