@@ -245,7 +245,7 @@ export function Dashboard() {
           <Stat
             label="Click-through"
             value={`${summary?.click_through_rate ?? 0}%`}
-            hint="Clicks per DM sent"
+            hint="Clicks per link sent"
             icon={
               <svg {...si}>
                 <circle cx="12" cy="12" r="9" />

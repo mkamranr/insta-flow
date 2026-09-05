@@ -55,7 +55,7 @@ export function AnalyticsDrawer({ open, onClose }: { open: boolean; onClose: () 
             <Metric
               label="CTR"
               value={`${summary?.click_through_rate ?? 0}%`}
-              hint="Clicks per DM sent"
+              hint="Clicks per link sent"
             />
             <Metric
               label="Leads captured"

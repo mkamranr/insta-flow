@@ -74,9 +74,11 @@ async def summary(
     # comment count, and message-triggered executions would silently deflate it.
     by_status = await executions.count_by_status({**window, "comment_id": {"$exists": True}})
     sent = by_status.get("success", 0)
-    clicks = await links.count_clicks(
-        {"instagram_account_id": account_id, "created_at": {"$gte": since}}
-    )
+    window_links = {"instagram_account_id": account_id, "created_at": {"$gte": since}}
+    clicks = await links.count_clicks(window_links)
+    # Both sides of the rate share one filter, so this reads as a cohort: of the
+    # links sent in the window, how many taps did they draw.
+    delivered = await links.count(window_links)
     total_comments = await comments.count(window)
     matched = sum(by_status.values())
 
@@ -92,8 +94,11 @@ async def summary(
         "skipped": by_status.get("skipped", 0),
         "dry_runs": by_status.get("dry_run", 0),
         "link_clicks": clicks,
-        # Clicks per DM sent. Can exceed 100%: one person may click twice.
-        "click_through_rate": round(clicks / sent * 100, 1) if sent else 0.0,
+        # Clicks per link *delivered*, not per DM sent. A two-step automation
+        # sends two DMs for one comment and only the second carries a link, so
+        # dividing by DMs read 50% for a commenter who clicked the one link they
+        # were sent. Can still exceed 100%: one person may click twice.
+        "click_through_rate": round(clicks / delivered * 100, 1) if delivered else 0.0,
         "leads_captured": await contacts.count(
             {"instagram_account_id": account_id, "created_at": {"$gte": since}}
         ),
@@ -116,6 +121,7 @@ async def rule_performance(
         return []
 
     clicks_by_rule = await links.clicks_by_rule(account_id)
+    delivered_by_rule = await links.delivered_by_rule(account_id)
     out: list[dict[str, Any]] = []
 
     for rule in await rules.list_for_account(account_id):
@@ -124,6 +130,7 @@ async def rule_performance(
             {"rule_id": rule["_id"], "status": "success", "action": {"$in": list(SENT_ACTIONS)}}
         )
         clicks = clicks_by_rule.get(rule_id, 0)
+        delivered = delivered_by_rule.get(rule_id, 0)
         destinations = await links.by_destination_for_rule(rule["_id"])
         out.append(
             {
@@ -134,7 +141,10 @@ async def rule_performance(
                 "instagram_media_ids": rule.get("instagram_media_ids") or [],
                 "dms_sent": sent,
                 "link_clicks": clicks,
-                "click_through_rate": round(clicks / sent * 100, 1) if sent else 0.0,
+                # `sent` counts every DM, including the opener that carries a
+                # postback button rather than a link. Only a delivered link can
+                # be clicked, so only a delivered link belongs in the denominator.
+                "click_through_rate": round(clicks / delivered * 100, 1) if delivered else 0.0,
                 "links": [
                     {
                         **dest,
@@ -143,10 +153,13 @@ async def rule_performance(
                             if dest.get("last_clicked_at")
                             else None
                         ),
-                        # Per-destination CTR shares the rule's denominator: how
-                        # many DMs went out, not how many links were minted.
+                        # Each destination is rated on its own deliveries. It
+                        # used to share the rule's, which halved every button on
+                        # a message that carried two.
                         "click_through_rate": (
-                            round(dest["clicks"] / sent * 100, 1) if sent else 0.0
+                            round(dest["clicks"] / dest["delivered"] * 100, 1)
+                            if dest["delivered"]
+                            else 0.0
                         ),
                     }
                     for dest in destinations
@@ -377,6 +390,7 @@ async def highlights(
 
     since = datetime.now(UTC) - timedelta(days=days)
     clicks_by_rule = await links.clicks_by_rule(account_id)
+    delivered_by_rule = await links.delivered_by_rule(account_id)
 
     best = None
     for rule in await rules.list_for_account(account_id):
@@ -384,9 +398,14 @@ async def highlights(
             {"rule_id": rule["_id"], "status": "success", "action": {"$in": list(SENT_ACTIONS)}}
         )
         clicks = clicks_by_rule.get(str(rule["_id"]), 0)
-        if not sent:
+        delivered = delivered_by_rule.get(str(rule["_id"]), 0)
+        # Ranked on links delivered, like every other rate here, so a two-step
+        # automation is not scored against twice the denominator a one-step one
+        # gets for the same result. A rule that sends no links has no rate to
+        # compare and is skipped rather than entered as a 0%.
+        if not delivered:
             continue
-        rate = round(clicks / sent * 100, 1)
+        rate = round(clicks / delivered * 100, 1)
         if best is None or rate > best["click_through_rate"]:
             best = {
                 "id": str(rule["_id"]),

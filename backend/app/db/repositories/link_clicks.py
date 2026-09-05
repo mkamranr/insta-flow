@@ -137,3 +137,23 @@ class LinkClicksRepository(BaseRepository[Any]):
         ]
         cursor = await self.collection.aggregate(pipeline)
         return {str(doc["_id"]): int(doc["n"]) async for doc in cursor}
+
+    async def delivered_by_rule(self, instagram_account_id: Any) -> dict[str, int]:
+        """How many trackable links each rule has actually put in front of people.
+
+        The denominator for click-through rate. Counting DMs sent instead
+        inflated it by exactly the number of openers, and so understated every
+        rate: a two-step automation sends the opener *and* the payoff for one
+        comment, but only the payoff carries a `web_url` -- the opener's button
+        is a postback, which mints no token here. One commenter, sent one link
+        and clicking it, read as 50%.
+
+        A row exists from the moment the link is sent, with `click_count: 0`, so
+        this counts deliveries and never silently narrows to links that worked.
+        """
+        pipeline: list[Document] = [
+            {"$match": {"instagram_account_id": to_object_id(instagram_account_id)}},
+            {"$group": {"_id": "$rule_id", "n": {"$sum": 1}}},
+        ]
+        cursor = await self.collection.aggregate(pipeline)
+        return {str(doc["_id"]): int(doc["n"]) async for doc in cursor}

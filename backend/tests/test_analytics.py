@@ -93,14 +93,158 @@ async def test_unmatched_never_goes_negative(signed_in, database, admin):
     assert (await signed_in.get("/api/analytics/summary")).json()["unmatched"] == 0
 
 
-async def test_click_through_rate_is_clicks_per_dm(signed_in, database, admin):
+async def test_click_through_rate_is_clicks_per_link_delivered(signed_in, database, admin):
+    """Repeat taps still count, so the rate can exceed 100%."""
     await seed(database, admin, executions=[("success", "private_reply")] * 2, clicks=[3])
-    assert (await signed_in.get("/api/analytics/summary")).json()["click_through_rate"] == 150.0
+    assert (await signed_in.get("/api/analytics/summary")).json()["click_through_rate"] == 300.0
 
 
 async def test_click_through_rate_is_zero_rather_than_dividing_by_zero(signed_in, database, admin):
-    await seed(database, admin, clicks=[5])
+    """A rule with no link buttons delivers no links, so there is nothing to divide by."""
+    await seed(database, admin, executions=[("success", "private_reply")] * 2)
     assert (await signed_in.get("/api/analytics/summary")).json()["click_through_rate"] == 0.0
+
+
+async def test_the_two_step_flow_does_not_halve_the_click_through_rate(signed_in, database, admin):
+    """One comment answered by opener + payoff is two DMs but one link.
+
+    Dividing clicks by DMs sent read 50% for a commenter who was sent exactly
+    one link and clicked it. The opener carries a postback button, not a
+    `web_url`, so it mints no trackable link and must not sit in the
+    denominator.
+    """
+    await seed(
+        database,
+        admin,
+        executions=[("success", "opening_dm"), ("success", "private_reply")],
+        clicks=[1],
+    )
+    body = (await signed_in.get("/api/analytics/summary")).json()
+
+    assert body["dms_sent"] == 2, "both sends really happened; that count is honest"
+    assert body["link_clicks"] == 1
+    assert body["click_through_rate"] == 100.0
+
+
+async def _rule_with(database, account_id, *, name, actions=(), links=()):
+    """A rule plus the executions it sent and the tracked links it minted."""
+    rule_id = ObjectId()
+    now = datetime.now(UTC)
+    await database["rules"].insert_one(
+        {
+            "_id": rule_id,
+            "instagram_account_id": account_id,
+            "name": name,
+            "priority": 100,
+            "enabled": True,
+        }
+    )
+    for action in actions:
+        await database["executions"].insert_one(
+            {
+                "instagram_account_id": account_id,
+                "comment_id": ObjectId(),
+                "rule_id": rule_id,
+                "action": action,
+                "status": "success",
+                "created_at": now,
+            }
+        )
+    for target_url, click_count in links:
+        await database["link_clicks"].insert_one(
+            {
+                "token": str(ObjectId()),
+                "instagram_account_id": account_id,
+                "rule_id": rule_id,
+                "execution_id": ObjectId(),
+                "target_url": target_url,
+                "button_title": "Open",
+                "click_count": click_count,
+                "created_at": now,
+            }
+        )
+    return rule_id
+
+
+async def test_rule_click_through_rate_counts_links_not_dms(signed_in, database, admin):
+    """Two DMs, one link, one click is 100% -- the opener carries no link."""
+    account_id = await seed(database, admin)
+    await _rule_with(
+        database,
+        account_id,
+        name="Two-step link",
+        actions=("opening_dm", "private_reply"),
+        links=(("https://example.com", 1),),
+    )
+
+    row = (await signed_in.get("/api/analytics/rules")).json()[0]
+
+    assert row["dms_sent"] == 2
+    assert row["link_clicks"] == 1
+    assert row["click_through_rate"] == 100.0
+
+
+async def test_a_rule_that_sends_no_links_has_no_rate_to_report(signed_in, database, admin):
+    account_id = await seed(database, admin)
+    await _rule_with(database, account_id, name="Thank commenters", actions=("private_reply",))
+
+    row = (await signed_in.get("/api/analytics/rules")).json()[0]
+
+    assert row["dms_sent"] == 1
+    assert row["click_through_rate"] == 0.0
+
+
+async def test_each_destination_is_rated_against_its_own_deliveries(signed_in, database, admin):
+    """Two buttons go out together, so each was delivered twice, not four times.
+
+    Sharing one rule-wide denominator made every destination look half as
+    effective as it was the moment a message carried more than one button.
+    """
+    account_id = await seed(database, admin)
+    await _rule_with(
+        database,
+        account_id,
+        name="Two buttons",
+        actions=("private_reply", "private_reply"),
+        links=(
+            ("https://example.com/a", 2),
+            ("https://example.com/a", 0),
+            ("https://example.com/b", 1),
+            ("https://example.com/b", 1),
+        ),
+    )
+
+    row = (await signed_in.get("/api/analytics/rules")).json()[0]
+    rates = {link["target_url"]: link for link in row["links"]}
+
+    assert rates["https://example.com/a"]["delivered"] == 2
+    assert rates["https://example.com/a"]["click_through_rate"] == 100.0
+    assert rates["https://example.com/b"]["click_through_rate"] == 100.0
+    # Four links delivered, four clicks -- the rule agrees with its destinations.
+    assert row["click_through_rate"] == 100.0
+
+
+async def test_the_best_automation_is_ranked_on_links_delivered(signed_in, database, admin):
+    """A one-step rule and a two-step rule with identical results must tie."""
+    account_id = await seed(database, admin)
+    await _rule_with(
+        database,
+        account_id,
+        name="One step",
+        actions=("private_reply",),
+        links=(("https://example.com", 1),),
+    )
+    await _rule_with(
+        database,
+        account_id,
+        name="Two step",
+        actions=("opening_dm", "private_reply"),
+        links=(("https://example.com", 1),),
+    )
+
+    best = (await signed_in.get("/api/analytics/highlights")).json()["best_automation"]
+
+    assert best["click_through_rate"] == 100.0
 
 
 async def test_summary_never_reports_delivery_or_read_rates(signed_in, database, admin):

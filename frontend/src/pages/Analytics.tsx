@@ -88,7 +88,7 @@ function Performance({ days }: { days: number }) {
           <Stat
             label="Click-through rate"
             value={summary?.click_through_rate == null ? '—' : `${summary.click_through_rate}%`}
-            hint="Clicks per DM sent"
+            hint="Clicks per link sent"
           />
           <Stat label="Leads captured" value={num(summary?.leads_captured)} />
         </div>
