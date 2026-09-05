@@ -180,6 +180,20 @@ Put that `PUBLIC_BASE_URL` into `.env`, then:
 make reload
 ```
 
+**Copy the `https://` with it.** This is the one value you hand-edit during a move, and a bare
+hostname is the natural thing to type:
+
+```
+PUBLIC_BASE_URL=home-srv-1.tail2bcecb.ts.net        # wrong -- no scheme
+PUBLIC_BASE_URL=https://home-srv-1.tail2bcecb.ts.net # right
+```
+
+Without the scheme, `tracked_buttons` fails its HTTPS test and stops rewriting links, so click
+tracking silently records nothing, and attachment URLs come out unresolvable for Meta. Nothing
+errors and `/ready` still says ready. Current builds refuse to start on a scheme-less value for
+exactly this reason -- if the API container will not come up after a move, read its logs before
+assuming the move failed.
+
 **`make reload`, not `docker compose restart`.** Compose reads `env_file` when a container is
 *created*, so a restart silently keeps the old value and you would spend an hour wondering why
 the URL never changed.

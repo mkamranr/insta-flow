@@ -20,7 +20,6 @@ import logging
 import secrets
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -36,6 +35,7 @@ from app.api.deps import (
     require,
 )
 from app.errors import ValidationError
+from app.services import origins
 from app.services.geoip import GeoIpError, database_path, download, remote_build_date
 from app.services.meta.credentials import ORIGIN_KEY, origin_for, resolve_for, workspace_urls
 from app.services.security.encryption import EncryptionError, decrypt, encrypt
@@ -200,19 +200,15 @@ class InstanceOrigin(BaseModel):
 def _clean_origin(raw: str) -> str:
     """Validate a bare origin: scheme and host, nothing after them.
 
-    A path here would be doubled onto every derived URL -- `/u/<slug>/` is added
-    by this app -- and the result is a webhook URL Meta will happily accept and
-    this server will never answer on.
+    The rule itself lives in `services/origins.py`, because `PUBLIC_BASE_URL`
+    has to enforce the identical thing and previously did not -- which is how a
+    scheme-less origin reached a live deployment and silently disabled click
+    tracking. Here it is a 422; there it fails startup.
     """
-    value = raw.strip().rstrip("/")
-    parts = urlsplit(value)
-    if parts.scheme not in ("http", "https"):
-        raise ValidationError("The origin must start with http:// or https://.")
-    if not parts.netloc:
-        raise ValidationError("The origin needs a hostname, for example https://host.ts.net.")
-    if parts.path or parts.query or parts.fragment:
-        raise ValidationError("The origin must be the host only, with no path after it.")
-    return f"{parts.scheme}://{parts.netloc}"
+    try:
+        return origins.normalise(raw)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
 
 
 @router.get("/instance", dependencies=[Depends(require("instance.view"))])
@@ -226,6 +222,12 @@ async def get_instance(
         # effect or whether PUBLIC_BASE_URL is still supplying the value.
         "source": "settings" if saved.get(ORIGIN_KEY) else "env",
         "env_value": settings.public_base_url,
+        # Reported on every read, not only when saving. A non-HTTPS origin turns
+        # click tracking and file attachments off, and the only symptom is a
+        # click-through rate of zero -- which looks exactly like nobody clicking,
+        # so the page has to say it where somebody investigating that zero will
+        # actually be looking.
+        "trackable": origins.is_trackable(origin_for(settings, saved)),
     }
 
 

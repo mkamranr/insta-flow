@@ -55,9 +55,7 @@ async def test_a_click_is_recorded_and_redirects(api, database):
 async def test_repeat_clicks_all_count(api, database):
     """Repeat clicks are real engagement; collapsing them understates the metric."""
     links = LinkClicksRepository(database)
-    await links.insert(
-        {"token": "tok2", "target_url": "https://example.com", "click_count": 0}
-    )
+    await links.insert({"token": "tok2", "target_url": "https://example.com", "click_count": 0})
     for _ in range(3):
         await api.get("/r/tok2")
     assert (await links.get_by_token("tok2"))["click_count"] == 3
@@ -115,3 +113,59 @@ async def test_a_redirect_survives_a_link_with_no_account(api, database):
 
     assert response.status_code == 302
     assert response.headers["location"] == "https://example.com/ok"
+
+
+# -- which origin decides trackability --------------------------------------
+#
+# `tracked_buttons` used to read `settings.public_base_url` straight from the
+# environment, so an operator who corrected the origin on the Settings page
+# still got untracked links: the override governed every Meta-facing URL but
+# not this. One value, two sources of truth, and the wrong one won here.
+
+
+async def _buttons_for(database, origin: str, saved: dict | None = None):
+    from app.config import Settings
+    from app.db.repositories import AppSettingsRepository
+    from app.workers.tasks import tracked_buttons
+
+    if saved is not None:
+        await AppSettingsRepository(database).save(saved)
+
+    settings = Settings(public_base_url=origin, encryption_key="k" * 64, session_secret="s" * 32)
+    rule = {
+        "_id": ObjectId(),
+        "buttons": [{"title": "Get it", "url": "https://example.com/landing"}],
+    }
+    return await tracked_buttons(
+        database, settings, rule, {"_id": ObjectId()}, ObjectId(), "27962242703427275"
+    )
+
+
+async def test_an_https_origin_rewrites_the_button(database):
+    buttons = await _buttons_for(database, "https://host.ts.net")
+
+    assert buttons[0]["url"].startswith("https://host.ts.net/r/")
+    assert await LinkClicksRepository(database).count() == 1
+
+
+async def test_a_non_https_origin_sends_the_raw_url_and_records_nothing(database):
+    """The deliberate fallback: Meta rejects a non-HTTPS web_url button, so a
+    broken tracking link would lose the whole message. Losing the metric is the
+    lesser harm -- but nothing must be written, or the row would count a click
+    that can never arrive."""
+    buttons = await _buttons_for(database, "http://localhost:8080")
+
+    assert buttons[0]["url"] == "https://example.com/landing"
+    assert await LinkClicksRepository(database).count() == 0
+
+
+async def test_the_settings_override_decides_not_the_environment(database):
+    """The live bug: env scheme-less, override correct, links still untracked."""
+    from app.services.meta.credentials import ORIGIN_KEY
+
+    buttons = await _buttons_for(
+        database, "http://localhost:8080", saved={ORIGIN_KEY: "https://host.ts.net"}
+    )
+
+    assert buttons[0]["url"].startswith("https://host.ts.net/r/")
+    assert await LinkClicksRepository(database).count() == 1

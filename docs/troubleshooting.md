@@ -138,6 +138,42 @@ docker compose logs -f worker | grep -E "awaiting_follow|delivered_after_follow"
 Meta publishes no follow webhook (`docs/meta-api.md` §5.4), so this is polled: 15s, 30s, 1m, 2m,
 3m, 5m, 10m, 15m, 30m, then hourly, for up to 23 hours.
 
+## Link clicks always read zero
+
+The click-through rate stays at 0% no matter how many links go out, and
+`db.link_clicks.countDocuments({})` is 0 — not merely un-clicked rows, *no rows at all*.
+
+Check the scheme on the public origin:
+
+```bash
+grep PUBLIC_BASE_URL .env
+curl -s localhost:8090/ready | python3 -m json.tool | grep public_base_url
+```
+
+It must include `https://`. A bare hostname —
+
+```
+PUBLIC_BASE_URL=home-srv-1.example.ts.net      # wrong
+PUBLIC_BASE_URL=https://home-srv-1.example.ts.net   # right
+```
+
+— fails the HTTPS test in `tracked_buttons`, so buttons ship the raw target URL and no
+`link_clicks` row is ever written. There is nothing to click through; the metric was never
+collectable rather than empty.
+
+Current builds refuse to start on a scheme-less value, so this only bites a deployment
+configured before that check existed. Fix `.env` and `make reload` — **not**
+`docker compose restart`, which keeps the old environment.
+
+**Two things this also breaks, worth checking at the same time.** File attachments are built
+from the same value, so a scheme-less origin produced `host.ts.net/files/...` which Meta cannot
+fetch — `send_attachment_if_any` only logs a warning, so recipients got the text and no file.
+And a rule sent *before* the fix keeps its raw button forever: those clicks are unattributable,
+so test with a freshly sent message rather than an old one.
+
+**Clicks recorded but no geography?** Different fault, same-looking symptom — see the
+`trusted_proxies` note in the Caddy section, not this one.
+
 ## "Invalid redirect_uri" when connecting
 
 The OAuth redirect URI lives on the **Instagram business login settings** page,

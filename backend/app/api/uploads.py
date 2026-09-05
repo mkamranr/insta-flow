@@ -15,9 +15,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import CurrentUser, SettingsDep, require, require_any
+from app.api.deps import AppSettingsRepo, CurrentUser, SettingsDep, require, require_any
 from app.errors import NotFoundError, ValidationError
 from app.services.attachments import MEDIA_KINDS, AttachmentError, resolve, store
+from app.services.meta.credentials import origin_for
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ async def limits(user: CurrentUser) -> dict[str, Any]:
 async def upload(
     user: CurrentUser,
     settings: SettingsDep,
+    app_settings: AppSettingsRepo,
     file: UploadFile = _FILE_FIELD,
 ) -> dict[str, Any]:
     data = await file.read(_READ_CEILING)
@@ -76,8 +78,12 @@ async def upload(
         "storage_key": stored.storage_key,
         "filename": stored.filename,
         "size_bytes": stored.size_bytes,
-        # Absolute, because Meta fetches this from its own servers.
-        "url": f"{settings.public_base_url.rstrip('/')}/files/{stored.storage_key}",
+        # Absolute, because Meta fetches this from its own servers -- and via
+        # `origin_for`, so the Settings override counts. Built from the raw
+        # environment value this silently produced a scheme-less URL that Meta
+        # cannot resolve, and `send_attachment_if_any` only logs a warning, so
+        # the recipient got the text and no file.
+        "url": f"{origin_for(settings, await app_settings.load())}/files/{stored.storage_key}",
     }
 
 

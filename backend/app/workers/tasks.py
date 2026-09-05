@@ -30,6 +30,7 @@ from app.db.repositories import (
 )
 from app.errors import MetaAPIError, MetaTokenError, TemplateError
 from app.models.rules import FOLLOW_PROMPT_NO_WINDOW, FOLLOW_PROMPT_WITH_WINDOW
+from app.services import origins
 from app.services.ai.classifier import classify
 from app.services.campaigns import (
     ACTION_DIRECT_MESSAGE,
@@ -48,6 +49,7 @@ from app.services.campaigns.policy import DRY_RUN, NOT_FOLLOWING
 from app.services.contacts import extract_email
 from app.services.links import is_safe_target, new_token, tracking_url
 from app.services.meta import auth as meta_auth
+from app.services.meta.credentials import origin_for
 from app.services.meta.messages import postback_button, web_url_button
 from app.services.meta.tokens import needs_refresh, token_fields
 from app.services.meta.webhooks import (
@@ -80,13 +82,26 @@ async def tracked_buttons(
 ) -> list[dict[str, str]]:
     """Rewrite each button through our redirect so clicks are attributable.
 
-    Without this there is no honest click-through metric (§59). If PUBLIC_BASE_URL
-    is not HTTPS the original URL is sent unchanged -- Meta rejects non-HTTPS
+    Without this there is no honest click-through metric (§59). If the origin is
+    not HTTPS the original URL is sent unchanged -- Meta rejects non-HTTPS
     web_url buttons, so a broken tracking link would lose the message entirely,
     which is worse than losing the metric.
+
+    The origin comes from `origin_for`, not straight from `PUBLIC_BASE_URL`.
+    Reading the environment directly meant an operator who corrected the origin
+    on the Settings page still got untracked links, because only the Meta-facing
+    URLs honoured the override -- two sources of truth for one value.
     """
     links = LinkClicksRepository(db)
-    trackable = settings.public_base_url.lower().startswith("https://")
+    origin = origin_for(settings, await AppSettingsRepository(db).load())
+    trackable = origins.is_trackable(origin)
+    if not trackable and (rule.get("buttons") or []):
+        # Loud, because the alternative is a click-through rate that reads zero
+        # forever and looks exactly like nobody clicking.
+        logger.warning(
+            "link_tracking_disabled_origin_not_https",
+            extra={"origin": origin, "rule_id": str(rule["_id"])},
+        )
 
     buttons: list[dict[str, str]] = []
     for button in rule.get("buttons") or []:
@@ -114,7 +129,7 @@ async def tracked_buttons(
                 "last_clicked_at": None,
             }
         )
-        buttons.append(web_url_button(title, tracking_url(settings.public_base_url, token)))
+        buttons.append(web_url_button(title, tracking_url(origin, token)))
 
     return buttons
 

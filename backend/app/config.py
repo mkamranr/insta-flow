@@ -7,8 +7,10 @@ or returned to the frontend; see `app.logging` for the redaction filter.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.services.origins import normalise as normalise_origin
 
 
 class Settings(BaseSettings):
@@ -92,6 +94,20 @@ class Settings(BaseSettings):
             "SESSION_SECRET": self.session_secret,
         }
         return sorted(name for name, value in required.items() if not value)
+
+    @field_validator("public_base_url")
+    @classmethod
+    def _origin_is_well_formed(cls, value: str) -> str:
+        """Fail startup rather than degrade quietly.
+
+        A scheme-less value used to be accepted here and then disabled link
+        tracking and broke attachment URLs, with nothing logged -- the Settings
+        page rejected exactly the same input, so the value was validated on one
+        path and not the other. Failing here surfaces it where
+        `docs/upgrading.md` already tells operators to look: the API container
+        fails its healthcheck instead of serving a half-working deployment.
+        """
+        return normalise_origin(value)
 
 
 @lru_cache

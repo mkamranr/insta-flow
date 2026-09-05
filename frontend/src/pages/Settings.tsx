@@ -311,6 +311,7 @@ interface InstanceOrigin {
   origin: string
   source: 'settings' | 'env'
   env_value: string
+  trackable: boolean
 }
 
 function InstanceOriginCard() {
@@ -355,6 +356,18 @@ function InstanceOriginCard() {
         Host only, with no path. Currently taken from{' '}
         {data?.source === 'settings' ? 'this setting' : <code>PUBLIC_BASE_URL</code>}.
       </p>
+
+      {/* Shown whenever the origin is not HTTPS, not just at the moment of
+          saving. Both features fail silently, so the only symptom is a
+          click-through rate of zero -- and this is the page somebody checks
+          when they are trying to explain that zero. */}
+      {data && !data.trackable && (
+        <p className="err small">
+          This origin is not <code>https://</code>, so link clicks are not tracked and file
+          attachments cannot be fetched by Instagram. Both fail silently — the click-through
+          rate simply reads 0%.
+        </p>
+      )}
 
       {can('instance.manage') && (
         <div className="row">
