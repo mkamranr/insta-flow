@@ -3,11 +3,16 @@ import { AccountAvatar } from '../common/AccountAvatar'
 import type { Attachment, Rule } from '../../api/rules'
 
 /**
- * How the automation will actually land in someone's inbox.
+ * How the automation will actually land for the person who commented.
  *
  * Rendered from the draft rather than from a saved rule, so it updates as the
  * form is typed into. Variables are filled with sample values — a preview
  * showing a literal `{{username}}` teaches you nothing about the real message.
+ *
+ * Deliberately not called "inbox". Instagram delivers a private reply to the
+ * inbox only for people who already follow the account; everyone else gets it as
+ * a message request they must accept first. A preview that implies otherwise is
+ * how a working automation gets reported as broken.
  */
 
 const SAMPLES: Record<string, string> = {
@@ -158,6 +163,15 @@ export function DmPreview({
           <span className="muted small">Message…</span>
         </footer>
       </div>
+
+      {/* Stated for every rule, not just follow-gated ones: anyone who does not
+          already follow gets this as a request. For a follow-gated rule that is
+          everyone it targets, by definition. */}
+      <p className="dm-note">
+        People who already follow you see this in their inbox. Everyone else gets it as a{' '}
+        <strong>message request</strong> they have to accept first — Instagram does not notify
+        them the way it does for a normal message.
+      </p>
     </div>
   )
 }

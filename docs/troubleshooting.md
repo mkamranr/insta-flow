@@ -100,6 +100,44 @@ The Activity page shows the reason. The common ones:
 `DRY_RUN=true` records everything and sends nothing. That is the default. The
 banner at the top of the dashboard says so.
 
+## The automation fired but nobody received anything
+
+Twice now this has been reported as a broken pipeline and twice the pipeline was fine. Work
+through it in this order; the first two checks cost nothing.
+
+**1. Did it actually send?** Look for the execution and Meta's own receipt:
+
+```
+docker compose logs worker --since 1h | grep -E "private_reply_success|public_reply_sent|awaiting_follow"
+```
+
+A `meta_message_id` in that line means Meta accepted the message. That ends the question of
+whether the software sent it — everything after this is about where Instagram put it.
+
+**2. Look in Message Requests, not the inbox.** Instagram delivers a private reply to the inbox
+only for people who already follow the account; everyone else gets a message request they must
+accept first, and it is not badged like a normal message. On a follow-gated rule this is
+*every* recipient by definition, because the gate exists to reach non-followers
+(`docs/meta-api.md` §4). Check on the *commenting* account: Direct → Requests.
+
+Seen from the business account the thread looks completely normal, which is what makes this so
+convincing a false alarm.
+
+**3. No public reply under the comment?** That is a separate per-rule setting, off by default.
+Check `public_reply.enabled` on the rule. When it is off, nothing is posted publicly and only
+the DM is sent — no log line, no execution row, by design.
+
+**4. Got the follow prompt instead of the link?** Working as intended: they had not followed
+when they tapped. With an opening DM the execution is parked as `awaiting_follow` and the link
+is delivered automatically once they follow — no second comment or tap needed. Watch it:
+
+```
+docker compose logs -f worker | grep -E "awaiting_follow|delivered_after_follow"
+```
+
+Meta publishes no follow webhook (`docs/meta-api.md` §5.4), so this is polled: 15s, 30s, 1m, 2m,
+3m, 5m, 10m, 15m, 30m, then hourly, for up to 23 hours.
+
 ## "Invalid redirect_uri" when connecting
 
 The OAuth redirect URI lives on the **Instagram business login settings** page,

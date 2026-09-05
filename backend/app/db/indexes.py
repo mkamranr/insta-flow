@@ -93,6 +93,24 @@ INDEXES: dict[str, list[IndexModel]] = {
     "instagram_accounts": [
         IndexModel([("instagram_user_id", ASCENDING)], unique=True, name="uq_instagram_user_id"),
         IndexModel([("user_id", ASCENDING)], name="ix_user_id"),
+        # At most one default account per workspace. Unique rather than merely
+        # indexed: two defaults would make "which account does an unqualified
+        # request act on" a coin toss, and the wrong answer writes a rule against
+        # the wrong audience.
+        #
+        # Partial on the value, like `uq_bootstrap_admin` above: an account that
+        # is not the default omits the field entirely, so it is not covered and
+        # any number of them coexist. That is also what makes this index safe to
+        # create BEFORE the backfill that populates it -- no existing row carries
+        # `is_default` at all, so nothing can collide. Contrast `uq_user_slug`,
+        # which had to spell out `$type` precisely because its field was already
+        # present and null on every row that needed backfilling.
+        IndexModel(
+            [("user_id", ASCENDING)],
+            unique=True,
+            name="uq_default_account_per_user",
+            partialFilterExpression={"is_default": True},
+        ),
     ],
     "media": [
         IndexModel(

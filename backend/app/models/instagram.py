@@ -20,6 +20,7 @@ class InstagramAccountPublic(BaseModel):
     status: str
     status_error: str | None = None
     webhook_subscribed: bool = False
+    is_default: bool = False
     subscribed_fields: list[str] = []
     token_expires_at: datetime | None = None
     token_expired: bool = False
@@ -42,6 +43,7 @@ class InstagramAccountPublic(BaseModel):
             status=str(document.get("status", "disconnected")),
             status_error=document.get("status_error"),
             webhook_subscribed=bool(document.get("webhook_subscribed", False)),
+            is_default=bool(document.get("is_default", False)),
             subscribed_fields=list(document.get("subscribed_fields") or []),
             token_expires_at=document.get("token_expires_at"),
             token_expired=token_expired,

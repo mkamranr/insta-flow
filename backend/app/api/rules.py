@@ -637,7 +637,15 @@ async def clone_rule(
         )
     logger.info(
         "rule_cloned",
-        extra={"source_rule_id": rule_id, "created": len(created), "skipped": len(skipped)},
+        # `created_count`, not `created`: `extra` may not shadow a LogRecord
+        # attribute, and `created` is the record's own timestamp. It raised here
+        # AFTER the clones were written, so the caller saw a 500 for a clone that
+        # had in fact succeeded.
+        extra={
+            "source_rule_id": rule_id,
+            "created_count": len(created),
+            "skipped": len(skipped),
+        },
     )
     return {"created": created, "skipped": skipped}
 

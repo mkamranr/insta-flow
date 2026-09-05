@@ -248,7 +248,21 @@ export function Layout() {
 
   const signOut = useMutation({
     mutationFn: logout,
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['me'] }),
+    // A full document load, not a router navigation. `workspaceSlug` and
+    // `basename` are read once at module scope, so a client-side sign-out leaves
+    // whoever signs in next stranded inside the previous user's `/u/<slug>`
+    // prefix: WorkspaceGate refuses a workspace that is not theirs, and its own
+    // redirect cannot rescue them because the slug is set, merely wrong.
+    //
+    // Dropping the JS context also empties the react-query cache, which would
+    // otherwise serve the previous user's posts, contacts and analytics to the
+    // next one for `staleTime`. `clear()` is belt-and-braces for the same
+    // reason: if this ever becomes a client-side navigation again, the cache
+    // must still not survive a change of user.
+    onSettled: () => {
+      queryClient.clear()
+      window.location.assign('/')
+    },
   })
 
   const account = accounts?.[0]

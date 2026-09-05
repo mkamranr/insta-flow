@@ -67,18 +67,37 @@ class PublicReply(BaseModel):
     message: str = Field(default="", max_length=300)
 
 
+# The follow prompt has two correct forms, and which one is true depends on
+# whether a messaging window is open when the gate blocks.
+#
+# With an opening DM, tapping the button opened a 24-hour window, so
+# `recheck_follow` can poll and deliver the link the moment the follow lands --
+# asking for another comment would be asking for nothing.
+#
+# Without one, the gate blocks at comment time and the single private reply a
+# comment allows has just been spent on the prompt itself. There is no window
+# and no second reply, so commenting again is genuinely the only way back in.
+#
+# Both live here so the model default, the worker's fallbacks and the editor
+# cannot drift apart -- they did, and the only correct string was the one
+# nobody could reach.
+FOLLOW_PROMPT_WITH_WINDOW = (
+    "Follow me and I'll send the link straight over — no need to comment again."
+)
+FOLLOW_PROMPT_NO_WINDOW = "Follow me first, then comment again and I'll send the link!"
+
+
 class FollowGate(BaseModel):
     """Require the commenter to follow before the link is sent.
 
     Uses the Messaging User Profile API's `is_user_follow_business` — the
-    officially supported check.
+    officially supported check. Meta will not answer it until the person has
+    messaged the account, so with an opening DM the gate is enforced at the
+    postback rather than at the comment (see `workers/tasks.py`).
     """
 
     enabled: bool = False
-    prompt: str = Field(
-        default="Follow me first and comment again — then I'll send the link!",
-        max_length=300,
-    )
+    prompt: str = Field(default=FOLLOW_PROMPT_WITH_WINDOW, max_length=300)
 
 
 class EmailGate(BaseModel):

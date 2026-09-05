@@ -159,6 +159,53 @@ Success:
 - For Live comments, private replies are only possible during the broadcast.
 - Any follow-up message requires the recipient to have replied within 24 hours.
 
+### Where the message actually lands — verified 2026-09-05
+
+**A successful send is not a visible send.** Meta's Private Replies page:
+
+> The reply appears in the recipient's Inbox, if the person follows the Instagram professional
+> account, or to the **Request folder**, if they do not.
+
+Source: <https://developers.facebook.com/docs/instagram-platform/private-replies/>
+
+This was mistaken for a broken pipeline. A comment from a non-follower produced
+`webhook_received` → `private_reply_success` with a `meta_message_id` returned by Meta, and the
+commenter still reported receiving nothing. Nothing was wrong: the opener was in **Message
+Requests**, which Instagram does not badge like an inbox message.
+
+Two things that look like faults and are not:
+
+- Viewing the business profile from the commenting account shows **"Not everyone can message
+  this profile."** That is Instagram describing the *business account's* inbound message
+  controls. It does not block an outbound private reply, and the reply had already been
+  delivered when it was seen.
+- The payoff never arrives on its own. That is the two-step flow working as designed (§4b): a
+  private reply is one message, so the opener carries a postback button and the payoff is only
+  sent once that button is tapped. An untapped opener means no second message, correctly.
+
+**How to check a send actually landed:** on the commenting account, Instagram → Direct →
+**Requests**, not the main inbox. `meta_message_id` in the `executions` row is proof Meta
+accepted it; it is not proof anybody saw it.
+
+**For a follow-gated rule, Requests is not the edge case — it is every case.** The gate exists to
+reach people who do *not* follow yet, and Meta routes to Requests exactly when the recipient does
+not follow. So the first send of a follow-gated automation always lands there. That is the
+designed path, not a fault.
+
+### Which recovery the prompt may promise — verified 2026-09-05
+
+The follow prompt has two correct forms, and offering the wrong one strands people. Both are
+constants in `backend/app/models/rules.py`, and `tests/test_follow_gate.py` pins the split:
+
+| Rule shape | What actually happens when the gate blocks | Prompt may say |
+| --- | --- | --- |
+| **With an opening DM** | The postback tap opened a 24h window. `recheck_follow` polls and delivers the link on its own. | *"no need to comment again"* |
+| **No opening DM** | Blocked at the comment. The one private reply a comment allows has just been spent on this prompt, and no window is open — there is no channel left. | *must* ask them to comment again |
+
+The shipped default said "comment again" for both, on a product whose default flow is the first
+row. The one correct string existed only as a fallback that the editor made unreachable by
+pre-filling the wrong one.
+
 ### Rate limit
 
 **750 calls per hour, per Instagram professional account**, for private replies to comments
@@ -456,6 +503,12 @@ account. Social Flow subscribes to `comments` only; `messages` is not needed for
 | --- | --- |
 | `comments`, `live_comments`, `message_echoes` | `instagram_business_basic` + `instagram_business_manage_comments` |
 | `messages`, `message_reactions`, `messaging_handover`, `messaging_optins`, `messaging_postbacks`, `messaging_referral`, `messaging_seen`, `standby` | `instagram_business_basic` + `instagram_business_manage_messages` |
+
+**There is no follow event.** The table above is the complete list, and nothing in it fires when
+somebody follows the account. So a "wait until they follow, then send" flow cannot be driven by a
+webhook — the only way to notice is to ask, which is what `recheck_follow` does: it re-runs the
+`is_user_follow_business` lookup (§4b) on a backoff schedule inside the 24-hour messaging window
+the postback opened. Verified 2026-09-05 against this field list.
 
 ### 5.5 `comments` payload
 

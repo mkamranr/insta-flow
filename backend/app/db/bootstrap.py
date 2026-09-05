@@ -11,7 +11,7 @@ from typing import Any
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.db.indexes import create_indexes
-from app.db.repositories import RolesRepository, UsersRepository
+from app.db.repositories import InstagramAccountsRepository, RolesRepository, UsersRepository
 from app.permissions import OWNER_SLUG
 
 logger = logging.getLogger(__name__)
@@ -29,10 +29,17 @@ async def prepare(database: AsyncDatabase[dict[str, Any]]) -> dict[str, list[str
     Owner role to exist before it can point anyone at it, and the slug one needs
     `uq_user_slug` in place so a collision fails loudly rather than duplicating a
     workspace URL.
+
+    The account backfill is last and is ordered within itself: `created_at` has
+    to land before anything sorts on it, because rows written before `upsert`
+    stamped it carry no such field at all.
     """
     created = await create_indexes(database)
     role_ids = await RolesRepository(database).ensure_system_roles()
     users = UsersRepository(database)
     await users.backfill_missing_roles(role_ids[OWNER_SLUG])
     await users.backfill_missing_slugs()
+    accounts = InstagramAccountsRepository(database)
+    await accounts.backfill_created_at()
+    await accounts.backfill_defaults()
     return created

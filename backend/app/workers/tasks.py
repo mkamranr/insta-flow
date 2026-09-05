@@ -29,6 +29,7 @@ from app.db.repositories import (
     WebhookEventsRepository,
 )
 from app.errors import MetaAPIError, MetaTokenError, TemplateError
+from app.models.rules import FOLLOW_PROMPT_NO_WINDOW, FOLLOW_PROMPT_WITH_WINDOW
 from app.services.ai.classifier import classify
 from app.services.campaigns import (
     ACTION_DIRECT_MESSAGE,
@@ -340,7 +341,13 @@ async def process_comment_event(
         # other denial stays quiet on purpose -- rate limits and duplicates are
         # our problem, not theirs.
         if decision.reason == NOT_FOLLOWING and not settings.dry_run:
-            prompt = ((rule.get("require_follow") or {}).get("prompt") or "").strip()
+            # No window is open here and the comment's one private reply is
+            # about to be spent, so this wording -- unlike the postback's -- has
+            # to ask for another comment. Falls back rather than staying silent:
+            # a blocked person with no explanation just sees nothing happen.
+            prompt = (
+                (rule.get("require_follow") or {}).get("prompt") or ""
+            ).strip() or FOLLOW_PROMPT_NO_WINDOW
             if prompt:
                 try:
                     access_token = decrypt(
@@ -654,9 +661,7 @@ async def process_postback_event(
         gates_on_follow
         and await lookup_is_following(client, settings, account, sender_id, log) is False
     ):
-        prompt = (rule["require_follow"].get("prompt") or "").strip() or (
-            "Follow me and I'll send the link straight over -- no need to comment again."
-        )
+        prompt = (rule["require_follow"].get("prompt") or "").strip() or (FOLLOW_PROMPT_WITH_WINDOW)
         try:
             access_token = decrypt(
                 account.get("access_token_encrypted", ""), settings.encryption_key
@@ -957,7 +962,10 @@ async def sync_stories(ctx: dict[str, Any]) -> dict[str, int]:
             disabled += 1
             logger.info(
                 "rule_disabled_story_expired",
-                extra={"rule_id": str(rule["_id"]), "name": rule.get("name", "")},
+                # `rule_name`, not `name`: `name` is the logger's own LogRecord
+                # attribute. This would have crashed the sync_stories cron the
+                # first time a story expired with a rule attached.
+                extra={"rule_id": str(rule["_id"]), "rule_name": rule.get("name", "")},
             )
 
     return {"active": seen, "expired": expired, "rules_disabled": disabled}

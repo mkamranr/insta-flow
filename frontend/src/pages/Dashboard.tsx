@@ -102,7 +102,13 @@ export function Dashboard() {
 
   const account = accounts?.[0]
 
-  if (summary && !summary.connected) {
+  // Neither branch below may replace the tree while the editor is open. Its
+  // draft lives in component state initialised at mount (`RuleEditor.tsx`), so
+  // unmounting it silently discards whatever has been typed and remounts a
+  // blank form -- and `editing` stays set, so the dialog reappears looking like
+  // it was simply reset. `editing` is only ever set from the branch below, so
+  // guarding these costs nothing on the paths that matter.
+  if (!editing && summary && !summary.connected) {
     return (
       <>
         <h1>Welcome</h1>
@@ -120,7 +126,7 @@ export function Dashboard() {
     )
   }
 
-  if (isLoading) return <p className="muted">Loading…</p>
+  if (!editing && isLoading) return <p className="muted">Loading…</p>
 
   const withoutRules = posts?.filter((p) => p.rule_count === 0) ?? []
 

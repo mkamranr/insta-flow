@@ -18,6 +18,11 @@ import pytest
 from bson import ObjectId
 
 from app.config import Settings
+from app.models.rules import (
+    FOLLOW_PROMPT_NO_WINDOW,
+    FOLLOW_PROMPT_WITH_WINDOW,
+    FollowGate,
+)
 from app.services.meta import MockInstagramClient
 from app.services.meta.webhooks import POSTBACK_PREFIX
 from app.services.security.encryption import encrypt
@@ -280,9 +285,7 @@ async def test_the_blocked_prompt_carries_no_link(database, client, seeded):
 
 async def test_a_follower_is_not_sent_the_prompt(database, client, seeded):
     await comment_from(database, following(client, True), seeded)
-    assert not any(
-        "Follow me first" in m["text"] for m in client.sent_private_replies
-    )
+    assert not any("Follow me first" in m["text"] for m in client.sent_private_replies)
 
 
 async def test_a_blocked_attempt_does_not_use_up_once_per_person(database, client, seeded):
@@ -543,3 +546,50 @@ async def test_a_genuinely_delivered_execution_is_still_a_duplicate(database, cl
 
     assert result["status"] == "duplicate"
     assert len(client.sent_direct_messages) == before
+
+
+# -- the prompt says something the flow can actually deliver -----------------
+#
+# The shipped default told people to "comment again" on a rule whose whole point
+# is that they do not have to: the postback opened a window and `recheck_follow`
+# delivers on its own. Three copies of this string existed, and the only correct
+# one was the postback fallback, reachable only when a rule carried no prompt --
+# which the editor made impossible by pre-filling the wrong one. These pin the
+# wording to the behaviour rather than to a reviewer noticing.
+
+
+def test_the_default_prompt_does_not_ask_for_another_comment() -> None:
+    """The default applies to opener rules, where re-commenting achieves nothing.
+
+    Asserted on the whole phrase, not the substring: "no need to comment again"
+    contains "comment again", so a naive check passes the very wording it is
+    meant to forbid. It did, on the first run of this test.
+    """
+    assert FollowGate().prompt == FOLLOW_PROMPT_WITH_WINDOW
+    assert "no need to comment again" in FollowGate().prompt.lower()
+
+
+def test_the_two_prompts_disagree_about_commenting_again() -> None:
+    """They describe genuinely different recoveries; collapsing them loses one.
+
+    Without an opening DM there is no messaging window and the comment's single
+    private reply has been spent on the prompt itself, so commenting again is the
+    only way back. Saying otherwise would strand people.
+    """
+    assert "no need to comment again" in FOLLOW_PROMPT_WITH_WINDOW.lower()
+
+    no_window = FOLLOW_PROMPT_NO_WINDOW.lower()
+    assert "comment again" in no_window
+    assert "no need" not in no_window
+
+
+async def test_a_promptless_rule_falls_back_to_the_windowed_wording(database, client, seeded):
+    """The fallback is what a rule saved before this feature will use."""
+    await database["rules"].update_one(
+        {"_id": seeded["rule_id"]},
+        {"$set": {"require_follow": {"enabled": True, "prompt": ""}}},
+    )
+
+    await tap(database, following(client, False), seeded)
+
+    assert client.sent_direct_messages[-1]["text"] == FOLLOW_PROMPT_WITH_WINDOW

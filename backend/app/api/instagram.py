@@ -172,6 +172,11 @@ async def callback(
         },
     )
 
+    # A workspace's first account becomes its default, so an unqualified request
+    # has an answer. A second one changes nothing -- connecting an account must
+    # never silently move what the rest of the dashboard is pointing at.
+    await accounts.ensure_default(to_object_id(user_id))
+
     await audit.record(
         user_id=to_object_id(user_id),
         action="instagram.connected",
@@ -448,6 +453,41 @@ async def token_status(
         "expired": is_expired(account),
         "needs_refresh": needs_refresh(account),
     }
+
+
+@router.post(
+    "/{account_id}/default",
+    response_model=InstagramAccountPublic,
+    dependencies=[Depends(require("instagram.manage"))],
+)
+async def make_default(
+    account_id: str,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    audit: AuditRepo,
+) -> InstagramAccountPublic:
+    """Choose which account an unqualified request acts on.
+
+    Gated on `instagram.manage` rather than a module of its own: it already
+    covers connecting and disconnecting, both strictly larger than changing which
+    account the dashboard opens on, and the effect is confined to one workspace
+    and instantly reversible. A new `Module` would also have to be excluded from
+    Viewer by hand -- `permissions.py` builds Viewer by comprehension over
+    `MODULES` -- for no gain.
+    """
+    account = await _load(accounts, account_id, workspace)
+    await accounts.set_default(workspace.user_id, account["_id"])
+    await audit.record(
+        user_id=user["_id"],
+        action="instagram.default_changed",
+        entity_type="instagram_account",
+        entity_id=account["_id"],
+        changes={"username": account.get("username")},
+    )
+    logger.info("instagram_default_changed", extra={"account_id": account_id})
+    updated = await accounts.get(account["_id"])
+    return _public(updated or account)
 
 
 @router.delete(

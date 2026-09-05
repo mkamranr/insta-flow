@@ -1,6 +1,6 @@
 import { CloseIcon } from '../icons/Icons'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { useQuery } from '@tanstack/react-query'
 import { listAccounts } from '../../api/instagram'
@@ -17,6 +17,23 @@ import { DelayPicker } from './DelayPicker'
 import { DmPreview } from './DmPreview'
 import { KeywordInput } from './KeywordInput'
 import { StoryPicker } from './StoryPicker'
+
+/**
+ * Mirrors `FOLLOW_PROMPT_WITH_WINDOW` / `FOLLOW_PROMPT_NO_WINDOW` in
+ * `backend/app/models/rules.py`, which is the source of truth -- the worker
+ * falls back to these when a rule carries no prompt of its own.
+ *
+ * Which one is true depends on whether a messaging window will be open when the
+ * gate blocks. With an opening DM, tapping the button opens a 24-hour window and
+ * the link is delivered automatically the moment the follow is detected, so
+ * asking for another comment asks for nothing. Without one, the gate blocks at
+ * the comment and the single private reply a comment allows has just been spent
+ * on this very prompt -- there is no channel left, so commenting again really is
+ * the only way back in.
+ */
+const FOLLOW_PROMPT_WITH_WINDOW =
+  "Follow me and I'll send the link straight over — no need to comment again."
+const FOLLOW_PROMPT_NO_WINDOW = 'Follow me first, then comment again and I\'ll send the link!'
 
 const BLANK: Partial<Rule> = {
   name: '',
@@ -79,8 +96,25 @@ export function RuleEditor({
   onClose: () => void
 }) {
   const [draft, setDraft] = useState<Partial<Rule>>({ ...BLANK, ...initial })
+  const [dirty, setDirty] = useState(false)
   const queryClient = useQueryClient()
-  const set = (changes: Partial<Rule>) => setDraft((d) => ({ ...d, ...changes }))
+  const set = (changes: Partial<Rule>) => {
+    setDirty(true)
+    setDraft((d) => ({ ...d, ...changes }))
+  }
+
+  // The draft lives only in component state, so any full document load takes it
+  // with it -- a session expiring, the workspace redirect in `WorkspaceGate`, or
+  // simply a mistaken reload. None of those are navigations this app initiates,
+  // so the browser's own prompt is the only thing that can interrupt them.
+  // Registered only once something has actually been typed: prompting on an
+  // untouched form would train people to dismiss the dialog without reading it.
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
 
   const save = useMutation({
     mutationFn: async (): Promise<void> => {
@@ -115,6 +149,14 @@ export function RuleEditor({
   const buttons = draft.buttons ?? []
   const opening = draft.opening_dm!
   const ai = draft.ai!
+
+  // Mirrors `uses_opening_dm` in `backend/app/workers/tasks.py`: an opener only
+  // counts if it is enabled *and* has text, because an empty one sends nothing
+  // and so opens no messaging window. The follow gate's wording and its real
+  // behaviour both hang off this, so they must be derived from one expression
+  // rather than described twice.
+  const opensWithDm = Boolean(opening.enabled && opening.message.trim())
+  const followPrompt = opensWithDm ? FOLLOW_PROMPT_WITH_WINDOW : FOLLOW_PROMPT_NO_WINDOW
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -335,7 +377,7 @@ export function RuleEditor({
           )}
 
           <section className="step">
-            <h3>Advanced</h3>
+            <h3>Delivery</h3>
             <label className="inline">
               <input
                 type="checkbox"
@@ -344,6 +386,7 @@ export function RuleEditor({
               />
               Only send this DM once per person
             </label>
+
             <label className="inline">
               <input
                 type="checkbox"
@@ -352,14 +395,31 @@ export function RuleEditor({
                   set({
                     require_follow: {
                       enabled: e.target.checked,
-                      prompt:
-                        draft.require_follow?.prompt || 'Follow me first, then comment again!',
+                      prompt: draft.require_follow?.prompt || followPrompt,
                     },
                   })
                 }
               />
               Require them to follow you first
             </label>
+            {draft.require_follow?.enabled && (
+              <>
+                <p className="muted small">
+                  {opensWithDm
+                    ? 'They still get the opening DM — Instagram won’t tell us who follows you until someone messages you. The link is held back until they tap the button, and sent automatically as soon as they follow, for up to 23 hours. They don’t need to comment or tap again.'
+                    : 'Checked at the moment they comment. Without an opening DM there’s no way to reach them afterwards, so they will have to comment again once they follow. Turn on the opening DM above to deliver automatically instead.'}
+                </p>
+                <input
+                  value={draft.require_follow.prompt}
+                  maxLength={300}
+                  placeholder={followPrompt}
+                  onChange={(e) =>
+                    set({ require_follow: { ...draft.require_follow!, prompt: e.target.value } })
+                  }
+                />
+              </>
+            )}
+
             <label className="inline">
               <input
                 type="checkbox"
@@ -375,6 +435,11 @@ export function RuleEditor({
               />
               Also reply publicly under the comment
             </label>
+            <p className="muted small">
+              {draft.public_reply?.enabled
+                ? 'A visible reply is posted under their comment, as well as the DM.'
+                : 'Off — nothing is posted under their comment. Only the DM is sent.'}
+            </p>
             {draft.public_reply?.enabled && (
               <input
                 value={draft.public_reply.message}
