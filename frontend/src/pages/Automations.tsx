@@ -3,12 +3,14 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getRulePerformance } from '../api/analytics'
 import {
+  captionLine,
   createRule,
   deleteRule,
   listPosts,
   listRules,
   mediaImage,
   patchRule,
+  postKind,
   type Post,
   type Rule,
 } from '../api/rules'
@@ -19,6 +21,35 @@ function describe(rule: Rule): string {
   if (rule.trigger === 'story_reply') return `Story replies containing ${trigger} → DM`
   if (rule.trigger === 'dm_keyword') return `DMs containing ${trigger} → DM`
   return `Comments containing ${trigger} → DM`
+}
+
+/**
+ * Which post this automation runs on, in one line.
+ *
+ * The thumbnail alone is too small to recognise a post from, so every row says
+ * in words what it is attached to. A rule with no single post says so rather
+ * than leaving the line blank, and a post outside the newest 200 the server
+ * returns falls back to its media id -- unhelpful, but still identifying, and
+ * better than a row that looks broken.
+ */
+function subjectLine(rule: Rule, post?: Post): string {
+  if (rule.trigger === 'story_reply') {
+    const count = rule.instagram_story_ids?.length ?? 0
+    if (!count) return 'Any story'
+    return count === 1 ? '1 selected story' : `${count} selected stories`
+  }
+  if (rule.trigger === 'dm_keyword') return 'Direct messages'
+  if (rule.scope === 'any' || rule.instagram_media_ids.length === 0) return 'Any post'
+  if (!post) return rule.instagram_media_ids[0]
+  return captionLine(post.caption) || `${postKind(post)} ${post.instagram_media_id}`
+}
+
+/** Stands in for the thumbnail when a rule has no one post to picture. */
+function thumbLabel(rule: Rule): string | null {
+  if (rule.trigger === 'story_reply') return 'STORY'
+  if (rule.trigger === 'dm_keyword') return 'DM'
+  if (rule.scope === 'any' || rule.instagram_media_ids.length === 0) return 'ANY'
+  return null
 }
 
 export function Automations() {
@@ -60,11 +91,6 @@ export function Automations() {
     posts?.find((p) => rule.instagram_media_ids.includes(p.instagram_media_id))
 
   const statsFor = (id: string) => performance?.find((p) => p.id === id)
-  const thumbFor = (rule: Rule) =>
-    (() => {
-      const p = posts?.find((p) => rule.instagram_media_ids.includes(p.instagram_media_id))
-      return p ? mediaImage(p) : undefined
-    })()
   const withoutRules = posts?.filter((p) => p.rule_count === 0).length ?? 0
 
   return (
@@ -120,19 +146,28 @@ export function Automations() {
               <tbody>
                 {rules.map((rule) => {
                   const stats = statsFor(rule.id)
-                  const thumb = thumbFor(rule)
+                  const post = postFor(rule)
+                  const thumb = post ? mediaImage(post) : undefined
+                  const label = thumbLabel(rule)
                   return (
                     <tr key={rule.id}>
                       <td>
                         <div className="post-row">
                           <span className="row-thumb">
-                            {thumb ? <img src={thumb} alt="" /> : <span className="row-thumb-empty" />}
+                            {thumb ? (
+                              <img src={thumb} alt="" loading="lazy" />
+                            ) : label ? (
+                              <span className="row-thumb-label">{label}</span>
+                            ) : (
+                              <span className="row-thumb-empty" />
+                            )}
                           </span>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontWeight: 650 }}>
                               {rule.name || 'Comments → DM'}
                             </div>
                             <div className="muted small row-caption">{describe(rule)}</div>
+                            <div className="muted row-post">{subjectLine(rule, post)}</div>
                           </div>
                         </div>
                       </td>
@@ -169,7 +204,6 @@ export function Automations() {
                                   className="menu-item"
                                   onClick={() => {
                                     setMenuFor(null)
-                                    const post = postFor(rule)
                                     // A story-reply or DM rule has no post, and
                                     // is still perfectly editable. Sending it to
                                     // Posts would make it uneditable forever.

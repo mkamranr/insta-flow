@@ -5,9 +5,12 @@ import { ApiError } from '../../api/client'
 import { useQuery } from '@tanstack/react-query'
 import { listAccounts } from '../../api/instagram'
 import {
+  captionLine,
   createRule,
   getIntents,
+  mediaImage,
   patchRule,
+  postKind,
   type Post,
   type Rule,
   type RuleTrigger,
@@ -164,9 +167,7 @@ export function RuleEditor({
         <header className="modal-head">
           <div>
             <h2>{editingId ? 'Edit automation' : 'New automation'}</h2>
-            <p className="muted small">
-              {post ? post.caption?.slice(0, 70) || post.instagram_media_id : TRIGGER_COPY[trigger].step1}
-            </p>
+            <p className="muted small">{TRIGGER_COPY[trigger].step1}</p>
           </div>
           <button className="link" onClick={onClose} aria-label="Close">
             <CloseIcon />
@@ -455,6 +456,43 @@ export function RuleEditor({
           </div>
 
           <aside className="editor-preview">
+            {/* Which post this is for. The editor used to say so in one line of
+                header text with no image, which is not enough to recognise a
+                post by -- and on a story-reply or DM rule there is no post at
+                all, so the card is skipped rather than faked. */}
+            {post && (
+              <div className="editor-post">
+                <span className="row-thumb">
+                  {mediaImage(post) ? (
+                    <img src={mediaImage(post)!} alt="" loading="lazy" />
+                  ) : (
+                    <span className="row-thumb-empty" />
+                  )}
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="small editor-post-kind">
+                    On this {postKind(post).toLowerCase()}
+                  </div>
+                  <div className="muted small row-caption">
+                    {captionLine(post.caption, 60) || post.instagram_media_id}
+                  </div>
+                  {post.permalink && (
+                    /* An anchor, not a button: the global `button` rule is
+                       `white-space: nowrap`. `_blank` also keeps the unsaved
+                       draft alive -- this never unloads the page. */
+                    <a
+                      className="small"
+                      href={post.permalink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      View on Instagram
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
             <h3 className="small">Preview</h3>
             <p className="muted small">How this lands in their inbox.</p>
             <DmPreview

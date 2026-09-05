@@ -112,6 +112,32 @@ export function mediaImage(item: {
   return item.media_type === 'VIDEO' ? null : (item.media_url ?? null)
 }
 
+/**
+ * A caption condensed to one line, for identifying a post in a list.
+ *
+ * Newlines are collapsed first: Instagram captions are multi-line, and a raw
+ * slice drags the line breaks into a table cell. Sliced by code point rather
+ * than by index because captions are emoji-heavy and an index slice can cut a
+ * surrogate pair in half, leaving a replacement character on screen.
+ */
+export function captionLine(caption: string | null | undefined, max = 50): string {
+  const text = (caption ?? '').replace(/\s+/g, ' ').trim()
+  const chars = [...text]
+  if (!chars.length) return ''
+  return chars.length > max ? `${chars.slice(0, max).join('').trimEnd()}…` : text
+}
+
+/** What to call this media in prose, for a label like "On this reel". */
+export function postKind(item: {
+  media_type?: string | null
+  media_product_type?: string | null
+}): string {
+  if (item.media_product_type === 'REELS') return 'Reel'
+  if (item.media_type === 'CAROUSEL_ALBUM') return 'Carousel'
+  if (item.media_type === 'VIDEO') return 'Video'
+  return 'Post'
+}
+
 export const listStories = () => apiGet<Story[]>('/api/stories')
 export const syncStories = () =>
   apiPost<{ active: number; expired: number; rules_disabled: number }>('/api/stories/sync')

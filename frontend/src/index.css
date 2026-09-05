@@ -721,6 +721,20 @@ button.ig-cta:hover:not(:disabled) { background: #ececec; }
   max-width: 460px; font-size: 13.5px; line-height: 1.4;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* Which post the automation runs on. Truncated to ~50 characters in JS
+   already; the ellipsis here is for a column narrower than that. */
+.row-post {
+  max-width: 460px; font-size: 12.5px; line-height: 1.4; margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Stands in for the thumbnail on a rule with no one post. `.row-thumb` has a
+   hardcoded dark background, so this colour is fixed rather than themed. */
+.row-thumb-label {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  font-size: 8.5px; font-weight: 700; letter-spacing: .06em;
+  color: rgba(255,255,255,.55);
+}
 
 .menu-wrap { position: relative; display: inline-block; }
 button.kebab { padding: 6px 9px; font-size: 17px; line-height: 1; }
@@ -987,6 +1001,23 @@ button.auto-head:hover:not(:disabled) { background: var(--surface-alt); }
 .editor-form { min-width: 0; }
 .editor-preview { position: sticky; top: 6px; padding-top: 18px; }
 .editor-preview h3 { margin: 0 0 2px; }
+
+/* The post this automation is being written for, above the phone mock. */
+.editor-post {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+}
+.editor-post .row-thumb { width: 48px; height: 48px; }
+.editor-post-kind { font-weight: 650; }
+/* `a` is globally `color: inherit; text-decoration: none`, so an external link
+   needs saying so. Underlined at rest, unlike `.link-url`, which shows a bare
+   URL and is recognisable without one. */
+.editor-post a {
+  display: inline-block; margin-top: 4px;
+  color: var(--muted); text-decoration: underline; text-underline-offset: 2px;
+}
+.editor-post a:hover { color: var(--text); }
 
 @media (max-width: 900px) {
   .editor-split { grid-template-columns: minmax(0, 1fr); }
