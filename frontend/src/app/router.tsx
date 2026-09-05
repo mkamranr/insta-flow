@@ -1,5 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { basename } from './workspace'
 import { RequireAuth } from '../components/common/RequireAuth'
+import { WorkspaceGate } from '../components/common/WorkspaceGate'
 import { NoAccess, RequirePermission } from '../components/common/RequirePermission'
 import { Layout } from '../components/layout/Layout'
 import { Analytics } from '../pages/Analytics'
@@ -18,14 +20,22 @@ import { RoleEditor } from '../pages/RoleEditor'
 import { Roles } from '../pages/Roles'
 import { Users } from '../pages/Users'
 
+/**
+ * `basename` is the `/u/<slug>` prefix, or '' on the unprefixed layout that
+ * pre-workspace bookmarks and the already-live Meta app still use. Vite emits
+ * absolute asset paths, so serving the same build at any depth needs no
+ * build-time change -- only this and the SPA fallback nginx already does.
+ */
 export function Router() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <Routes>
         <Route
           element={
             <RequireAuth>
-              <Layout />
+              <WorkspaceGate>
+                <Layout />
+              </WorkspaceGate>
             </RequireAuth>
           }
         >

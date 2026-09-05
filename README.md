@@ -54,6 +54,9 @@ Meta's own rate limits.
 - "Only send once per person", per-rule rate limits, and a full activity log
 - **Optional local AI** — classify comments by intent with Ollama or vLLM when no keyword matches
 - **Dry-run mode** that exercises the entire pipeline without sending anything
+- **Multiple accounts, one install** — each person gets a workspace at `/u/<slug>/` and
+  connects their own Instagram account through their own Meta app. No App Review: every user
+  is still automating an account they own
 
 ## How it works
 

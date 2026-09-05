@@ -11,8 +11,8 @@ from typing import Any
 
 import httpx
 
-from app.config import Settings
 from app.errors import MetaAPIError, MetaTokenError
+from app.services.meta.credentials import MetaCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +37,16 @@ class TokenBundle:
     permissions: tuple[str, ...] = ()
 
 
-def build_authorize_url(settings: Settings, state: str) -> str:
-    """The URL the admin is redirected to in order to grant access (§3.1)."""
+def build_authorize_url(creds: MetaCredentials, state: str) -> str:
+    """The URL the admin is redirected to in order to grant access (§3.1).
+
+    Takes credentials rather than `Settings` because which app -- and therefore
+    which redirect URI -- depends on the workspace, not the process.
+    """
     params = httpx.QueryParams(
         {
-            "client_id": settings.meta_app_id,
-            "redirect_uri": settings.oauth_redirect_uri,
+            "client_id": creds.app_id,
+            "redirect_uri": creds.redirect_uri,
             "response_type": "code",
             "scope": ",".join(SCOPES),
             "state": state,
@@ -80,7 +84,7 @@ def _raise_for_meta_error(response: httpx.Response, context: str) -> dict[str, A
 
 
 async def exchange_code(
-    settings: Settings, code: str, *, client: httpx.AsyncClient | None = None
+    creds: MetaCredentials, code: str, *, client: httpx.AsyncClient | None = None
 ) -> TokenBundle:
     """Authorization code -> short-lived token (§3.2). The code is single-use."""
     owns_client = client is None
@@ -89,10 +93,13 @@ async def exchange_code(
         response = await client.post(
             TOKEN_URL,
             data={
-                "client_id": settings.meta_app_id,
-                "client_secret": settings.meta_app_secret,
+                "client_id": creds.app_id,
+                "client_secret": creds.app_secret,
                 "grant_type": "authorization_code",
-                "redirect_uri": settings.oauth_redirect_uri,
+                # Must be byte-identical to the one used at authorize time, and
+                # to one registered on this app. Both come from `creds`, so they
+                # cannot drift apart per workspace.
+                "redirect_uri": creds.redirect_uri,
                 "code": code,
             },
         )
@@ -113,7 +120,7 @@ async def exchange_code(
 
 
 async def exchange_for_long_lived(
-    settings: Settings, short_lived_token: str, *, client: httpx.AsyncClient | None = None
+    creds: MetaCredentials, short_lived_token: str, *, client: httpx.AsyncClient | None = None
 ) -> TokenBundle:
     """Short-lived -> long-lived token, valid 60 days (§3.3)."""
     owns_client = client is None
@@ -123,7 +130,7 @@ async def exchange_for_long_lived(
             f"{GRAPH_HOST}/access_token",
             params={
                 "grant_type": "ig_exchange_token",
-                "client_secret": settings.meta_app_secret,
+                "client_secret": creds.app_secret,
                 "access_token": short_lived_token,
             },
         )
@@ -136,12 +143,17 @@ async def exchange_for_long_lived(
 
 
 async def refresh_long_lived(
-    settings: Settings, token: str, *, client: httpx.AsyncClient | None = None
+    token: str, *, client: httpx.AsyncClient | None = None
 ) -> TokenBundle:
     """Refresh a long-lived token (§3.4).
 
     Meta requires the token to be at least 24 hours old, and a token not
     refreshed within 60 days is dead — the account must reconnect.
+
+    Takes no credentials, and never did: `ig_refresh_token` authenticates with
+    the token itself. It previously accepted a `settings` argument it never read,
+    which would now read as "this call needs the workspace's app" and be wrong --
+    token refresh works identically whichever app minted the token.
     """
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)

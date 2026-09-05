@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { apiGet } from '../../api/client'
+import { apiGetInstance } from '../../api/client'
 import type { ReadyResponse } from '../../types/health'
 
 /**
@@ -10,7 +10,7 @@ import type { ReadyResponse } from '../../types/health'
 export function DryRunBanner() {
   const { data } = useQuery({
     queryKey: ['ready'],
-    queryFn: () => apiGet<ReadyResponse>('/ready'),
+    queryFn: () => apiGetInstance<ReadyResponse>('/ready'),
     refetchInterval: 30_000,
   })
 

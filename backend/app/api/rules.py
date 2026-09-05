@@ -14,11 +14,14 @@ from app.api.deps import (
     AccountsRepo,
     AuditRepo,
     CurrentUser,
+    CurrentWorkspace,
     MediaRepo,
     RulesRepo,
     SettingsDep,
     StoriesRepo,
     UpcomingRepo,
+    Workspace,
+    WorkspaceCredentials,
     require,
 )
 from app.api.uploads import upload_root
@@ -52,14 +55,17 @@ def _object_id(value: str, field: str) -> Any:
         raise ValidationError(f"{field} is not a valid id.") from exc
 
 
-async def _only_account(accounts: Any, user: dict[str, Any]) -> dict[str, Any]:
-    """The signed-in user's connected account.
+async def _only_account(accounts: Any, workspace: Workspace) -> dict[str, Any]:
+    """This workspace's connected account.
 
-    Single-account by design, but scoped by user_id rather than taking the first
-    row — otherwise a second admin would silently operate on someone else's
-    Instagram account.
+    Single-account by design, but scoped by the workspace's owner rather than
+    taking the first row — otherwise a second admin would silently operate on
+    someone else's Instagram account.
+
+    The workspace is usually the caller's own. It is somebody else's only when the
+    path said so and `current_workspace` allowed it, which costs `workspaces.view`.
     """
-    found = await accounts.list({"user_id": user["_id"]})
+    found = await accounts.list({"user_id": workspace.user_id})
     if not found:
         raise ValidationError("No Instagram account is connected yet.")
     return found[0]
@@ -140,10 +146,10 @@ async def _validate_and_insert(
 
 @upcoming_router.get("", dependencies=[Depends(require("automations.view"))])
 async def get_upcoming(
-    user: CurrentUser, accounts: AccountsRepo, upcoming: UpcomingRepo
+    workspace: CurrentWorkspace, accounts: AccountsRepo, upcoming: UpcomingRepo
 ) -> dict[str, Any]:
     """The automation waiting for the next post, and the last few applied."""
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     pending = await upcoming.pending_for(account["_id"])
     return {
         "pending": serialise(pending) if pending else None,
@@ -158,6 +164,7 @@ async def create_upcoming(
     payload: RuleCreate,
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     upcoming: UpcomingRepo,
     audit: AuditRepo,
@@ -167,7 +174,7 @@ async def create_upcoming(
     Validated exactly as a rule is, because that is what it becomes -- catching
     a broken message here rather than at 3am when the post goes live.
     """
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
 
     if payload.trigger != "comment":
         raise ValidationError(
@@ -219,11 +226,12 @@ async def delete_upcoming(
     upcoming_id: str,
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     upcoming: UpcomingRepo,
     audit: AuditRepo,
 ) -> None:
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     record = await upcoming.get(_object_id(upcoming_id, "upcoming_id"))
     if record is None or record.get("instagram_account_id") != account["_id"]:
         raise NotFoundError("No upcoming automation found.")
@@ -244,14 +252,14 @@ async def delete_upcoming(
     "", response_model=list[StoryPublic], dependencies=[Depends(require("content.view"))]
 )
 async def list_stories(
-    user: CurrentUser, accounts: AccountsRepo, stories: StoriesRepo, rules: RulesRepo
+    workspace: CurrentWorkspace, accounts: AccountsRepo, stories: StoriesRepo, rules: RulesRepo
 ) -> list[StoryPublic]:
     """Active stories, newest first, with how many rules target each.
 
     Only active ones: a story expires after 24 hours, and offering an expired
     one in the picker would create a rule that can never match.
     """
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     found = await stories.list_active(account["_id"])
     counts = await rules.counts_by_story(account["_id"])
     return [
@@ -263,6 +271,8 @@ async def list_stories(
 async def sync_stories_now(
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
+    creds: WorkspaceCredentials,
     settings: SettingsDep,
     accounts: AccountsRepo,
     stories: StoriesRepo,
@@ -275,11 +285,13 @@ async def sync_stories_now(
     has expired -- and rules that opted into `expire_with_story` are disabled
     here, not left enabled and quietly unmatchable.
     """
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
 
     try:
-        fetched = await build_client(settings).get_stories(token, account["instagram_user_id"])
+        fetched = await build_client(settings, creds).get_stories(
+            token, account["instagram_user_id"]
+        )
     except MetaAPIError as exc:
         logger.error("story_sync_failed", extra={"error": str(exc)})
         raise
@@ -322,7 +334,7 @@ async def sync_stories_now(
     "", response_model=list[PostPublic], dependencies=[Depends(require("content.view"))]
 )
 async def list_posts(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     media: MediaRepo,
     rules: RulesRepo,
@@ -336,7 +348,7 @@ async def list_posts(
     grid rely on that; the dashboard rail passes a page size and walks `offset`
     as it scrolls.
     """
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     counts = await rules.counts_by_media(account["_id"])
     posts = await media.list(
         {"instagram_account_id": account["_id"]},
@@ -353,6 +365,8 @@ async def list_posts(
 async def sync_posts(
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
+    creds: WorkspaceCredentials,
     settings: SettingsDep,
     accounts: AccountsRepo,
     media: MediaRepo,
@@ -363,11 +377,11 @@ async def sync_posts(
     Upserts on (account, instagram_media_id), so re-syncing refreshes captions
     and thumbnails without duplicating posts or orphaning existing rules.
     """
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
 
     try:
-        fetched = await build_client(settings).get_media(
+        fetched = await build_client(settings, creds).get_media(
             token, account["instagram_user_id"], limit=50
         )
     except MetaAPIError as exc:
@@ -503,12 +517,12 @@ async def preview(payload: MessagePreviewRequest, user: CurrentUser) -> dict[str
 
 @router.get("", dependencies=[Depends(require("automations.view"))])
 async def list_rules(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     rules: RulesRepo,
     instagram_media_id: str | None = Query(default=None),
 ) -> list[dict[str, Any]]:
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     if instagram_media_id:
         found = await rules.list_for_media(account["_id"], instagram_media_id)
     else:
@@ -523,13 +537,14 @@ async def create_rule(
     payload: RuleCreate,
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     media: MediaRepo,
     rules: RulesRepo,
     stories: StoriesRepo,
     audit: AuditRepo,
 ) -> dict[str, Any]:
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     rule_id = await _validate_and_insert(payload, account, media, rules, stories)
 
     await audit.record(
@@ -554,6 +569,7 @@ async def clone_rule(
     payload: RuleCloneRequest,
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     media: MediaRepo,
     rules: RulesRepo,
@@ -568,7 +584,7 @@ async def clone_rule(
 
     The source is left exactly as it was.
     """
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     source = await _load_rule(rules, rule_id, account)
 
     trigger = str(source.get("trigger") or "comment")
@@ -628,9 +644,9 @@ async def clone_rule(
 
 @router.get("/{rule_id}", dependencies=[Depends(require("automations.view"))])
 async def get_rule(
-    rule_id: str, user: CurrentUser, accounts: AccountsRepo, rules: RulesRepo
+    rule_id: str, workspace: CurrentWorkspace, accounts: AccountsRepo, rules: RulesRepo
 ) -> dict[str, Any]:
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     return serialise_required(await _load_rule(rules, rule_id, account))
 
 
@@ -640,13 +656,14 @@ async def update_rule(
     payload: RuleUpdate,
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     rules: RulesRepo,
     stories: StoriesRepo,
     audit: AuditRepo,
     settings: SettingsDep,
 ) -> dict[str, Any]:
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     existing = await _load_rule(rules, rule_id, account)
 
     changes = payload.model_dump(exclude_unset=True)
@@ -698,12 +715,13 @@ async def delete_rule(
     rule_id: str,
     request: Request,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     rules: RulesRepo,
     audit: AuditRepo,
     settings: SettingsDep,
 ) -> None:
-    account = await _only_account(accounts, user)
+    account = await _only_account(accounts, workspace)
     # Loaded before the delete because the attachment path is only knowable from
     # the document, and `_load_rule` is what refuses another account's rule.
     doomed = await _load_rule(rules, rule_id, account)

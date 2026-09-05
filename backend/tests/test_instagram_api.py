@@ -26,16 +26,19 @@ def meta(monkeypatch):
         )
     )
 
-    async def fake_exchange_code(settings, code, **kw):
+    # These take `MetaCredentials`, not `Settings` -- which app is acting is a
+    # per-workspace fact. `refresh_long_lived` takes neither: `ig_refresh_token`
+    # authenticates with the token itself.
+    async def fake_exchange_code(creds, code, **kw):
         return TokenBundle(access_token="short", instagram_user_id=IG_ID,
                            permissions=("instagram_business_basic",))
 
-    async def fake_long_lived(settings, token, **kw):
+    async def fake_long_lived(creds, token, **kw):
         return TokenBundle(
             access_token=LONG_TOKEN, expires_at=datetime.now(UTC) + timedelta(days=60)
         )
 
-    async def fake_refresh(settings, token, **kw):
+    async def fake_refresh(token, **kw):
         return TokenBundle(
             access_token="refreshed-token", expires_at=datetime.now(UTC) + timedelta(days=60)
         )
@@ -43,7 +46,7 @@ def meta(monkeypatch):
     monkeypatch.setattr("app.api.instagram.meta_auth.exchange_code", fake_exchange_code)
     monkeypatch.setattr("app.api.instagram.meta_auth.exchange_for_long_lived", fake_long_lived)
     monkeypatch.setattr("app.api.instagram.meta_auth.refresh_long_lived", fake_refresh)
-    monkeypatch.setattr("app.api.instagram.build_client", lambda settings: client)
+    monkeypatch.setattr("app.api.instagram.build_client", lambda settings, creds=None: client)
     return client
 
 
@@ -147,7 +150,7 @@ async def test_a_denied_consent_redirects_with_the_reason(api, redis):
 
 
 async def test_a_failed_exchange_redirects_rather_than_500s(api, redis, meta, monkeypatch):
-    async def boom(settings, code, **kw):
+    async def boom(creds, code, **kw):
         raise MetaAPIError("Invalid code", status_code=400)
 
     monkeypatch.setattr("app.api.instagram.meta_auth.exchange_code", boom)
@@ -251,7 +254,7 @@ async def test_refresh_replaces_the_stored_token(signed_in, database, connected,
 
 
 async def test_a_failed_refresh_marks_the_account(signed_in, database, connected, monkeypatch):
-    async def boom(settings, token, **kw):
+    async def boom(token, **kw):
         raise MetaAPIError("expired", status_code=400)
 
     monkeypatch.setattr("app.api.instagram.meta_auth.refresh_long_lived", boom)

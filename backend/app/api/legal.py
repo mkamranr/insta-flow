@@ -5,12 +5,18 @@ a Data Deletion URL alongside the callback. These are served by the app itself s
 there is nothing else to host and the URLs cannot drift from the deployment.
 
 Unauthenticated by necessity — Meta's reviewers must be able to read them.
+
+Served under a workspace prefix as well as bare, so each person's Meta app can be
+given its own Privacy Policy and Data Deletion URLs. Every URL printed on the
+page comes from that workspace's resolved credentials, so a reviewer reading
+`/u/userabc/privacy` is shown userabc's deletion callback and not somebody
+else's.
 """
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
-from app.api.deps import SettingsDep
+from app.api.deps import PublicCredentials
 
 router = APIRouter(tags=["legal"])
 
@@ -33,7 +39,7 @@ def _page(title: str, body: str) -> HTMLResponse:
 
 
 @router.get("/privacy", response_class=HTMLResponse)
-async def privacy_policy(settings: SettingsDep) -> HTMLResponse:
+async def privacy_policy(creds: PublicCredentials) -> HTMLResponse:
     """Privacy policy. Describes what this deployment actually does — it is a
     self-hosted, single-operator tool, not a service with users."""
     return _page(
@@ -70,7 +76,7 @@ instance, removes the associated data.</p>
 <h2>Deleting your data</h2>
 <p>If you commented on a post handled by this instance and want the record removed, contact the
 operator of the Instagram account you interacted with, and it will be deleted. See
-<a href="/data-deletion">Data Deletion</a>.</p>
+<a href="{creds.data_deletion_url}">Data Deletion</a>.</p>
 
 <h2>Cookies</h2>
 <p>One session cookie, set only for the operator signing in to the dashboard. Visitors and
@@ -80,13 +86,13 @@ commenters are never given a cookie. There is no tracking or advertising cookie 
 <p>Links sent in automated replies pass through this instance so the operator can count clicks.
 The click count and time are recorded; the destination is a URL the operator chose.</p>
 
-<footer>Served by this Social Flow instance at <code>{settings.public_base_url}</code>.</footer>
+<footer>Served by this Social Flow instance at <code>{creds.base_url}</code>.</footer>
 """,
     )
 
 
 @router.get("/data-deletion", response_class=HTMLResponse)
-async def data_deletion_instructions(settings: SettingsDep) -> HTMLResponse:
+async def data_deletion_instructions(creds: PublicCredentials) -> HTMLResponse:
     """Human-readable deletion instructions. Meta's programmatic callback lives
     at /api/auth/instagram/data-deletion; this page is for people."""
     return _page(
@@ -109,7 +115,7 @@ token. To remove everything, including comments, replies and contacts:</p>
 
 <h2>Automated requests</h2>
 <p>Meta's data deletion callback is accepted at
-<code>{settings.public_base_url.rstrip('/')}/api/auth/instagram/data-deletion</code>.</p>
+<code>{creds.base_url}/api/auth/instagram/data-deletion</code>.</p>
 
 <footer>Served by this Social Flow instance.</footer>
 """,

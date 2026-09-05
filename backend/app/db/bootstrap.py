@@ -25,10 +25,14 @@ async def prepare(database: AsyncDatabase[dict[str, Any]]) -> dict[str, list[str
 
     Order matters in both places. `uq_role_slug` must exist before the seeder
     runs, or two processes starting together could each insert an Owner and
-    nothing later would notice. The backfill runs last because it needs the Owner
-    role to exist before it can point anyone at it.
+    nothing later would notice. The backfills run last: the role one needs the
+    Owner role to exist before it can point anyone at it, and the slug one needs
+    `uq_user_slug` in place so a collision fails loudly rather than duplicating a
+    workspace URL.
     """
     created = await create_indexes(database)
     role_ids = await RolesRepository(database).ensure_system_roles()
-    await UsersRepository(database).backfill_missing_roles(role_ids[OWNER_SLUG])
+    users = UsersRepository(database)
+    await users.backfill_missing_roles(role_ids[OWNER_SLUG])
+    await users.backfill_missing_slugs()
     return created

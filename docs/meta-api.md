@@ -734,6 +734,78 @@ never tested, and it parked the project for two days.
 
 ---
 
+## 7b. More than one Instagram account — verified by construction 2026-09-05
+
+Each person who uses this deployment brings **their own Meta app**, connected to **their own**
+Instagram account. Nobody's account is ever reached through somebody else's app.
+
+That is not an implementation detail; it is what keeps the whole deployment on the
+Standard Access side of the table in §7. Automating your own account needs only Live mode and
+a complete *App Settings → Basic*. Serving *other people's* accounts through your app is the
+third-party case, and that one does need Advanced Access → App Review → Business
+Verification. Per-user apps keep every user in the first column.
+
+> Do not "simplify" this into one shared app later. The moment a second person's Instagram
+> account is reached through the first person's app, this deployment becomes a third-party
+> integration and needs App Review.
+
+### Each workspace has its own URLs
+
+A workspace is one user, addressed at `/u/<slug>/`. Its four Meta-facing URLs carry that
+prefix, and its Settings page prints them ready to copy:
+
+| Meta dashboard field | Value |
+| --- | --- |
+| Callback URL (webhooks) | `https://<host>/u/<slug>/webhooks/instagram` |
+| Valid OAuth Redirect URIs | `https://<host>/u/<slug>/api/auth/instagram/callback` |
+| Privacy Policy URL | `https://<host>/u/<slug>/privacy` |
+| Data Deletion Instructions URL | `https://<host>/u/<slug>/data-deletion` |
+
+The same traps from §8 and §7 still apply per app: only the *Instagram → API setup with
+Instagram business login* redirect field is read, all three webhook subscription layers are
+still required, and the app still has to be switched to **Live**.
+
+### Why the prefix is in the URL and not a header
+
+Three endpoints have to choose an app secret or verify token **before** they can trust
+anything else about the request, so the choice cannot come from the payload:
+
+| Endpoint | Why |
+| --- | --- |
+| `POST /u/<slug>/webhooks/instagram` | The signature is an HMAC of the raw body under the app secret. The body is unverified until that passes, so the account id inside it cannot pick the key that would verify it. |
+| `GET /u/<slug>/webhooks/instagram` | The handshake carries only `hub.verify_token`. With N apps there are N valid tokens, and the parameter says only that it is one of them. |
+| `deauthorize` / `data-deletion` | Meta's `signed_request` is HMAC'd with the app secret and carries no state parameter. |
+
+Trying each stored secret in turn would work and is an oracle; it also gets slower with every
+user. The path segment is the answer.
+
+### Configuring one
+
+Settings → **Instagram app**, per workspace, needs `instagram.manage`:
+
+* **App ID** and **App Secret** — the *Instagram* pair from §5, not the Facebook pair.
+* **Webhook verify token** — generated here on first save. It has to be readable, because it
+  is typed into Meta's dashboard and re-checked whenever a handshake fails. The App Secret is
+  encrypted at rest and never returned.
+
+Settings → **Public address** sets the origin every workspace URL is derived from, for the
+whole instance. Changing it updates nothing at Meta: each app keeps calling the old address
+until its URLs are re-pasted by hand.
+
+### What stays instance-wide
+
+`ENCRYPTION_KEY`, `SESSION_SECRET`, `DRY_RUN`, MongoDB, Redis, the role catalogue, the Graph
+API version, `/r/` click tracking and `/files/` attachments. **`DRY_RUN` in particular is
+global** — one workspace live while another is in dry run is not supported.
+
+### `META_APP_ID` and friends are now defaults
+
+The three `META_*` variables in `.env` are the fallback for any workspace that has not
+configured its own app, and they keep the pre-workspace URL layout: a workspace on the
+instance credentials gets the **unprefixed** `/webhooks/instagram` and
+`/api/auth/instagram/callback`, because those are what the already-live Meta app has
+registered. `/ready` no longer reports them as missing configuration.
+
 # Meta App Setup — steps for the account owner
 
 Perform these in the Meta App Dashboard. Everything here is free.

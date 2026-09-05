@@ -118,6 +118,124 @@ and for some releases that matters — see the warning under this release's note
 
 # Release notes
 
+## Workspaces: per-user Meta apps and `/u/<slug>/` URLs
+
+### What is new
+
+- **Workspaces.** Every user gets one, addressed at `/u/<slug>/` — dashboard *and* the
+  Meta-facing callbacks. The slug is derived from their email local part.
+- **Per-workspace Meta apps.** Settings → **Instagram app** lets each person connect through
+  **their own** Meta app, with their own App ID, App Secret and webhook verify token, and
+  prints the four URLs to paste into Meta's dashboard.
+- **A workspace switcher** under the logo, for anyone holding the new `workspaces.view`. With
+  one workspace it stays the plain block it always was.
+- **Server settings split out.** Click geography and the new public-address setting moved from
+  `settings.*` to a new `instance.*` module. They are one setting for the whole deployment, so
+  the same grant used to mean both "may reword an automated reply" and "may re-point the
+  server". Only Owner holds `instance.*` by default.
+
+### Why this needs no App Review
+
+Each user brings **their own** Meta app for **their own** Instagram account, so nobody's
+account is ever reached through somebody else's app. That keeps every user in the "automating
+your own account" case, which needs only Live mode. Reaching another person's account through
+your app is the third-party case that needs Advanced Access, App Review and Business
+Verification. See `docs/meta-api.md` §7b — and do not collapse this back into one shared app.
+
+### What this release does to your database
+
+On the first start of the new API:
+
+1. Creates the `meta_apps` collection and its unique index on `user_id`.
+2. Adds `uq_user_slug` to `users` — unique, and **partial** on `{"slug": {"$type": "string"}}`.
+   It has to be partial: the index is created before the backfill runs, so at that moment every
+   existing user is still slug-less, and a non-partial unique index reads them all as null,
+   collides, and aborts startup on exactly the deployments that need backfilling.
+3. Gives every existing user a slug, oldest first — so on a single-operator install the
+   original operator keeps the unsuffixed one rather than being bumped to `-2` by someone who
+   signed up later. Logged once:
+
+```bash
+docker compose logs api --tail 80 | grep backfilled
+# users_backfilled_slugs  {"count": 1}
+```
+
+4. Re-syncs the Owner role, which picks up `workspaces.view` and `instance.*` automatically.
+   Manager and Viewer are operator-owned and are left untouched — so **a custom role that
+   relied on `settings.edit` to reach Click geography loses it** and needs `instance.manage`
+   granted explicitly on the Roles page.
+
+**Nobody is signed out**, and **no `.env` change is needed.** No new environment variables and
+no new dependencies were added.
+
+### Nothing changes in the Meta dashboard
+
+No new webhook URL, no new redirect URI, no verify-token change. Your existing Meta app keeps
+calling the URLs it already has.
+
+That is deliberate, not accidental. A workspace with no `meta_apps` row falls back to the
+`META_*` values in `.env` **and to the old unprefixed URL layout** — `/webhooks/instagram`,
+`/api/auth/instagram/callback`. Deriving `/u/<slug>/` URLs for the environment's app would hand
+an already-live Meta app a redirect URI it has never heard of, and reconnecting would start
+failing for no visible reason. The rule in `services/meta/credentials.py` is: **the URL layout
+follows the credentials, not the request.** Leave it that way.
+
+Moving a workspace onto its own Meta app is opt-in, whenever you want it, and only then do the
+prefixed URLs apply.
+
+`/ready` no longer reports `META_APP_ID`, `META_APP_SECRET` or `META_WEBHOOK_VERIFY_TOKEN` as
+missing configuration — they are a default now, not a requirement, since an instance where
+every workspace brought its own app needs none of them. It still requires `ENCRYPTION_KEY` and
+`SESSION_SECRET`.
+
+### Verifying this release
+
+**Check Caddy first.** `infra/caddy/Caddyfile` gained a matcher routing
+`/u/<slug>/{api,webhooks,privacy,data-deletion}` to the API. Caddy loads its config into memory
+at start and the file is bind-mounted, so editing it on disk changes nothing until the
+container is recreated. `make reload` does recreate it, because `caddy` depends on `api` — but
+check, because the failure is severe and points nowhere near Caddy: without the route,
+`/u/<slug>/api/...` falls through to the SPA and returns `index.html`, so every API call fails
+as a JSON parse error and the whole dashboard looks broken.
+
+```bash
+curl -s http://127.0.0.1:8090/u/anything/api/auth/me | head -c 40
+# {"error":{"code":"authentication_error"   <- correct, the API answered
+# <!doctype html>                           <- stale Caddy config:
+#                                              docker compose up -d --force-recreate caddy
+```
+
+Then the migration and the unchanged webhook:
+
+```bash
+docker compose exec -T mongodb mongosh instaflow --quiet --eval '
+  db.users.find({}, {email:1, slug:1, _id:0}).forEach(u => print(JSON.stringify(u)));
+  print("meta_apps: " + db.meta_apps.countDocuments({}));'
+
+TOKEN=$(grep -E "^META_WEBHOOK_VERIFY_TOKEN=" .env | cut -d= -f2- | tr -d " ")
+curl -s "http://127.0.0.1:8090/webhooks/instagram?hub.mode=subscribe&hub.verify_token=$TOKEN&hub.challenge=ok"
+# ok
+```
+
+Expect a slug on every user and `meta_apps: 0` — zero is correct, and is what keeps you on
+your existing Meta app.
+
+In the dashboard: signing in lands you at `/u/<your-slug>/`, every page works as before, and
+Settings → Instagram app says *"This workspace is on the instance-wide app from `.env`"* while
+listing the prefixed URLs you would register if you ever wanted your own.
+
+### Rolling back this release — read this first
+
+Mechanically safe: `meta_apps`, `users.slug` and the `instance.*` permissions on Owner are all
+ignored by older code, and nothing is lost. `uq_user_slug` lingers on the `users` collection
+and is harmless.
+
+**The roles release's rollback warning still applies on top of this one** — see below. If you
+roll back past both, any restricted user you created becomes an administrator, because the
+older code consults no role at all.
+
+---
+
 ## Roles, permissions, user management, and clone automation
 
 ### What is new

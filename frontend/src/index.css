@@ -271,6 +271,76 @@ p { margin: 0 0 10px; }
 }
 .workspace-name { font-weight: 650; font-size: 13.5px; line-height: 1.2; }
 
+/* --- workspace switcher --------------------------------------------------
+   Only rendered when there is more than one workspace to move between, so the
+   single-account sidebar keeps the plain block above and gains no affordance
+   that does nothing. */
+.workspace-wrap { position: relative; margin-bottom: 16px; }
+.workspace-wrap .workspace { margin-bottom: 0; }
+.workspace.as-button {
+  width: 100%; background: none; border-radius: 0; text-align: left;
+  border-left: 0; border-right: 0; cursor: pointer; font: inherit; color: inherit;
+}
+.workspace.as-button:hover { background: var(--surface-alt); }
+/* min-width:0 is what lets the ellipsis below actually engage: without it a
+   flex item refuses to shrink below its content and the email overflows the
+   sidebar instead of truncating. */
+.workspace-id { min-width: 0; flex: 1; }
+.workspace-id .workspace-name,
+.workspace-option-name,
+.workspace-option-text .small {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+}
+
+.dropdown-backdrop { position: fixed; inset: 0; z-index: 40; }
+
+.workspace-menu {
+  position: absolute; z-index: 41; left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  max-height: 320px; overflow-y: auto;
+}
+.workspace-option {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 8px; border: 0; border-radius: var(--radius-sm);
+  background: none; text-align: left; cursor: pointer; font: inherit; color: inherit;
+}
+.workspace-option:hover { background: var(--surface-alt); }
+.workspace-option.current { background: var(--surface-sunken); }
+.workspace-option-text { min-width: 0; flex: 1; }
+.workspace-option-name { font-weight: 600; font-size: 13px; line-height: 1.25; }
+
+/* An inline explanation that has to be read before acting on the card around
+   it -- distinct from `.muted small`, which people skim past. */
+.notice {
+  padding: 10px 12px; margin: 10px 0;
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  border-left: 3px solid var(--dark);
+  border-radius: var(--radius-sm);
+  font-size: 13px; line-height: 1.5;
+}
+.notice code { word-break: break-all; }
+
+/* --- copy-to-clipboard field --------------------------------------------
+   For values that only exist to be pasted into Meta's dashboard. The value
+   wraps rather than truncating: a half-shown webhook URL that looks right is
+   worse than one that is obviously long. */
+.copy-field { margin: 10px 0; }
+.copy-field-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-bottom: 3px;
+}
+.copy-field-value {
+  display: block; padding: 7px 9px;
+  background: var(--surface-sunken); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px; line-height: 1.45;
+  /* Global `button { white-space: nowrap }` does not reach this, but the
+     default `pre`-ish instinct would: a long URL must wrap, not scroll. */
+  word-break: break-all; white-space: normal;
+}
+
 .nav { display: flex; flex-direction: column; gap: 1px; }
 .nav a {
   display: flex; align-items: center; gap: 11px;

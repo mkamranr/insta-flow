@@ -12,6 +12,7 @@ from .executions import ExecutionsRepository
 from .instagram_accounts import InstagramAccountsRepository
 from .link_clicks import LinkClicksRepository
 from .media import MediaRepository
+from .meta_apps import MetaAppsRepository
 from .roles import RolesRepository
 from .rules import RulesRepository
 from .stories import StoriesRepository
@@ -32,6 +33,7 @@ __all__ = [
     "InstagramAccountsRepository",
     "LinkClicksRepository",
     "MediaRepository",
+    "MetaAppsRepository",
     "RolesRepository",
     "RulesRepository",
     "StoriesRepository",

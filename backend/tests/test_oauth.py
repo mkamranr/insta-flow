@@ -3,20 +3,26 @@
 import httpx
 import pytest
 
-from app.config import Settings
 from app.errors import MetaAPIError, MetaTokenError
 from app.services.meta import auth as meta_auth
+from app.services.meta.credentials import MetaCredentials
 from app.services.security import oauth_state
 
 SECRET = "s" * 64
 
 
-def settings():
-    return Settings(
-        meta_app_id="1234567890123456",
-        meta_app_secret="app-secret",
-        public_base_url="https://example.ts.net",
-        session_secret=SECRET,
+def creds(base_url: str = "https://example.ts.net") -> MetaCredentials:
+    """One workspace's Meta app.
+
+    `auth.py` takes credentials rather than `Settings` because which app -- and
+    therefore which redirect URI -- is a per-workspace fact now.
+    """
+    return MetaCredentials(
+        app_id="1234567890123456",
+        app_secret="app-secret",
+        verify_token="verify-me",
+        base_url=base_url,
+        source="workspace",
     )
 
 
@@ -41,7 +47,7 @@ def transport(handler):
 
 
 def test_authorize_url_matches_the_documented_endpoint():
-    url = meta_auth.build_authorize_url(settings(), "state-123")
+    url = meta_auth.build_authorize_url(creds(), "state-123")
     assert url.startswith("https://www.instagram.com/oauth/authorize?")
 
     params = httpx.URL(url).params
@@ -52,7 +58,7 @@ def test_authorize_url_matches_the_documented_endpoint():
 
 
 def test_authorize_url_requests_all_three_scopes():
-    scopes = httpx.URL(meta_auth.build_authorize_url(settings(), "s")).params["scope"].split(",")
+    scopes = httpx.URL(meta_auth.build_authorize_url(creds(), "s")).params["scope"].split(",")
     assert set(scopes) == {
         "instagram_business_basic",
         "instagram_business_manage_comments",
@@ -100,7 +106,7 @@ async def test_code_exchange_posts_the_documented_form():
         return httpx.Response(200, json={"access_token": "short-token", "user_id": 178414})
 
     async with transport(handler) as client:
-        bundle = await meta_auth.exchange_code(settings(), "the-code", client=client)
+        bundle = await meta_auth.exchange_code(creds(), "the-code", client=client)
 
     assert seen["url"] == "https://api.instagram.com/oauth/access_token"
     assert "grant_type=authorization_code" in seen["body"]
@@ -116,7 +122,7 @@ async def test_permissions_are_parsed_from_either_shape():
         )
 
     async with transport(handler) as client:
-        bundle = await meta_auth.exchange_code(settings(), "c", client=client)
+        bundle = await meta_auth.exchange_code(creds(), "c", client=client)
     assert bundle.permissions == ("instagram_business_basic", "x")
 
 
@@ -126,7 +132,7 @@ async def test_a_rejected_code_raises_a_token_error():
 
     async with transport(handler) as client:
         with pytest.raises(MetaTokenError) as excinfo:
-            await meta_auth.exchange_code(settings(), "bad", client=client)
+            await meta_auth.exchange_code(creds(), "bad", client=client)
     assert "Invalid code" in str(excinfo.value)
 
 
@@ -136,7 +142,7 @@ async def test_a_server_error_during_exchange_raises_meta_api_error():
 
     async with transport(handler) as client:
         with pytest.raises(MetaAPIError):
-            await meta_auth.exchange_code(settings(), "c", client=client)
+            await meta_auth.exchange_code(creds(), "c", client=client)
 
 
 # --- long-lived exchange and refresh ---------------------------------------
@@ -148,7 +154,7 @@ async def test_long_lived_exchange_sets_an_expiry():
         return httpx.Response(200, json={"access_token": "long-token", "expires_in": 5183944})
 
     async with transport(handler) as client:
-        bundle = await meta_auth.exchange_for_long_lived(settings(), "short", client=client)
+        bundle = await meta_auth.exchange_for_long_lived(creds(), "short", client=client)
 
     assert bundle.access_token == "long-token"
     assert bundle.expires_at is not None
@@ -161,7 +167,7 @@ async def test_refresh_uses_the_documented_grant_type():
         return httpx.Response(200, json={"access_token": "refreshed", "expires_in": 5183944})
 
     async with transport(handler) as client:
-        bundle = await meta_auth.refresh_long_lived(settings(), "old", client=client)
+        bundle = await meta_auth.refresh_long_lived("old", client=client)
     assert bundle.access_token == "refreshed"
 
 
@@ -172,7 +178,7 @@ async def test_a_missing_expires_in_leaves_expiry_unset():
         return httpx.Response(200, json={"access_token": "t"})
 
     async with transport(handler) as client:
-        bundle = await meta_auth.exchange_for_long_lived(settings(), "s", client=client)
+        bundle = await meta_auth.exchange_for_long_lived(creds(), "s", client=client)
     assert bundle.expires_at is None
 
 
@@ -184,4 +190,4 @@ async def test_a_200_carrying_an_error_body_still_raises():
 
     async with transport(handler) as client:
         with pytest.raises(MetaAPIError):
-            await meta_auth.refresh_long_lived(settings(), "t", client=client)
+            await meta_auth.refresh_long_lived("t", client=client)

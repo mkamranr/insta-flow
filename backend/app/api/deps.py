@@ -25,6 +25,7 @@ from app.db.repositories import (
     InstagramAccountsRepository,
     LinkClicksRepository,
     MediaRepository,
+    MetaAppsRepository,
     RolesRepository,
     RulesRepository,
     StoriesRepository,
@@ -32,9 +33,15 @@ from app.db.repositories import (
     UsersRepository,
     WebhookEventsRepository,
 )
-from app.errors import AuthenticationError, AuthorizationError
+from app.errors import AuthenticationError, AuthorizationError, NotFoundError
 from app.permissions import is_valid
 from app.services.geoip import GeoIpReader
+from app.services.meta.credentials import (
+    MetaCredentials,
+    origin_for,
+    resolve_for,
+    unconfigured,
+)
 from app.services.security import sessions
 
 logger = logging.getLogger(__name__)
@@ -55,6 +62,10 @@ def users_repo(db: DbDep) -> UsersRepository:
 
 def accounts_repo(db: DbDep) -> InstagramAccountsRepository:
     return InstagramAccountsRepository(db)
+
+
+def meta_apps_repo(db: DbDep) -> MetaAppsRepository:
+    return MetaAppsRepository(db)
 
 
 def media_repo(db: DbDep) -> MediaRepository:
@@ -126,6 +137,7 @@ def audit_repo(db: DbDep) -> AuditLogsRepository:
 
 UsersRepo = Annotated[UsersRepository, Depends(users_repo)]
 AccountsRepo = Annotated[InstagramAccountsRepository, Depends(accounts_repo)]
+MetaAppsRepo = Annotated[MetaAppsRepository, Depends(meta_apps_repo)]
 MediaRepo = Annotated[MediaRepository, Depends(media_repo)]
 StoriesRepo = Annotated[StoriesRepository, Depends(stories_repo)]
 UpcomingRepo = Annotated[UpcomingPostsRepository, Depends(upcoming_repo)]
@@ -257,3 +269,133 @@ def require_any(*permissions: str) -> Callable[[Grant], Awaitable[None]]:
 
     dependency.__permissions__ = wanted  # type: ignore[attr-defined]
     return dependency
+
+
+# --- workspaces -------------------------------------------------------------
+
+WORKSPACE_PERMISSION = "workspaces.view"
+
+
+class Workspace(NamedTuple):
+    """Whose data this request is about, which is not always who is asking.
+
+    Every workspace-scoped route resolves this instead of reading `user["_id"]`
+    directly. `user` here is the workspace's *owner*; the caller is still
+    `CurrentUser`, and audit entries must keep recording the caller -- otherwise
+    an Owner tidying up someone else's automations writes an audit trail naming
+    the wrong person.
+    """
+
+    user: dict[str, Any]
+    slug: str | None
+    is_own: bool
+
+    @property
+    def user_id(self) -> Any:
+        return self.user["_id"]
+
+
+def workspace_slug(request: Request) -> str | None:
+    """The `/u/<slug>/` segment, or None on the unprefixed routes.
+
+    Read from `request.path_params` rather than a declared parameter, so that
+    including a router twice -- once bare, once under `/u/{slug}` -- needs no
+    change to a single handler signature. Verified: FastAPI routes an undeclared
+    path parameter happily and still builds its OpenAPI schema.
+    """
+    slug = request.path_params.get("slug")
+    return str(slug) if slug else None
+
+
+async def current_workspace(
+    request: Request, user: CurrentUser, grant: CurrentGrant, users: UsersRepo
+) -> Workspace:
+    """The workspace this request addresses: your own unless the path says otherwise.
+
+    Reaching into someone else's costs `workspaces.view`, and failing that check
+    raises **404, not 403** -- the same choice `instagram.py::_load` makes for
+    accounts. A 403 would confirm the slug exists, turning this endpoint into a
+    way to enumerate who has an account here.
+
+    Costs no extra query in the common case: your own slug is already on the user
+    document `current_user` loaded.
+    """
+    slug = workspace_slug(request)
+    own = str(user.get("slug") or "") or None
+    if slug is None or slug == own:
+        return Workspace(user=user, slug=own, is_own=True)
+
+    if WORKSPACE_PERMISSION not in grant.permissions:
+        logger.info("workspace_denied", extra={"actor": str(user["_id"])})
+        raise NotFoundError("Workspace not found.")
+
+    owner = await users.get_by_slug(slug)
+    if owner is None:
+        raise NotFoundError("Workspace not found.")
+    # `is_active` is not checked. A deactivated person cannot sign in, but their
+    # Instagram account and its automations still exist and still fire, so an
+    # administrator must be able to open the workspace to stop them.
+    return Workspace(user=owner, slug=slug, is_own=False)
+
+
+CurrentWorkspace = Annotated[Workspace, Depends(current_workspace)]
+
+
+async def _resolved(
+    settings: Settings,
+    store: AppSettingsRepository,
+    apps: MetaAppsRepository,
+    *,
+    user_id: Any | None,
+    slug: str | None,
+) -> MetaCredentials:
+    app = await apps.for_user(user_id) if user_id is not None else None
+    return resolve_for(settings, await store.load(), app, slug)
+
+
+async def workspace_credentials(
+    workspace: CurrentWorkspace,
+    settings: SettingsDep,
+    store: AppSettingsRepo,
+    apps: MetaAppsRepo,
+) -> MetaCredentials:
+    """The Meta app this workspace acts as. Declared only where it is needed.
+
+    Kept off `current_workspace` on purpose: it costs two extra reads, and only
+    the OAuth and Settings routes care which app is in play. Everything else just
+    needs to know whose rows to read.
+    """
+    return await _resolved(settings, store, apps, user_id=workspace.user_id, slug=workspace.slug)
+
+
+WorkspaceCredentials = Annotated[MetaCredentials, Depends(workspace_credentials)]
+
+
+async def public_credentials(
+    request: Request,
+    settings: SettingsDep,
+    users: UsersRepo,
+    store: AppSettingsRepo,
+    apps: MetaAppsRepo,
+) -> MetaCredentials:
+    """Credentials for a request Meta makes, where there is no session to read.
+
+    The webhook receiver, the OAuth callback and the two signed_request callbacks
+    all land here. The slug in the path is the only thing that can say which app
+    is calling, which is the whole reason workspaces are a URL prefix rather than
+    a header or a cookie -- see `services/meta/credentials.py`.
+
+    An unknown slug resolves to `unconfigured`, not to the instance credentials.
+    """
+    slug = workspace_slug(request)
+    if slug is None:
+        return await _resolved(settings, store, apps, user_id=None, slug=None)
+
+    owner = await users.get_by_slug(slug)
+    if owner is None:
+        logger.warning("workspace_slug_unknown", extra={"slug": slug})
+        return unconfigured(origin_for(settings, await store.load()), slug)
+    return await _resolved(settings, store, apps, user_id=owner["_id"], slug=slug)
+
+
+PublicCredentials = Annotated[MetaCredentials, Depends(public_credentials)]

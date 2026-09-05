@@ -49,6 +49,9 @@ Work through this before pointing a real audience at the deployment.
       meet it at an inconvenient moment if there is only ever one
 - [ ] `make bootstrap-admin` still works — it is the recovery path if you lock yourself out
 - [ ] Nobody shares a login. Roles are only meaningful if each person has their own
+- [ ] Server-wide settings — the public address and the GeoLite2 credentials — are
+      Owner-only (`instance.*`). A custom role that used to reach Click geography through
+      `settings.edit` needs `instance.manage` granted explicitly
 
 ## Meta
 

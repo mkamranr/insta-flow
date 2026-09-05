@@ -42,6 +42,19 @@
 		}
 	}
 
+	# Per-workspace routes: /u/<slug>/api/..., /u/<slug>/webhooks/instagram, and
+	# the two legal pages each Meta app needs its own URL for.
+	#
+	# path_regexp, not a `/u/*/api/*` glob: Caddy's path wildcards do not treat
+	# `/` specially, so a glob would also swallow deeper paths and hand the API
+	# requests meant for the SPA. Anything else under /u/<slug>/ falls through to
+	# the catch-all below and is served by the SPA, which is what makes
+	# /u/<slug>/posts a page rather than a 404.
+	@workspace path_regexp ^/u/[^/]+/(api|webhooks|privacy|data-deletion)(/.*)?$
+	handle @workspace {
+		reverse_proxy api:8000
+	}
+
 	handle /api/* {
 		reverse_proxy api:8000
 	}
@@ -72,6 +85,10 @@
 	# fetches these itself when sending a DM and carries none of our
 	# credentials (docs/meta-api.md §4c). Without this route they fall through
 	# to the SPA, and Meta silently receives an HTML page instead of the file.
+	#
+	# Global, not per-workspace, like /r/ above: a storage key and a click token
+	# are already unique across the instance, and Meta fetches an attachment with
+	# no session and no workspace context at all.
 	handle /files/* {
 		reverse_proxy api:8000
 	}

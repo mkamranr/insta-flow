@@ -1,24 +1,8 @@
 from app.config import Settings
 
-
-def test_derived_urls_match_the_meta_app_registration():
-    """These two strings must match the Meta dashboard byte-for-byte (docs/meta-api.md)."""
-    settings = Settings(
-        public_base_url="https://your-machine.your-tailnet.ts.net",
-        meta_api_version="v25.0",
-    )
-    assert (
-        settings.oauth_redirect_uri
-        == "https://your-machine.your-tailnet.ts.net/api/auth/instagram/callback"
-    )
-    assert (
-        settings.webhook_url == "https://your-machine.your-tailnet.ts.net/webhooks/instagram"
-    )
-
-
-def test_trailing_slash_does_not_produce_a_double_slash():
-    settings = Settings(public_base_url="https://example.ts.net/")
-    assert settings.webhook_url == "https://example.ts.net/webhooks/instagram"
+# The URLs that must match a Meta app registration byte-for-byte are derived by
+# `services/meta/credentials.py` now, because they depend on which workspace's
+# app is acting. They are pinned in `test_meta_credentials.py`.
 
 
 def test_graph_base_uses_the_instagram_login_host():
@@ -43,27 +27,25 @@ def test_ai_defaults_to_disabled(monkeypatch):
 
 def test_missing_required_lists_every_unset_secret():
     # Explicit blanks, so the result does not depend on the ambient .env.
-    blank = Settings(
-        meta_app_id="",
-        meta_app_secret="",
-        meta_webhook_verify_token="",
-        encryption_key="",
-        session_secret="",
-    )
-    assert blank.missing_required() == [
-        "ENCRYPTION_KEY",
-        "META_APP_ID",
-        "META_APP_SECRET",
-        "META_WEBHOOK_VERIFY_TOKEN",
-        "SESSION_SECRET",
-    ]
+    blank = Settings(encryption_key="", session_secret="")
+    assert blank.missing_required() == ["ENCRYPTION_KEY", "SESSION_SECRET"]
 
 
 def test_missing_required_is_empty_when_configured():
+    assert Settings(encryption_key="4", session_secret="5").missing_required() == []
+
+
+def test_meta_credentials_are_not_required_instance_wide():
+    """An instance where every workspace brings its own Meta app is healthy.
+
+    The three META_* variables became a default rather than a requirement when
+    workspaces arrived. Reporting /ready as not_ready for their absence would
+    make a correctly-configured multi-workspace deployment look broken.
+    """
     settings = Settings(
-        meta_app_id="1",
-        meta_app_secret="2",
-        meta_webhook_verify_token="3",
+        meta_app_id="",
+        meta_app_secret="",
+        meta_webhook_verify_token="",
         encryption_key="4",
         session_secret="5",
     )

@@ -13,12 +13,32 @@ def index_named(collection: str, name: str) -> dict:
 
 
 def test_every_specified_collection_is_present():
-    assert len(COLLECTIONS) == 17
+    assert len(COLLECTIONS) == 18
     assert set(INDEXES) <= set(COLLECTIONS)
     assert "account_snapshots" in COLLECTIONS
     assert "stories" in COLLECTIONS
     assert "upcoming_posts" in COLLECTIONS
     assert "roles" in COLLECTIONS
+    assert "meta_apps" in COLLECTIONS
+
+
+def test_workspace_slugs_are_unique_but_only_once_assigned():
+    """Two users on one slug would make `/u/<slug>/` ambiguous -- and the webhook
+    it resolves would be verified against a coin-flip's app secret.
+
+    Partial on `$type: string`, because this index is created before
+    `backfill_missing_slugs` runs. Without the filter every slug-less user on an
+    upgraded deployment reads as null, they collide, and startup aborts on
+    exactly the installs that still need backfilling."""
+    doc = index_named("users", "uq_user_slug")
+    assert doc["unique"] is True
+    assert doc["partialFilterExpression"] == {"slug": {"$type": "string"}}
+
+
+def test_one_meta_app_per_workspace():
+    """Two rows for one user would make "which app secret verifies this webhook"
+    ambiguous, and the wrong answer is a silently rejected signature."""
+    assert index_named("meta_apps", "uq_meta_app_user")["unique"] is True
 
 
 def test_role_slugs_are_unique():

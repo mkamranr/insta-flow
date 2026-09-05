@@ -13,6 +13,7 @@ from fastapi.routing import APIRoute
 from app.api.deps import require, require_any
 from app.main import app
 from app.permissions import ALL
+from app.services.slugs import URL_PREFIX
 from tests.conftest import TEST_PASSWORD
 
 # Routes under /api that legitimately carry no permission, with the reason.
@@ -41,6 +42,12 @@ UNGATED = {
     ("GET", "/api/auth/instagram/deauthorize"),
     ("POST", "/api/auth/instagram/data-deletion"),
     ("GET", "/api/auth/instagram/data-deletion"),
+    # Which workspaces you may open is what the frontend gates *on*, exactly like
+    # /api/auth/me. Requiring a permission to learn which workspaces you may
+    # enter would be circular. `workspaces.view` decides the WIDTH of the answer
+    # inside the handler; without it the answer is only your own workspace, which
+    # you already know about.
+    ("GET", "/api/workspaces"),
 }
 
 
@@ -53,12 +60,27 @@ def _declared_permissions(dependant) -> set[str]:
     return found
 
 
+WORKSPACE_PREFIX = f"{URL_PREFIX}/{{slug}}"
+
+
+def _bare(path: str) -> str:
+    """A route's path with any `/u/{slug}` prefix stripped.
+
+    Every router is mounted twice -- bare, and again under the workspace prefix
+    (`app/main.py`). Filtering on `path.startswith("/api")` alone would therefore
+    walk only half the route table, and every prefixed route would escape the
+    coverage check below entirely: a route could ship gated at `/api/x` and
+    ungated at `/u/{slug}/api/x` and nothing here would notice.
+    """
+    return path[len(WORKSPACE_PREFIX) :] if path.startswith(WORKSPACE_PREFIX) else path
+
+
 def _api_routes():
     for route in app.routes:
-        if not isinstance(route, APIRoute) or not route.path.startswith("/api"):
+        if not isinstance(route, APIRoute) or not _bare(route.path).startswith("/api"):
             continue
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
-            yield method, route.path, route
+            yield method, _bare(route.path), route
 
 
 def test_every_api_route_declares_a_permission():
@@ -69,6 +91,21 @@ def test_every_api_route_declares_a_permission():
         if (method, path) not in UNGATED and not _declared_permissions(route.dependant)
     ]
     assert not ungated, "these /api routes declare no permission:\n  " + "\n  ".join(ungated)
+
+
+def test_both_mounts_of_every_route_are_walked():
+    """`_bare` must actually be collapsing the two mounts onto one name.
+
+    If the prefix ever changes and `_bare` stops matching, the coverage test
+    above still passes -- it would simply be checking half as much. This is the
+    assertion that fails instead.
+    """
+    prefixed = [r for r in app.routes if isinstance(r, APIRoute)
+                and r.path.startswith(WORKSPACE_PREFIX) and "/api" in r.path]
+    assert prefixed, "no workspace-prefixed API routes found; is main.py still double-mounting?"
+    walked = {path for _, path, _ in _api_routes()}
+    for route in prefixed:
+        assert _bare(route.path) in walked
 
 
 def test_the_allowlist_has_not_rotted():

@@ -119,6 +119,17 @@ async def create_user(
             payload.email, hash_password(payload.password), role_id=role["_id"]
         )
     except DuplicateKeyError as exc:
+        # Two unique indexes can fire here. `claim_slug` reads "is this slug
+        # free" and the insert acts on it, so two concurrent creates from the
+        # same email local part -- sales@one.com and sales@two.com -- can both
+        # see "sales" free and collide on `uq_user_slug`. Reporting that as a
+        # duplicate email sends the operator hunting for a user that does not
+        # exist.
+        if "uq_user_slug" in str(exc):
+            logger.warning("user_slug_race", extra={"email": payload.email})
+            raise ConflictError(
+                "That workspace address was just taken. Try again."
+            ) from exc
         raise ConflictError("A user with that email already exists.") from exc
 
     await audit.record(

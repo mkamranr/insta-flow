@@ -120,7 +120,7 @@ destructive:
 | --- | --- |
 | `ENCRYPTION_KEY` | Every stored Instagram token becomes unreadable. You must reconnect the account. |
 | `SESSION_SECRET` | Everyone is logged out. Harmless, but avoidable. |
-| `META_APP_ID`, `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN` | Same Meta app, so the same values. A different verify token fails the webhook handshake. |
+| `META_APP_ID`, `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN` | Same Meta app, so the same values. A different verify token fails the webhook handshake. Per-workspace Meta apps live in MongoDB, not `.env`, so the database dump carries them — but they are encrypted with `ENCRYPTION_KEY`, which must move unchanged or they cannot be read back. |
 
 `PUBLIC_BASE_URL` is the one value you **will** change — in step 7, once you know the new
 funnel hostname.

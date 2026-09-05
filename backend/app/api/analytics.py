@@ -16,12 +16,13 @@ from app.api.deps import (
     ClickEventsRepo,
     CommentsRepo,
     ContactsRepo,
-    CurrentUser,
+    CurrentWorkspace,
     ExecutionsRepo,
     LinkClicksRepo,
     MediaRepo,
     RulesRepo,
     SnapshotsRepo,
+    Workspace,
     require,
 )
 from app.db.repositories import serialise_required
@@ -45,15 +46,15 @@ _SUPERFAN_RULE = (
 )
 
 
-async def _account_id(accounts: Any, user: dict[str, Any]) -> Any:
-    """The signed-in user's account. Scoped so metrics cannot leak across users."""
-    found = await accounts.list({"user_id": user["_id"]})
+async def _account_id(accounts: Any, workspace: Workspace) -> Any:
+    """This workspace's account. Scoped so metrics cannot leak across workspaces."""
+    found = await accounts.list({"user_id": workspace.user_id})
     return found[0]["_id"] if found else None
 
 
 @router.get("/summary", dependencies=[Depends(require("analytics.view"))])
 async def summary(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     comments: CommentsRepo,
     executions: ExecutionsRepo,
@@ -62,7 +63,7 @@ async def summary(
     contacts: ContactsRepo,
     days: int = Query(default=7, ge=1, le=365),
 ) -> dict[str, Any]:
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return {"connected": False}
 
@@ -103,14 +104,14 @@ async def summary(
 
 @router.get("/rules", dependencies=[Depends(require("analytics.view"))])
 async def rule_performance(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     executions: ExecutionsRepo,
     links: LinkClicksRepo,
     rules: RulesRepo,
 ) -> list[dict[str, Any]]:
     """Per-rule DMs and clicks, so a rule that is not working is visible."""
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return []
 
@@ -159,7 +160,7 @@ async def rule_performance(
 
 @router.get("/activity", dependencies=[Depends(require("analytics.view"))])
 async def activity(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     executions: ExecutionsRepo,
     comments: CommentsRepo,
@@ -168,7 +169,7 @@ async def activity(
     status: str | None = Query(default=None),
 ) -> list[dict[str, Any]]:
     """Recent executions, joined to the comment that triggered them."""
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return []
 
@@ -206,7 +207,7 @@ async def activity(
 
 @router.get("/superfans", dependencies=[Depends(require("analytics.view"))])
 async def superfans(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     comments: CommentsRepo,
     weeks: int = Query(12, ge=2, le=52),
@@ -216,7 +217,7 @@ async def superfans(
     The rule is returned alongside the rows so the UI states the same definition
     the server applied, rather than a paraphrase that can drift from it.
     """
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return {"rows": [], "rule": _SUPERFAN_RULE}
 
@@ -231,12 +232,12 @@ async def superfans(
 
 @router.get("/top-commenters", dependencies=[Depends(require("analytics.view"))])
 async def top_commenters(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     comments: CommentsRepo,
     limit: int = Query(default=10, ge=1, le=50),
 ) -> list[dict[str, Any]]:
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return []
 
@@ -285,7 +286,7 @@ def _densify(rows: list[dict[str, Any]], since: datetime, by_hour: bool) -> list
 
 @router.get("/trends", dependencies=[Depends(require("analytics.view"))])
 async def trends(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     executions: ExecutionsRepo,
     events: ClickEventsRepo,
@@ -297,7 +298,7 @@ async def trends(
     Clicks come from `click_events`, one row per click. The counter on
     `link_clicks` cannot answer this: it knows how many, never when.
     """
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return {"connected": False, "dms": [], "clicks": []}
 
@@ -318,7 +319,7 @@ async def trends(
 
 @router.get("/places", dependencies=[Depends(require("analytics.view"))])
 async def account_places(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     events: ClickEventsRepo,
     links: LinkClicksRepo,
@@ -334,7 +335,7 @@ async def account_places(
     not an account is connected.
     """
     empty = {"by": by, "rows": [], "located": 0, "total_clicks": 0, "countries": 0, "links": 0}
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return empty
 
@@ -356,7 +357,7 @@ async def account_places(
 
 @router.get("/highlights", dependencies=[Depends(require("analytics.view"))])
 async def highlights(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     executions: ExecutionsRepo,
     events: ClickEventsRepo,
@@ -370,7 +371,7 @@ async def highlights(
     highlight card inventing a winner from an empty set would be worse than an
     honest blank.
     """
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return {"connected": False}
 
@@ -415,7 +416,7 @@ async def highlights(
 @router.get("/rules/{rule_id}/places", dependencies=[Depends(require("analytics.view"))])
 async def rule_places(
     rule_id: str,
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     rules: RulesRepo,
     links: LinkClicksRepo,
@@ -427,7 +428,7 @@ async def rule_places(
     stored. Rows predating the database, or from addresses it cannot place, carry
     no location and are simply absent -- see `located` versus `total_clicks`.
     """
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return {"rows": [], "located": 0, "total_clicks": 0}
 
@@ -449,7 +450,7 @@ async def rule_places(
 
 @router.get("/account", dependencies=[Depends(require("analytics.view"))])
 async def account_performance(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     snapshots: SnapshotsRepo,
     days: int = Query(7, ge=1, le=90),
@@ -464,7 +465,7 @@ async def account_performance(
       is indistinguishable from one that gained 2 and lost none. Reporting a
       gross number would be inventing it, so this endpoint does not.
     """
-    found = await accounts.list({"user_id": user["_id"]})
+    found = await accounts.list({"user_id": workspace.user_id})
     if not found:
         return {"connected": False}
     account = found[0]
@@ -517,7 +518,7 @@ async def account_performance(
 
 @router.get("/posts", dependencies=[Depends(require("analytics.view"))])
 async def post_performance(
-    user: CurrentUser,
+    workspace: CurrentWorkspace,
     accounts: AccountsRepo,
     media: MediaRepo,
     comments: CommentsRepo,
@@ -530,7 +531,7 @@ async def post_performance(
     report what *would* fire under today's rules, which is a different question
     and would silently change history when a rule is edited.
     """
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return []
 
@@ -558,10 +559,10 @@ async def post_performance(
 
 @router.get("/contacts", dependencies=[Depends(require("contacts.view"))])
 async def contacts_list(
-    user: CurrentUser, accounts: AccountsRepo, contacts: ContactsRepo
+    workspace: CurrentWorkspace, accounts: AccountsRepo, contacts: ContactsRepo
 ) -> list[dict[str, Any]]:
     """Captured leads. Emails are shown to the operator who collected them."""
-    account_id = await _account_id(accounts, user)
+    account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return []
     return [serialise_required(c) for c in await contacts.list_for_account(account_id)]

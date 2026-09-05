@@ -12,7 +12,17 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app import queue
-from app.api.deps import AccountsRepo, AuditRepo, CurrentUser, SettingsDep, require
+from app.api.deps import (
+    AccountsRepo,
+    AuditRepo,
+    CurrentUser,
+    CurrentWorkspace,
+    PublicCredentials,
+    SettingsDep,
+    Workspace,
+    WorkspaceCredentials,
+    require,
+)
 from app.db.repositories import to_object_id, utcnow
 from app.errors import MetaAPIError, NotFoundError, ValidationError
 from app.models.instagram import InstagramAccountPublic
@@ -41,14 +51,18 @@ def _public(account: dict[str, Any]) -> InstagramAccountPublic:
     return InstagramAccountPublic.from_document(account, token_expired=is_expired(account))
 
 
-async def _load(accounts: Any, account_id: str, user: dict[str, Any]) -> dict[str, Any]:
-    """Load an account the signed-in user owns.
+async def _load(accounts: Any, account_id: str, workspace: Workspace) -> dict[str, Any]:
+    """Load an account belonging to this workspace.
 
-    A missing account and someone else's account both raise NotFoundError, so the
-    response cannot be used to discover which ids exist.
+    A missing account and an account outside this workspace both raise
+    NotFoundError, so the response cannot be used to discover which ids exist.
+
+    Scoped to the workspace rather than the caller: an administrator holding
+    `workspaces.view` is legitimately looking at someone else's account, and
+    `current_workspace` has already decided whether they may.
     """
     account = await accounts.get(_object_id(account_id, "account_id"))
-    if account is None or account.get("user_id") != user["_id"]:
+    if account is None or account.get("user_id") != workspace.user_id:
         raise NotFoundError("Instagram account not found.")
     return account
 
@@ -61,33 +75,53 @@ def _access_token(account: dict[str, Any], settings: Any) -> str:
 
 
 @auth_router.get("/start", dependencies=[Depends(require("instagram.manage"))])
-async def start(user: CurrentUser, settings: SettingsDep) -> dict[str, str]:
+async def start(
+    workspace: CurrentWorkspace, creds: WorkspaceCredentials, settings: SettingsDep
+) -> dict[str, str]:
     """Return the Meta consent URL plus a single-use state.
 
     Returns JSON rather than redirecting so the SPA controls navigation and the
     session cookie is not involved in a cross-site redirect.
-    """
-    if not settings.meta_app_id or not settings.meta_app_secret:
-        raise ValidationError("Meta app credentials are not configured. See docs/meta-api.md.")
 
-    state = await oauth_state.issue(queue.get_pool(), settings.session_secret, str(user["_id"]))
+    The state carries the **workspace owner's** id, not the caller's: it is what
+    the callback stores the account against, so connecting while viewing another
+    workspace must file the account under that workspace, not under whoever
+    happened to click.
+    """
+    if not creds.configured:
+        raise ValidationError(
+            "This workspace has no Meta app configured. Add an App ID and App Secret "
+            "in Settings, or see docs/meta-api.md."
+        )
+
+    state = await oauth_state.issue(
+        queue.get_pool(), settings.session_secret, str(workspace.user_id)
+    )
     return {
-        "authorize_url": meta_auth.build_authorize_url(settings, state),
-        "redirect_uri": settings.oauth_redirect_uri,
+        "authorize_url": meta_auth.build_authorize_url(creds, state),
+        "redirect_uri": creds.redirect_uri,
     }
 
 
 @auth_router.get("/callback")
 async def callback(
-    request: Request, settings: SettingsDep, accounts: AccountsRepo, audit: AuditRepo
+    request: Request,
+    settings: SettingsDep,
+    creds: PublicCredentials,
+    accounts: AccountsRepo,
+    audit: AuditRepo,
 ) -> RedirectResponse:
     """Meta redirects the browser here after consent (§3.1-§3.3).
 
     This route is unauthenticated by necessity — Meta drives the redirect — so
     the signed single-use state is the only thing binding it to a real session.
+
+    Which app's secret completes the exchange comes from the `/u/<slug>/` segment
+    in the URL Meta was configured with, and every redirect back lands inside
+    that same workspace.
     """
     params = request.query_params
-    dashboard = f"{settings.public_base_url.rstrip('/')}/instagram"
+    dashboard = f"{creds.base_url}/instagram"
 
     if error := params.get("error"):
         logger.warning("oauth_denied", extra={"error": error})
@@ -105,9 +139,9 @@ async def callback(
         return RedirectResponse(f"{dashboard}?error=missing_code", 303)
 
     try:
-        short = await meta_auth.exchange_code(settings, code)
-        long_lived = await meta_auth.exchange_for_long_lived(settings, short.access_token)
-        profile = await build_client(settings).get_account(long_lived.access_token)
+        short = await meta_auth.exchange_code(creds, code)
+        long_lived = await meta_auth.exchange_for_long_lived(creds, short.access_token)
+        profile = await build_client(settings, creds).get_account(long_lived.access_token)
     except MetaAPIError as exc:
         logger.error("oauth_exchange_failed", extra={"error": str(exc)})
         return RedirectResponse(f"{dashboard}?error=exchange_failed", 303)
@@ -149,26 +183,32 @@ async def callback(
     return RedirectResponse(f"{dashboard}?connected=1", 303)
 
 
-async def _signed_request_user(request: Request, settings: Any) -> str | None:
-    """Verify Meta's signed_request and return the Instagram-scoped user id."""
+async def _signed_request_user(request: Request, app_secret: str) -> str | None:
+    """Verify Meta's signed_request and return the Instagram-scoped user id.
+
+    Takes the secret rather than `Settings`: the signature is made with the
+    calling app's secret, and with per-workspace apps only the URL says which one
+    that is. An empty secret makes `parse` fail, which is the right answer for a
+    slug nothing recognises.
+    """
     try:
         form = await request.form()
     except Exception:
         return None
-    payload = signed_request.parse(str(form.get("signed_request", "")), settings.meta_app_secret)
+    payload = signed_request.parse(str(form.get("signed_request", "")), app_secret)
     return str(payload.get("user_id", "")) if payload else None
 
 
 @auth_router.post("/deauthorize")
 async def deauthorize(
-    request: Request, settings: SettingsDep, accounts: AccountsRepo
+    request: Request, creds: PublicCredentials, accounts: AccountsRepo
 ) -> dict[str, str]:
     """Meta calls this when someone removes the app from their Instagram account.
 
     The signed_request is verified before acting: this URL is public, so an
     unverified payload would let anyone disconnect an account by POSTing to it.
     """
-    user_id = await _signed_request_user(request, settings)
+    user_id = await _signed_request_user(request, creds.app_secret)
     if user_id is None:
         # Acknowledge rather than error. Meta retries failures, and a payload we
         # cannot verify will never verify on a retry either.
@@ -212,15 +252,15 @@ async def deauthorize_info() -> HTMLResponse:
 
 @auth_router.post("/data-deletion")
 async def data_deletion(
-    request: Request, settings: SettingsDep, accounts: AccountsRepo
+    request: Request, creds: PublicCredentials, accounts: AccountsRepo
 ) -> dict[str, Any]:
     """Meta's data deletion callback.
 
     Same verification as deauthorize. The response shape (a status URL and a
     confirmation code) is what Meta expects so a user can check on the request.
     """
-    user_id = await _signed_request_user(request, settings)
-    status_url = f"{settings.public_base_url.rstrip('/')}/data-deletion"
+    user_id = await _signed_request_user(request, creds.app_secret)
+    status_url = creds.data_deletion_url
 
     if user_id is None:
         logger.warning("data_deletion_unverified")
@@ -235,7 +275,7 @@ async def data_deletion(
 
 
 @auth_router.get("/data-deletion", response_class=HTMLResponse)
-async def data_deletion_info(settings: SettingsDep) -> HTMLResponse:
+async def data_deletion_info() -> HTMLResponse:
     """As with deauthorize: a person here should get an explanation, not a 405."""
     return HTMLResponse(
         "<!doctype html><meta charset=utf-8><title>Data deletion callback</title>"
@@ -256,8 +296,10 @@ async def data_deletion_info(settings: SettingsDep) -> HTMLResponse:
     response_model=list[InstagramAccountPublic],
     dependencies=[Depends(require("instagram.view"))],
 )
-async def list_accounts(user: CurrentUser, accounts: AccountsRepo) -> list[InstagramAccountPublic]:
-    return [_public(a) for a in await accounts.list({"user_id": user["_id"]})]
+async def list_accounts(
+    workspace: CurrentWorkspace, accounts: AccountsRepo
+) -> list[InstagramAccountPublic]:
+    return [_public(a) for a in await accounts.list({"user_id": workspace.user_id})]
 
 
 @router.get(
@@ -266,9 +308,9 @@ async def list_accounts(user: CurrentUser, accounts: AccountsRepo) -> list[Insta
     dependencies=[Depends(require("instagram.view"))],
 )
 async def get_account(
-    account_id: str, user: CurrentUser, accounts: AccountsRepo
+    account_id: str, workspace: CurrentWorkspace, accounts: AccountsRepo
 ) -> InstagramAccountPublic:
-    return _public(await _load(accounts, account_id, user))
+    return _public(await _load(accounts, account_id, workspace))
 
 
 @router.post(
@@ -279,13 +321,15 @@ async def get_account(
 async def subscribe(
     account_id: str,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
+    creds: WorkspaceCredentials,
     settings: SettingsDep,
     accounts: AccountsRepo,
     audit: AuditRepo,
 ) -> InstagramAccountPublic:
     """Subscribe the account to the `comments` webhook field (§5.3)."""
-    account = await _load(accounts, account_id, user)
-    client = build_client(settings)
+    account = await _load(accounts, account_id, workspace)
+    client = build_client(settings, creds)
 
     try:
         ok = await client.subscribe_webhooks(
@@ -324,16 +368,20 @@ async def subscribe(
 
 @router.get("/{account_id}/subscription", dependencies=[Depends(require("instagram.view"))])
 async def subscription_status(
-    account_id: str, user: CurrentUser, settings: SettingsDep, accounts: AccountsRepo
+    account_id: str,
+    workspace: CurrentWorkspace,
+    creds: WorkspaceCredentials,
+    settings: SettingsDep,
+    accounts: AccountsRepo,
 ) -> dict[str, Any]:
     """Ask Meta what this account is actually subscribed to.
 
     Read from Meta rather than trusting our stored flag: a subscription can be
     removed in the app dashboard without Social Flow ever hearing about it.
     """
-    account = await _load(accounts, account_id, user)
+    account = await _load(accounts, account_id, workspace)
     try:
-        fields = await build_client(settings).get_subscribed_fields(
+        fields = await build_client(settings, creds).get_subscribed_fields(
             _access_token(account, settings), account["instagram_user_id"]
         )
     except MetaAPIError as exc:
@@ -354,14 +402,19 @@ async def subscription_status(
 async def refresh_token(
     account_id: str,
     user: CurrentUser,
+    workspace: CurrentWorkspace,
     settings: SettingsDep,
     accounts: AccountsRepo,
     audit: AuditRepo,
 ) -> InstagramAccountPublic:
-    """Refresh the long-lived token (§3.4)."""
-    account = await _load(accounts, account_id, user)
+    """Refresh the long-lived token (§3.4).
+
+    No workspace credentials needed: `ig_refresh_token` authenticates with the
+    token itself, so a token keeps refreshing whichever app minted it.
+    """
+    account = await _load(accounts, account_id, workspace)
     try:
-        bundle = await meta_auth.refresh_long_lived(settings, _access_token(account, settings))
+        bundle = await meta_auth.refresh_long_lived(_access_token(account, settings))
     except MetaAPIError as exc:
         await accounts.update(account["_id"], {"status": "token_error", "status_error": str(exc)})
         logger.error("token_refresh_failed", extra={"account_id": account_id})
@@ -387,9 +440,9 @@ async def refresh_token(
 
 @router.get("/{account_id}/token-status", dependencies=[Depends(require("instagram.view"))])
 async def token_status(
-    account_id: str, user: CurrentUser, accounts: AccountsRepo
+    account_id: str, workspace: CurrentWorkspace, accounts: AccountsRepo
 ) -> dict[str, Any]:
-    account = await _load(accounts, account_id, user)
+    account = await _load(accounts, account_id, workspace)
     return {
         "expires_at": account.get("token_expires_at"),
         "expired": is_expired(account),
@@ -403,9 +456,13 @@ async def token_status(
     dependencies=[Depends(require("instagram.manage"))],
 )
 async def disconnect(
-    account_id: str, user: CurrentUser, accounts: AccountsRepo, audit: AuditRepo
+    account_id: str,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    audit: AuditRepo,
 ) -> None:
-    account = await _load(accounts, account_id, user)
+    account = await _load(accounts, account_id, workspace)
     await accounts.delete(account["_id"])
     await audit.record(
         user_id=user["_id"],

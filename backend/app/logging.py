@@ -45,6 +45,13 @@ _SENSITIVE_KEYS = {
     "encryption_key",
     "session_secret",
     "meta_app_secret",
+    # Per-workspace Meta app credentials (`db/repositories/meta_apps.py`). Both
+    # the stored ciphertext and the decrypted forms, because the resolved
+    # `MetaCredentials` carries plaintext through the request.
+    "app_secret",
+    "app_secret_encrypted",
+    "verify_token",
+    "verify_token_encrypted",
     "code",
     "authorization",
 }

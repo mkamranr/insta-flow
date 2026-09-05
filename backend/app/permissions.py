@@ -80,8 +80,21 @@ MODULES: Final[tuple[Module, ...]] = (
     Module(
         "settings",
         "Settings",
-        "The automation disclosure line and the GeoLite2 credentials.",
+        "The automation disclosure line.",
         ("view", "edit"),
+    ),
+    Module(
+        "instance",
+        "Server settings",
+        "The public address and the GeoLite2 credentials. One setting for the "
+        "whole server, shared by every workspace.",
+        ("view", "manage"),
+    ),
+    Module(
+        "workspaces",
+        "Workspaces",
+        "See and switch into other people's connected accounts.",
+        ("view",),
     ),
     Module(
         "users",
@@ -150,6 +163,22 @@ class SystemRole(NamedTuple):
 
 OWNER_SLUG: Final[str] = "owner"
 
+
+def _of(modules: frozenset[str]) -> frozenset[str]:
+    """Every permission belonging to any of these modules."""
+    return frozenset(f"{m.key}.{a}" for m in MODULES for a in m.actions if m.key in modules)
+
+
+# Modules no seeded role but Owner may touch at all. Two reasons, same outcome:
+# `workspaces` opens somebody else's connected account, and `instance` is one
+# setting for the whole server -- a Manager editing it would be editing it for
+# every workspace at once, which is not what "runs the automations" means.
+OWNER_ONLY_MODULES: Final[frozenset[str]] = frozenset({"workspaces", "instance"})
+
+# Additionally hidden from Viewer. Broader, because a Manager may legitimately
+# *see* who has an account without being able to change anything about them.
+_HIDDEN_FROM_VIEWER: Final[frozenset[str]] = OWNER_ONLY_MODULES | {"users", "roles"}
+
 SYSTEM_ROLES: Final[tuple[SystemRole, ...]] = (
     # Owner is ALL by construction, not by a hand-written list, and is re-synced
     # on every boot. A permission added to MODULES therefore reaches Owner with
@@ -164,15 +193,21 @@ SYSTEM_ROLES: Final[tuple[SystemRole, ...]] = (
     SystemRole(
         "manager",
         "Manager",
-        "Runs the automations end to end. Cannot change who gets in.",
-        ALL - {"users.manage", "roles.manage", "settings.edit"},
+        "Runs the automations end to end. Cannot change who gets in, "
+        "or anything that applies to the whole server.",
+        ALL - {"users.manage", "roles.manage", "settings.edit"} - _of(OWNER_ONLY_MODULES),
         locked=False,
     ),
     SystemRole(
         "viewer",
         "Viewer",
         "Read-only across the dashboard.",
-        frozenset(f"{m.key}.view" for m in MODULES if m.key not in {"users", "roles"}),
+        # Subtracted, not merely omitted: this set is built by comprehension over
+        # MODULES, so a module added later would otherwise hand Viewer its
+        # `.view` automatically -- which is how a read-only role would silently
+        # acquire the run of every other person's workspace, or sight of the
+        # server's own configuration.
+        frozenset(f"{m.key}.view" for m in MODULES if m.key not in _HIDDEN_FROM_VIEWER),
         locked=False,
     ),
 )

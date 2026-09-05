@@ -31,6 +31,7 @@ COLLECTIONS = [
     "account_snapshots",
     "app_settings",
     "click_events",
+    "meta_apps",
 ]
 
 INDEXES: dict[str, list[IndexModel]] = {
@@ -39,6 +40,20 @@ INDEXES: dict[str, list[IndexModel]] = {
     ],
     "users": [
         IndexModel([("email", ASCENDING)], unique=True, name="uq_email"),
+        # The workspace slug: the `/u/<slug>/` segment a Meta app is configured to
+        # call. Partial, and on `$type` rather than `$exists`, for the same reason
+        # the executions indexes are: this index is created before
+        # `backfill_missing_slugs` runs, so on an upgrade every existing user is
+        # still slug-less. A non-partial unique index reads all of them as null
+        # and collides, aborting startup on the very deployments that need the
+        # backfill. `$exists: true` would also match an explicit null and let the
+        # same collision back in.
+        IndexModel(
+            [("slug", ASCENDING)],
+            unique=True,
+            name="uq_user_slug",
+            partialFilterExpression={"slug": {"$type": "string"}},
+        ),
         # At most one user may ever carry `is_bootstrap`. Two requests that both
         # pass a "no users yet" check would otherwise both create an admin, with
         # different emails, and the unique email index would not stop them.
@@ -68,6 +83,12 @@ INDEXES: dict[str, list[IndexModel]] = {
             unique=True,
             name="uq_account_day",
         ),
+    ],
+    "meta_apps": [
+        # One Meta app per workspace. Unique rather than merely indexed: two rows
+        # for one user would make "which app secret verifies this webhook" a
+        # coin toss, and the wrong answer is a silently rejected signature.
+        IndexModel([("user_id", ASCENDING)], unique=True, name="uq_meta_app_user"),
     ],
     "instagram_accounts": [
         IndexModel([("instagram_user_id", ASCENDING)], unique=True, name="uq_instagram_user_id"),

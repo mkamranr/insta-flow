@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     app_env: Literal["development", "production"] = "development"
     log_level: str = "INFO"
 
-    # Public HTTPS origin. Must match the Meta app's redirect URI and webhook URL.
+    # Public HTTPS origin, and the fallback for it: an operator can override this
+    # from the Settings page, which is where `credentials.origin_for` looks first.
+    # Every workspace URL is derived from whichever wins.
     public_base_url: str = "http://localhost:8080"
 
     mongo_url: str = "mongodb://mongodb:27017"
@@ -30,6 +32,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
 
     # Meta credentials. These are the *Instagram* App ID/Secret. See docs/meta-api.md.
+    # The instance-wide default, used by any workspace that has not configured its
+    # own Meta app. A workspace falling back to these also falls back to the
+    # unprefixed URL layout -- see `services/meta/credentials.resolve`.
     meta_app_id: str = ""
     meta_app_secret: str = ""
     meta_webhook_verify_token: str = ""
@@ -69,20 +74,20 @@ class Settings(BaseSettings):
         """Base URL for Instagram Graph calls. Only `services.meta` may use this."""
         return f"https://graph.instagram.com/{self.meta_api_version}"
 
-    @property
-    def oauth_redirect_uri(self) -> str:
-        return f"{self.public_base_url.rstrip('/')}/api/auth/instagram/callback"
-
-    @property
-    def webhook_url(self) -> str:
-        return f"{self.public_base_url.rstrip('/')}/webhooks/instagram"
-
     def missing_required(self) -> list[str]:
-        """Config required before the app can do real work, reported by /ready."""
+        """Config required before the app can run at all, reported by /ready.
+
+        The three `META_*` variables are deliberately absent. They are now a
+        *default*, not a requirement: each workspace may bring its own Meta app
+        (`services/meta/credentials.py`), so an instance where every user has done
+        so has no need of them and must not be reported unhealthy for it. Whether
+        a given workspace can talk to Meta is a per-workspace question, answered
+        on its Settings and Instagram pages.
+
+        These two are different in kind. Without them nothing works for anyone:
+        no session can be signed, and no stored secret can be read back.
+        """
         required = {
-            "META_APP_ID": self.meta_app_id,
-            "META_APP_SECRET": self.meta_app_secret,
-            "META_WEBHOOK_VERIFY_TOKEN": self.meta_webhook_verify_token,
             "ENCRYPTION_KEY": self.encryption_key,
             "SESSION_SECRET": self.session_secret,
         }

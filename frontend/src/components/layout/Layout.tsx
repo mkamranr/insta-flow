@@ -8,8 +8,10 @@ import { type ReactNode, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { getMe, logout } from '../../api/auth'
 import { getSummary } from '../../api/analytics'
-import { apiGet } from '../../api/client'
+import { apiGetInstance } from '../../api/client'
 import { listAccounts } from '../../api/instagram'
+import { listWorkspaces } from '../../api/workspaces'
+import { switchWorkspace, workspaceSlug } from '../../app/workspace'
 import type { ReadyResponse } from '../../types/health'
 import {
   ActivityIcon,
@@ -139,6 +141,91 @@ function NavGroup({
 /** Meta's documented ceiling: 750 private replies per hour, per account. */
 const HOURLY_CEILING = 750
 
+/**
+ * The account this dashboard is currently showing, and — for anyone holding
+ * `workspaces.view` — a way to move to someone else's.
+ *
+ * Sits under the logo because that is where "which account am I looking at"
+ * belongs, and because the answer is already in the URL beside it.
+ *
+ * Renders as the plain, unclickable block it always was when there is only one
+ * workspace, which is every ordinary user. A switcher that opens onto a list of
+ * one is a control that teaches people it does nothing.
+ */
+function WorkspaceSwitcher({
+  accountName,
+  avatarUrl,
+  status,
+}: {
+  accountName: string
+  avatarUrl?: string | null
+  status: string
+}) {
+  const [open, setOpen] = useState(false)
+  const { data: workspaces } = useQuery({ queryKey: ['workspaces'], queryFn: listWorkspaces })
+
+  const others = (workspaces ?? []).filter((w) => w.slug !== workspaceSlug)
+  const canSwitch = others.length > 0
+
+  const body = (
+    <>
+      <AccountAvatar
+        className="workspace-avatar"
+        url={avatarUrl}
+        name={accountName}
+        size={30}
+      />
+      <div className="workspace-id">
+        <div className="workspace-name">{accountName}</div>
+        <div className="small muted">{status}</div>
+      </div>
+      {canSwitch && (
+        <span className={open ? 'nav-chevron open' : 'nav-chevron'}>
+          <ChevronDownIcon />
+        </span>
+      )}
+    </>
+  )
+
+  if (!canSwitch) return <div className="workspace">{body}</div>
+
+  return (
+    <div className="workspace-wrap">
+      <button
+        className="workspace as-button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        {body}
+      </button>
+
+      {open && (
+        <>
+          {/* Closes on any outside click without a document listener to unbind. */}
+          <div className="dropdown-backdrop" onClick={() => setOpen(false)} />
+          <div className="workspace-menu">
+            {(workspaces ?? []).map((w) => (
+              <button
+                key={w.slug}
+                className={w.slug === workspaceSlug ? 'workspace-option current' : 'workspace-option'}
+                onClick={() => (w.slug === workspaceSlug ? setOpen(false) : switchWorkspace(w.slug))}
+              >
+                <AccountAvatar url={w.profile_picture_url} name={w.username ?? w.email} size={24} />
+                <span className="workspace-option-text">
+                  <span className="workspace-option-name">
+                    {w.username ? `@${w.username}` : 'No account'}
+                  </span>
+                  <span className="small faint">{w.email}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function Layout() {
   const queryClient = useQueryClient()
   const [starting, setStarting] = useState(false)
@@ -156,7 +243,7 @@ export function Layout() {
   const { data: summary } = useQuery({ queryKey: ['summary'], queryFn: () => getSummary(7) })
   const { data: ready } = useQuery({
     queryKey: ['ready'],
-    queryFn: () => apiGet<ReadyResponse>('/ready'),
+    queryFn: () => apiGetInstance<ReadyResponse>('/ready'),
   })
 
   const signOut = useMutation({
@@ -176,20 +263,11 @@ export function Layout() {
           <span>SOCIAL FLOW</span>
         </div>
 
-        <div className="workspace">
-          <AccountAvatar
-            className="workspace-avatar"
-            url={account?.profile_picture_url}
-            name={account?.username ?? me?.email}
-            size={30}
-          />
-          <div>
-            <div className="workspace-name">
-              {account ? `@${account.username}` : 'No account'}
-            </div>
-            <div className="small muted">{ready?.dry_run ? 'Dry run' : 'Live'}</div>
-          </div>
-        </div>
+        <WorkspaceSwitcher
+          accountName={account ? `@${account.username}` : (me?.email ?? 'No account')}
+          avatarUrl={account?.profile_picture_url}
+          status={ready?.dry_run ? 'Dry run' : 'Live'}
+        />
 
         {can('automations.create') && (
           <button

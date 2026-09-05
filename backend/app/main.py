@@ -22,12 +22,14 @@ from app.api import (
     uploads,
     users,
     webhooks,
+    workspaces,
 )
 from app.config import get_settings
 from app.db import mongodb
 from app.db.bootstrap import prepare
 from app.errors import SocialFlowError
 from app.logging import configure_logging
+from app.services.slugs import URL_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -87,24 +89,46 @@ async def social_flow_error_handler(request: Request, exc: SocialFlowError) -> J
     )
 
 
-app.include_router(auth.router)
-app.include_router(setup.router)
-app.include_router(analytics.router)
-app.include_router(rules.router)
-app.include_router(rules.posts_router)
-app.include_router(rules.stories_router)
-app.include_router(rules.upcoming_router)
-app.include_router(instagram.auth_router)
-app.include_router(instagram.router)
-app.include_router(webhooks.router)
+# Everything a workspace can address, mounted twice: bare, and again under
+# `/u/{slug}`. No handler declares `slug` -- `deps.workspace_slug` reads it out of
+# `request.path_params`, which FastAPI populates for an undeclared path parameter
+# and still generates a valid OpenAPI schema for.
+#
+# Two mounts rather than one because both layouts have to work at once. The bare
+# routes are what the already-live Meta app calls and what a pre-workspace
+# bookmark points at; the prefixed ones are what a second user's own Meta app is
+# configured with. Retiring the bare set would break the first deployment on
+# upgrade, silently, at the webhook.
+WORKSPACE_ROUTERS = (
+    auth.router,
+    setup.router,
+    analytics.router,
+    rules.router,
+    rules.posts_router,
+    rules.stories_router,
+    rules.upcoming_router,
+    instagram.auth_router,
+    instagram.router,
+    webhooks.router,
+    legal.router,
+    uploads.router,
+    settings_api.router,
+    roles.router,
+    roles.catalogue_router,
+    users.router,
+    workspaces.router,
+)
+
+for router in WORKSPACE_ROUTERS:
+    app.include_router(router)
+    app.include_router(router, prefix=f"{URL_PREFIX}/{{slug}}")
+
+# Global, and deliberately not per-workspace. A click token and an attachment's
+# storage key are already unique across the instance, and Meta fetches an
+# attachment with no session and no workspace context at all -- prefixing these
+# would add a segment that carries no information and one more URL to get wrong.
 app.include_router(links.router)
-app.include_router(legal.router)
-app.include_router(uploads.router)
 app.include_router(uploads.public_router)
-app.include_router(settings_api.router)
-app.include_router(roles.router)
-app.include_router(roles.catalogue_router)
-app.include_router(users.router)
 
 
 @app.get("/health", tags=["health"])

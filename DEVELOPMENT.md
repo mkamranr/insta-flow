@@ -110,7 +110,32 @@ key error means another worker already has it — skip, do not send.
 | `account_snapshots` | Instagram gives a follower total and no history. Growth is only knowable if we write it down daily. One row per account per day, unique index. |
 | `click_events` | One row per click. `link_clicks` is a counter with a first/last timestamp — it knows how many, never when, so an hourly chart cannot come from it. |
 | `app_settings` | A single document for things an operator may edit from the dashboard. Currently the MaxMind credentials; the license key is encrypted like a Meta token. |
+| `meta_apps` | One Meta app per user, so a second person can connect their own Instagram account without going through the first person's app -- which is what would turn this into a third-party integration needing App Review. App secret and webhook verify token are encrypted like a Meta token. A separate collection rather than fields on the user document, because `current_user` reads the whole user document on every request. |
+| `app_settings` | Also holds the public origin, which overrides `PUBLIC_BASE_URL`. Server-wide, so it and the GeoLite2 credentials sit behind `instance.*` rather than `settings.*` -- otherwise "may reword an automated reply" would also mean "may re-point the server". |
 | `roles` | A named set of permissions, assigned to users via `users.role_id`. `owner` is seeded from the whole catalogue and re-synced on every boot, so a new permission reaches it with no migration; `manager` and `viewer` are seeded once and then belong to the operator. |
+
+## Workspaces
+
+One user, the Instagram account they connected, and the `/u/<slug>/` prefix both live under.
+`users.slug` is the tenant key; `services/slugs.py` owns its shape and `URL_PREFIX`.
+
+Every router in `main.py` is mounted **twice** -- bare, and again under `/u/{slug}`. No handler
+declares `slug`: `deps.workspace_slug` reads it out of `request.path_params`, which FastAPI
+populates for an undeclared path parameter. Both layouts have to work at once, because the
+bare routes are what an already-live Meta app calls and what pre-workspace bookmarks point at.
+
+`deps.current_workspace` decides whose data a request addresses. Your own by default; someone
+else's costs `workspaces.view`, and failing that check raises **404, not 403** -- a 403 would
+confirm the slug exists and turn the endpoint into a way to enumerate who has an account here.
+
+`services/meta/credentials.py` decides which Meta app is acting. Its central rule: **the URL
+layout follows the credentials, not the request.** A workspace with its own app gets prefixed
+URLs; one falling back to the environment's `META_*` gets the unprefixed ones, because those
+are what the live Meta app already has registered.
+
+The webhook, the OAuth callback and the two `signed_request` callbacks all have to pick a
+secret before they can trust anything else in the request. That is why a workspace is a URL
+prefix and not a header -- see the table in `docs/meta-api.md` §7b.
 
 ## Cloning an automation
 

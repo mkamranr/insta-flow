@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from app import queue
-from app.api.deps import SettingsDep, WebhookEventsRepo
+from app.api.deps import PublicCredentials, WebhookEventsRepo
 from app.errors import WebhookValidationError
 from app.services.meta.webhooks import (
     SIGNATURE_HEADER,
@@ -34,38 +34,53 @@ PROCESS_MESSAGE_TASK = "process_message_event"
 
 
 @router.get("/instagram", response_class=PlainTextResponse)
-async def verify(request: Request, settings: SettingsDep) -> Response:
+async def verify(request: Request, creds: PublicCredentials) -> Response:
     """Meta's subscription handshake (§22).
 
     Returns the challenge verbatim as text/plain. Any other content type or a
     JSON-quoted body fails verification in the dashboard.
+
+    The token is compared against *this workspace's* — the `/u/<slug>/` segment
+    is what selects it. The request itself carries nothing else that could: with
+    several Meta apps there are several valid tokens, and `hub.verify_token` says
+    only that it is one of them, never which.
     """
     params = request.query_params
     challenge = verify_subscription(
         params.get("hub.mode"),
         params.get("hub.verify_token"),
         params.get("hub.challenge"),
-        settings.meta_webhook_verify_token,
+        creds.verify_token,
     )
     if challenge is None:
-        logger.warning("webhook_verification_rejected", extra={"mode": params.get("hub.mode")})
+        logger.warning(
+            "webhook_verification_rejected",
+            extra={"mode": params.get("hub.mode"), "credentials": creds.source},
+        )
         raise WebhookValidationError("Webhook verification failed.")
 
-    logger.info("webhook_verification_succeeded")
+    logger.info("webhook_verification_succeeded", extra={"credentials": creds.source})
     return PlainTextResponse(challenge)
 
 
 @router.post("/instagram")
 async def receive(
-    request: Request, settings: SettingsDep, events: WebhookEventsRepo
+    request: Request, creds: PublicCredentials, events: WebhookEventsRepo
 ) -> dict[str, Any]:
     # Raw bytes first: the signature covers exactly what was sent, and
     # re-serialising the parsed JSON would produce a different digest.
     raw_body = await request.body()
 
+    # Which app secret? The path decides, and it has to: the body is unverified
+    # until this passes, so the account id inside it cannot be trusted to choose
+    # the key that would verify it. An unrecognised slug resolves to an empty
+    # secret and is rejected here rather than falling back to the instance's.
     signature = request.headers.get(SIGNATURE_HEADER)
-    if not verify_signature(raw_body, signature, settings.meta_app_secret):
-        logger.warning("webhook_signature_invalid", extra={"bytes": len(raw_body)})
+    if not verify_signature(raw_body, signature, creds.app_secret):
+        logger.warning(
+            "webhook_signature_invalid",
+            extra={"bytes": len(raw_body), "credentials": creds.source},
+        )
         raise WebhookValidationError("Invalid webhook signature.")
 
     try:

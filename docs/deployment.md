@@ -58,6 +58,11 @@ redirect URI    = https://your-machine.your-tailnet.ts.net/api/auth/instagram/ca
 webhook URL     = https://your-machine.your-tailnet.ts.net/webhooks/instagram
 ```
 
+Those are the URLs for the Meta app configured in `.env`. A user who configures **their own**
+Meta app from Settings gets a workspace-prefixed set instead —
+`https://your-machine.your-tailnet.ts.net/u/<slug>/webhooks/instagram` and so on — printed
+ready to copy on their own Settings page. See `docs/meta-api.md` §7b.
+
 Funnel must be enabled in the tailnet policy; the first `tailscale funnel` run prints an
 admin-console link if it is not.
 

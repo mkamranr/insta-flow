@@ -13,6 +13,8 @@ export interface RoleSummary {
 export interface User {
   id: string
   email: string
+  /** The `/u/<slug>/` segment this user's workspace lives at. */
+  slug: string | null
   is_active: boolean
   role: RoleSummary | null
   last_login_at: string | null

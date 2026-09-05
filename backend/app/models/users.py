@@ -39,6 +39,11 @@ class UserPublic(BaseModel):
 
     id: str
     email: str
+    # The `/u/<slug>/` segment this user's workspace lives at. Optional only for
+    # the moment between an upgrade's index creation and `backfill_missing_slugs`;
+    # every user has one afterwards. Not a secret -- it appears in a URL that gets
+    # pasted into Meta's dashboard.
+    slug: str | None = None
     is_active: bool
     role: RoleSummary | None = None
     created_at: datetime | None = None
@@ -49,6 +54,7 @@ class UserPublic(BaseModel):
         return cls(
             id=str(document["_id"]),
             email=document["email"],
+            slug=document.get("slug"),
             is_active=bool(document.get("is_active", False)),
             role=RoleSummary.from_document(role) if role else None,
             created_at=document.get("created_at"),

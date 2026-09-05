@@ -763,7 +763,7 @@ async def refresh_expiring_tokens(ctx: dict[str, Any]) -> dict[str, int]:
             continue
         try:
             current = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
-            bundle = await meta_auth.refresh_long_lived(settings, current)
+            bundle = await meta_auth.refresh_long_lived(current)
         except (MetaAPIError, EncryptionError) as exc:
             failed += 1
             await accounts.set_status(account["_id"], "token_error", str(exc))
