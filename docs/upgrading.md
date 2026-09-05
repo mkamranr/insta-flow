@@ -7,11 +7,15 @@ hardware is `docs/server-migration.md`.
 
 ---
 
-## The one thing that catches people
+## The two things that catch people
+
+Both fail the same way: nothing errors, `docker compose ps` says healthy, and the server runs
+the old thing.
+
+### 1. `make reload` without `make build` deploys nothing
 
 `make reload` is `docker compose up -d`. After a `git pull` **the images already exist**, so
-`up -d` on its own recreates containers from the *old* images and you have deployed nothing.
-Nothing errors. `docker compose ps` says healthy. The app runs the previous version.
+`up -d` on its own recreates containers from the *old* images.
 
 The frontend makes it worse: the dashboard is compiled into its image at build time
 (`frontend/Dockerfile` runs `npm run build`, then copies `dist/` into nginx). An unrebuilt
@@ -23,6 +27,28 @@ So the sequence is always:
 git pull
 make build      # <- the step that is easy to skip
 make reload
+```
+
+### 2. Caddy will not pick up a Caddyfile change on its own
+
+Caddy reads `infra/caddy/Caddyfile` into memory once, at startup. The file is bind-mounted, so
+editing it changes nothing Compose can see: `up -d` finds the container spec unchanged, leaves
+Caddy running, and the edge keeps routing by the old rules.
+
+`make reload` now force-recreates `caddy` for exactly this reason, so on a current checkout
+this is handled. It is written down because the symptom points nowhere near the cause. When
+the workspaces release added `/u/<slug>/` routes and Caddy never loaded them, every API call
+under a workspace prefix fell through to the SPA — so signing in POSTed to nginx and came back:
+
+```
+405 Not Allowed
+```
+
+An nginx error page, from a login request, on a deployment whose API and database were both
+fine. If you ever see a `405 Not Allowed` or a raw `<!doctype html>` where JSON belongs:
+
+```bash
+docker compose up -d --force-recreate caddy
 ```
 
 ---
@@ -90,6 +116,17 @@ starts**, before it serves a request. If it fails, the container fails its healt
 will see it in `docker compose ps`.
 
 ## Step 5 — Verify
+
+**Before signing in**, prove the edge is routing the current rules. Anything that returns HTML
+where JSON belongs is Caddy on a stale config — see trap 2 above:
+
+```bash
+curl -s localhost:8090/u/anything/api/auth/me | head -c 40
+# {"error":{"code":"authentication_error"    <- good, the API answered
+# <!doctype html>                            <- stale Caddy; force-recreate it
+```
+
+Then the rest:
 
 ```bash
 curl -s localhost:8090/ready | python3 -m json.tool   # "status": "ready"

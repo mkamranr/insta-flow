@@ -11,8 +11,22 @@ help:
 up: ## Start all services
 	$(COMPOSE) up -d
 
-reload: ## Recreate containers so .env changes take effect (restart does NOT reload env_file)
+reload: ## Recreate containers so .env and Caddyfile changes take effect
 	$(COMPOSE) up -d
+	@# Caddy reads its Caddyfile into memory once, at startup. The file is
+	@# bind-mounted, so editing it changes nothing Compose can see -- `up -d`
+	@# finds the container spec unchanged, leaves it running, and the edge keeps
+	@# the old routing. Silently: nothing errors and `ps` says healthy.
+	@#
+	@# That cost a production incident. The /u/<slug>/ workspace routes were
+	@# added to the Caddyfile, Caddy never picked them up, and every API call
+	@# under a workspace prefix fell through to the SPA -- so login POSTed to
+	@# nginx and came back "405 Not Allowed", pointing nowhere near the cause.
+	@#
+	@# Recreating it unconditionally costs about a second of edge downtime on a
+	@# target that is already recreating the API. Detecting whether the file
+	@# changed would be cheaper and is not worth the branch.
+	$(COMPOSE) up -d --force-recreate caddy
 
 down: ## Stop all services
 	$(COMPOSE) down
