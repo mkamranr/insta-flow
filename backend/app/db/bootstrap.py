@@ -11,7 +11,15 @@ from typing import Any
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.db.indexes import create_indexes
-from app.db.repositories import InstagramAccountsRepository, RolesRepository, UsersRepository
+from app.db.repositories import (
+    CommentsRepository,
+    ContactsRepository,
+    ExecutionsRepository,
+    InstagramAccountsRepository,
+    RolesRepository,
+    RulesRepository,
+    UsersRepository,
+)
 from app.permissions import OWNER_SLUG
 
 logger = logging.getLogger(__name__)
@@ -33,6 +41,13 @@ async def prepare(database: AsyncDatabase[dict[str, Any]]) -> dict[str, list[str
     The account backfill is last and is ordered within itself: `created_at` has
     to land before anything sorts on it, because rows written before `upsert`
     stamped it carry no such field at all.
+
+    The contact backfill goes after all of them. It needs two indexes from
+    `create_indexes` to avoid a collection scan, it depends on no role and no
+    slug, and it is the only step whose cost grows with traffic -- last is where
+    a slow pass cannot delay index creation or leave the system role-less. It
+    short-circuits on a single counted document, so the common case of nothing to
+    do costs one query.
     """
     created = await create_indexes(database)
     role_ids = await RolesRepository(database).ensure_system_roles()
@@ -42,4 +57,11 @@ async def prepare(database: AsyncDatabase[dict[str, Any]]) -> dict[str, list[str
     accounts = InstagramAccountsRepository(database)
     await accounts.backfill_created_at()
     await accounts.backfill_defaults()
+    reconstructed = await ContactsRepository(database).backfill_sources(
+        ExecutionsRepository(database),
+        CommentsRepository(database),
+        RulesRepository(database),
+    )
+    if reconstructed:
+        logger.info("contact_sources_backfilled", extra={"contacts": reconstructed})
     return created

@@ -389,6 +389,9 @@ async def test_a_volunteered_email_is_kept_even_though_the_payoff_is_held(databa
     assert result["email_captured"] is True
     contact = await database["contacts"].find_one({"instagram_user_id": SENDER_ID})
     assert contact["email"] == "me@example.com"
+    # The source is written on the same side of the pause check as the email.
+    # Keeping the address but losing where it came from would be a half-record.
+    assert len(contact["sources"]) == 1
     row = await database["executions"].find_one({"instagram_user_id": SENDER_ID})
     assert row["status"] == "awaiting_email", "must stay parked so a later message resumes it"
 

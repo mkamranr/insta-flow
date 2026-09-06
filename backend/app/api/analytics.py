@@ -9,7 +9,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.api.deps import (
     AccountsRepo,
@@ -27,6 +27,7 @@ from app.api.deps import (
 )
 from app.db.repositories import serialise_required
 from app.errors import NotFoundError
+from app.services import exports
 from app.services.superfans import (
     MIN_COMMENTS_PER_WEEK,
     MIN_CONSECUTIVE_WEEKS,
@@ -576,12 +577,128 @@ async def post_performance(
     return out
 
 
+# The Mongo client is tz_aware, so a missing date has to be an aware sentinel:
+# sorting an aware datetime against a naive `datetime.min` raises TypeError, and
+# only for the one account that happens to hold an unsynced post.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+async def _contact_groups(
+    account_id: Any, contacts: ContactsRepo, media: MediaRepo
+) -> list[dict[str, Any]]:
+    """Captured leads, gathered under the post that earned each one.
+
+    Assembled in Python over two round trips rather than an aggregation
+    pipeline: one uncapped read of the contacts, one batch of the posts they
+    name. `$unwind`/`$lookup` would be one query and considerably harder to
+    reason about for a collection this size.
+
+    A person appears once per source, so someone captured on two posts is in
+    both groups. A contact whose `sources` is missing or empty still appears,
+    under "not from a post" -- a lead the backfill could not place must not
+    vanish from the page without a word.
+    """
+    buckets: dict[str | None, list[dict[str, Any]]] = {}
+    for contact in await contacts.all_for_account(account_id):
+        sources = contact.get("sources") or [{}]
+        for source in sources:
+            buckets.setdefault(source.get("instagram_media_id"), []).append(
+                {
+                    "id": str(contact["_id"]),
+                    "email": contact.get("email"),
+                    "instagram_user_id": contact.get("instagram_user_id"),
+                    "captured_at": source.get("captured_at") or contact.get("created_at"),
+                    "rule_name": source.get("rule_name") or "",
+                    "backfilled": bool(source.get("backfilled")),
+                }
+            )
+
+    posts = await media.by_instagram_media_ids(account_id, [m for m in buckets if m is not None])
+
+    def order(item: tuple[str | None, list[dict[str, Any]]]) -> tuple[int, Any]:
+        """Posts newest first, then posts we hold no details for, then the
+        no-post bucket. Sorted here rather than in the page so the CSV and the
+        screen can never disagree about what belongs where."""
+        media_id, _ = item
+        if media_id is None:
+            return (2, "")
+        post = posts.get(media_id)
+        if post is None:
+            return (1, media_id)
+        return (0, -(post.get("published_at") or _EPOCH).timestamp())
+
+    groups = []
+    for media_id, rows in sorted(buckets.items(), key=order):
+        rows.sort(key=lambda r: r["captured_at"] or _EPOCH, reverse=True)
+        post = posts.get(media_id) if media_id else None
+        groups.append(
+            {
+                "instagram_media_id": media_id,
+                "post": serialise_required(post) if post else None,
+                "count": len(rows),
+                "contacts": rows,
+            }
+        )
+    return groups
+
+
 @router.get("/contacts", dependencies=[Depends(require("contacts.view"))])
 async def contacts_list(
-    workspace: CurrentWorkspace, accounts: AccountsRepo, contacts: ContactsRepo
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    contacts: ContactsRepo,
+    media: MediaRepo,
 ) -> list[dict[str, Any]]:
-    """Captured leads. Emails are shown to the operator who collected them."""
+    """Captured leads, grouped by post. Emails are shown to the operator who
+    collected them."""
     account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return []
-    return [serialise_required(c) for c in await contacts.list_for_account(account_id)]
+    return await _contact_groups(account_id, contacts, media)
+
+
+@router.get(
+    "/contacts.csv",
+    response_class=Response,
+    dependencies=[Depends(require("contacts.view"))],
+)
+async def contacts_csv(
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    contacts: ContactsRepo,
+    media: MediaRepo,
+    post: str | None = Query(
+        default=None,
+        description="A media id for one post's leads, or 'none' for those with no post.",
+    ),
+) -> Response:
+    """The same leads as a spreadsheet.
+
+    One route rather than two, so there is a single writer and the per-post file
+    is literally a filtered aggregate. `none` is the sentinel for the no-post
+    group because a media id is always digits -- an empty `?post=` would be
+    indistinguishable from asking for everything, and a client that drops empty
+    query params would silently export the lot.
+
+    A media id belonging to another workspace matches no group and yields a
+    header-only file. Deliberately not a 404, which would confirm that the id
+    exists somewhere.
+
+    Built whole rather than streamed: at this size streaming only buys a cursor
+    held open past dependency teardown, and an error part-way through a stream is
+    a truncated file delivered with a 200 -- silent data loss in an export.
+    """
+    account_id = await _account_id(accounts, workspace)
+    groups = await _contact_groups(account_id, contacts, media) if account_id else []
+
+    if post == exports.NO_POST:
+        groups = [g for g in groups if g["instagram_media_id"] is None]
+    elif post:
+        groups = [g for g in groups if g["instagram_media_id"] == post]
+
+    name = exports.filename(post, datetime.now(UTC).date())
+    return Response(
+        content=exports.render(exports.rows_from_groups(groups)),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )

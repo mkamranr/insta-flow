@@ -99,6 +99,51 @@ async def test_another_admin_sees_no_analytics(api, two_admins):
     assert (await api.get("/api/analytics/contacts")).json() == []
 
 
+async def test_another_admin_exports_no_contacts(api, two_admins, database, admin):
+    """Naming the first admin's post explicitly must not reach across either.
+
+    The media batch is account-scoped for exactly this: the media id arrives from
+    the caller, so an unscoped `$in` would let anyone export anyone's leads by
+    guessing an id.
+    """
+    account = await database["instagram_accounts"].find_one({"user_id": admin["_id"]})
+    await database["media"].insert_one(
+        {
+            "instagram_account_id": account["_id"],
+            "instagram_media_id": "17890000000000001",
+            "caption": "First admin's post",
+        }
+    )
+    await database["contacts"].insert_one(
+        {
+            "instagram_account_id": account["_id"],
+            "instagram_user_id": "u-1",
+            "email": "lead@example.com",
+            "created_at": datetime.now(UTC),
+            "sources": [
+                {
+                    "instagram_media_id": "17890000000000001",
+                    "rule_id": ObjectId(),
+                    "rule_name": "Gate",
+                    "captured_at": datetime.now(UTC),
+                    "backfilled": False,
+                }
+            ],
+        }
+    )
+    header = "email,instagram_user_id,captured_at,post_caption,post_media_id,automation"
+
+    await sign_in_as(api, "other@example.com")
+
+    for url in (
+        "/api/analytics/contacts.csv",
+        "/api/analytics/contacts.csv?post=17890000000000001",
+    ):
+        body = (await api.get(url)).content.decode("utf-8-sig")
+        assert body.strip().split("\r\n") == [header], url
+        assert "lead@example.com" not in body
+
+
 async def test_no_token_reaches_either_admin(api, two_admins, admin):
     await sign_in_as(api, admin["email"])
     body = (await api.get("/api/instagram/accounts")).text

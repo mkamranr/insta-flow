@@ -461,3 +461,276 @@ def test_densify_handles_a_completely_empty_series():
 
     assert len(filled) >= 2
     assert all(row["count"] == 0 for row in filled)
+
+
+# --- contacts, grouped by the post that earned them --------------------------
+
+
+MEDIA_A = "17890000000000001"
+MEDIA_B = "17890000000000002"
+
+
+async def seed_contacts(database, owner, *, posts=(), contacts=()):
+    """`posts` are (media_id, caption, published_at_offset_days)."""
+    account_id = ObjectId()
+    await database["instagram_accounts"].insert_one(
+        {
+            "_id": account_id,
+            "user_id": owner["_id"],
+            "instagram_user_id": ACCOUNT_IG_ID,
+            "username": "myshop",
+            "status": "connected",
+        }
+    )
+    now = datetime.now(UTC)
+    for media_id, caption, days in posts:
+        await database["media"].insert_one(
+            {
+                "instagram_account_id": account_id,
+                "instagram_media_id": media_id,
+                "caption": caption,
+                "media_type": "IMAGE",
+                "media_url": "https://example.com/a.jpg",
+                "permalink": "https://instagram.com/p/a/",
+                "published_at": now - timedelta(days=days),
+            }
+        )
+    for email, sources in contacts:
+        await database["contacts"].insert_one(
+            {
+                "instagram_account_id": account_id,
+                "instagram_user_id": f"u-{email}",
+                "email": email,
+                "created_at": now,
+                "sources": [
+                    {
+                        "instagram_media_id": media_id,
+                        "rule_id": ObjectId(),
+                        "rule_name": rule_name,
+                        "captured_at": now,
+                        "backfilled": False,
+                    }
+                    for media_id, rule_name in sources
+                ],
+            }
+        )
+    return account_id
+
+
+async def test_contacts_are_grouped_under_the_post_that_earned_them(signed_in, database, admin):
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "Guide post", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Email gate")])],
+    )
+    (group,) = (await signed_in.get("/api/analytics/contacts")).json()
+
+    assert group["instagram_media_id"] == MEDIA_A
+    assert group["post"]["caption"] == "Guide post"
+    assert group["count"] == 1
+    assert group["contacts"][0]["email"] == "a@x.com"
+    assert group["contacts"][0]["rule_name"] == "Email gate"
+
+
+async def test_one_person_captured_twice_appears_under_both_posts(signed_in, database, admin):
+    """The reason a source is a list. Neither post's CSV shrinks because the
+    other captured the same person later."""
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "First", 2), (MEDIA_B, "Second", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate"), (MEDIA_B, "Gate")])],
+    )
+    groups = (await signed_in.get("/api/analytics/contacts")).json()
+
+    assert [g["instagram_media_id"] for g in groups] == [MEDIA_B, MEDIA_A]
+    assert all(g["contacts"][0]["email"] == "a@x.com" for g in groups)
+
+
+async def test_a_post_we_hold_no_details_for_keeps_its_id(signed_in, database, admin):
+    """`post: null` means two different things and the page must tell them apart:
+    an unsynced or deleted post, and no post at all."""
+    await seed_contacts(
+        database, admin, contacts=[("a@x.com", [("17890000000000999", "Gate")])]
+    )
+    (group,) = (await signed_in.get("/api/analytics/contacts")).json()
+
+    assert group["post"] is None
+    assert group["instagram_media_id"] == "17890000000000999"
+
+
+async def test_a_contact_with_no_sources_still_appears(signed_in, database, admin):
+    """A lead the backfill could not place must not vanish silently."""
+    account_id = await seed_contacts(database, admin)
+    await database["contacts"].insert_one(
+        {
+            "instagram_account_id": account_id,
+            "instagram_user_id": "u-1",
+            "email": "orphan@x.com",
+            "created_at": datetime.now(UTC),
+            "sources": [],
+        }
+    )
+    (group,) = (await signed_in.get("/api/analytics/contacts")).json()
+
+    assert group["instagram_media_id"] is None
+    assert group["contacts"][0]["email"] == "orphan@x.com"
+
+
+async def test_the_no_post_group_sorts_last(signed_in, database, admin):
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "First", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate")]), ("b@x.com", [(None, "DM keyword")])],
+    )
+    groups = (await signed_in.get("/api/analytics/contacts")).json()
+
+    assert [g["instagram_media_id"] for g in groups] == [MEDIA_A, None]
+
+
+async def test_the_grouped_list_is_not_capped_at_fifty(signed_in, database, admin):
+    """`BaseRepository.list` stops at 50, which silently truncated the page."""
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "Guide", 1)],
+        contacts=[(f"{n}@x.com", [(MEDIA_A, "Gate")]) for n in range(60)],
+    )
+    (group,) = (await signed_in.get("/api/analytics/contacts")).json()
+    assert group["count"] == 60
+
+
+# --- the CSV -----------------------------------------------------------------
+
+
+async def test_the_csv_is_a_spreadsheet_download(signed_in, database, admin):
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "Guide post", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Email gate")])],
+    )
+    response = await signed_in.get("/api/analytics/contacts.csv")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment; filename=" in response.headers["content-disposition"]
+    assert response.headers["content-disposition"].endswith('.csv"')
+
+    body = response.content.decode("utf-8-sig")
+    assert body.startswith(
+        "email,instagram_user_id,captured_at,post_caption,post_media_id,automation\r\n"
+    )
+    assert "a@x.com" in body
+    assert "Guide post" in body
+    assert "Email gate" in body
+
+
+async def test_the_csv_carries_a_bom_and_crlf(signed_in, database, admin):
+    """Excel on Windows ignores the HTTP charset and reads a UTF-8 file as
+    cp1252 without a BOM, which mangles every emoji in a caption."""
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "Guide ✨", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate")])],
+    )
+    body = (await signed_in.get("/api/analytics/contacts.csv")).content
+
+    assert body.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" in body
+    assert "✨" in body.decode("utf-8-sig")
+
+
+async def test_a_caption_with_separators_stays_one_field(signed_in, database, admin):
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, 'He said "hi", then\nleft', 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate")])],
+    )
+    body = (await signed_in.get("/api/analytics/contacts.csv")).content.decode("utf-8-sig")
+
+    assert '"He said ""hi"", then left"' in body
+    assert len(body.strip().split("\r\n")) == 2
+
+
+async def test_a_caption_that_looks_like_a_formula_is_defused(signed_in, database, admin):
+    """Comment text and captions are hostile input; a cell opening with `=` is
+    executed by Excel and Sheets."""
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, '=HYPERLINK("http://evil","clickme")', 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate")])],
+    )
+    body = (await signed_in.get("/api/analytics/contacts.csv")).content.decode("utf-8-sig")
+
+    assert "'=HYPERLINK" in body
+
+
+async def test_the_csv_can_be_narrowed_to_one_post(signed_in, database, admin):
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "First", 2), (MEDIA_B, "Second", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate")]), ("b@x.com", [(MEDIA_B, "Gate")])],
+    )
+    body = (
+        await signed_in.get(f"/api/analytics/contacts.csv?post={MEDIA_A}")
+    ).content.decode("utf-8-sig")
+
+    assert "a@x.com" in body
+    assert "b@x.com" not in body
+    assert MEDIA_A in (await signed_in.get(f"/api/analytics/contacts.csv?post={MEDIA_A}")).headers[
+        "content-disposition"
+    ]
+
+
+async def test_post_none_means_the_no_post_group_not_everything(signed_in, database, admin):
+    """An empty `?post=` would be indistinguishable from asking for the lot, and
+    a client that drops empty params would export it by accident."""
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "First", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate")]), ("b@x.com", [(None, "DM keyword")])],
+    )
+    body = (await signed_in.get("/api/analytics/contacts.csv?post=none")).content.decode(
+        "utf-8-sig"
+    )
+
+    assert "b@x.com" in body
+    assert "a@x.com" not in body
+
+
+async def test_an_unknown_post_yields_a_header_only_file(signed_in, database, admin):
+    """Not a 404, which would confirm the id exists in some other workspace."""
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "First", 1)],
+        contacts=[("a@x.com", [(MEDIA_A, "Gate")])],
+    )
+    response = await signed_in.get("/api/analytics/contacts.csv?post=99999999999999999")
+
+    assert response.status_code == 200
+    assert response.content.decode("utf-8-sig").strip().split("\r\n") == [
+        "email,instagram_user_id,captured_at,post_caption,post_media_id,automation"
+    ]
+
+
+async def test_the_csv_exports_more_than_the_page_size(signed_in, database, admin):
+    """The bug that prompted this: the old CSV was built in the browser from a
+    list the API had already truncated to 50."""
+    await seed_contacts(
+        database,
+        admin,
+        posts=[(MEDIA_A, "Guide", 1)],
+        contacts=[(f"{n}@x.com", [(MEDIA_A, "Gate")]) for n in range(60)],
+    )
+    body = (await signed_in.get("/api/analytics/contacts.csv")).content.decode("utf-8-sig")
+
+    assert len(body.strip().split("\r\n")) == 61

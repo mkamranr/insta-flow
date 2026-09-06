@@ -1710,7 +1710,16 @@ async def process_message_event(
         await executions.complete(execution["_id"], status="failed", error="Rule deleted.")
         return {"status": "failed", "reason": "rule_missing"}
 
-    await ContactsRepository(db).upsert(
+    # Which post earned this lead. The execution is keyed on the comment that
+    # triggered it, and the comment carries the media id -- one `_id` lookup.
+    # A story-reply or DM-keyword execution has `trigger_message_id` instead and
+    # no post at all, which is recorded as an explicit null rather than guessed.
+    source_media_id: str | None = None
+    if execution.get("comment_id"):
+        source_comment = await CommentsRepository(db).get(execution["comment_id"])
+        source_media_id = (source_comment or {}).get("instagram_media_id")
+
+    await ContactsRepository(db).capture(
         account["_id"],
         sender_id,
         {
@@ -1719,8 +1728,11 @@ async def process_message_event(
             "email": email,
             "source_rule_id": rule["_id"],
         },
+        instagram_media_id=source_media_id,
+        rule_id=rule["_id"],
+        rule_name=str(rule.get("name") or ""),
     )
-    logger.info("email_captured", extra=log)
+    logger.info("email_captured", extra={**log, "instagram_media_id": source_media_id})
 
     if pause_active(account):
         # After the contact write, before the send. The email is a database write,

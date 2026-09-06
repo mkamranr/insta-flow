@@ -157,6 +157,25 @@ async def test_a_role_without_the_permission_is_refused(
     assert "automations.create" not in refused.text
 
 
+async def test_the_contacts_export_is_gated_like_the_page(
+    api, database, role_factory, user_factory
+):
+    """A download is exactly the kind of route that gets special-cased later.
+
+    The walker above already proves it declares *a* permission at both mounts;
+    this pins which one, because a CSV of every lead's email address is the same
+    disclosure as the page it comes from.
+    """
+    viewer = await role_factory("No contacts", ["automations.view"])
+    await user_factory("nocontacts@example.com", viewer)
+    await api.post(
+        "/api/auth/login", json={"email": "nocontacts@example.com", "password": TEST_PASSWORD}
+    )
+
+    for url in ("/api/analytics/contacts", "/api/analytics/contacts.csv"):
+        assert (await api.get(url)).status_code == 403, url
+
+
 async def test_a_user_with_no_role_can_do_nothing(api, database):
     from app.db.repositories import RolesRepository, UsersRepository
     from app.services.security.passwords import hash_password

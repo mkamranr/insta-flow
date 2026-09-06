@@ -1,4 +1,5 @@
 import { apiGet } from './client'
+import type { Post } from './rules'
 
 export interface Summary {
   connected: boolean
@@ -60,7 +61,28 @@ export interface Contact {
   id: string
   instagram_user_id: string
   email: string
-  created_at: string | null
+  /** When this person was captured *by this source*, not when the row was first
+   *  written — someone captured on two posts has a different date under each. */
+  captured_at: string | null
+  rule_name: string
+  /** Reconstructed by the startup backfill rather than recorded at capture time.
+   *  Shown as such: nothing on an execution states that it produced the email. */
+  backfilled: boolean
+}
+
+/**
+ * The contacts one post earned.
+ *
+ * `post` is null in two situations the UI must keep apart: `instagram_media_id`
+ * is also null, meaning a story reply or DM-keyword automation with no post at
+ * all; or the id is set but the post was never synced or has been deleted, in
+ * which case the id is still worth showing.
+ */
+export interface ContactGroup {
+  instagram_media_id: string | null
+  post: Post | null
+  count: number
+  contacts: Contact[]
 }
 
 export interface TopCommenter {
@@ -74,7 +96,7 @@ export const getRulePerformance = () => apiGet<RulePerformance[]>('/api/analytic
 export const getActivity = (status?: string) =>
   apiGet<ActivityRow[]>(`/api/analytics/activity${status ? `?status=${status}` : ''}`)
 export const getTopCommenters = () => apiGet<TopCommenter[]>('/api/analytics/top-commenters')
-export const getContacts = () => apiGet<Contact[]>('/api/analytics/contacts')
+export const getContacts = () => apiGet<ContactGroup[]>('/api/analytics/contacts')
 
 export interface AccountPerformance {
   connected: boolean

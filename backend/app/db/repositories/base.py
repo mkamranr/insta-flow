@@ -42,6 +42,24 @@ def to_object_id(value: str | ObjectId) -> ObjectId:
         raise ValueError(f"invalid id: {value!r}") from exc
 
 
+def _serialise_value(value: Any) -> Any:
+    """One field, at any depth.
+
+    Split out of `serialise` so a list and a dict recurse through the same code.
+    Lists used to stringify only the ObjectIds sitting *directly* in them, which
+    left one nested inside a dict element untouched -- and `contacts.sources` is
+    exactly that shape, so the first route returning it would have 500ed in
+    FastAPI's encoder rather than failed a test.
+    """
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, list):
+        return [_serialise_value(v) for v in value]
+    if isinstance(value, dict):
+        return serialise(value)
+    return value
+
+
 def serialise(document: Document | None) -> Document | None:
     """Convert a raw Mongo document into something JSON-encodable.
 
@@ -50,18 +68,9 @@ def serialise(document: Document | None) -> Document | None:
     """
     if document is None:
         return None
-    out: Document = {}
-    for key, value in document.items():
-        key = "id" if key == "_id" else key
-        if isinstance(value, ObjectId):
-            out[key] = str(value)
-        elif isinstance(value, list):
-            out[key] = [str(v) if isinstance(v, ObjectId) else v for v in value]
-        elif isinstance(value, dict):
-            out[key] = serialise(value)
-        else:
-            out[key] = value
-    return out
+    return {
+        ("id" if key == "_id" else key): _serialise_value(value) for key, value in document.items()
+    }
 
 
 def serialise_required(document: Document | None) -> Document:

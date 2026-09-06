@@ -88,7 +88,13 @@ def test_our_own_echoes_are_flagged():
 
 @pytest.fixture
 async def parked(database):
-    """An account and a rule, with an execution waiting for an email."""
+    """An account and a rule, with an execution waiting for an email.
+
+    The comment row is real, not a dangling ObjectId. It used to be the latter,
+    and once a capture started resolving its source post through it, every
+    assertion about that post would have quietly landed in "not from a post" and
+    passed for the wrong reason.
+    """
     account_id = ObjectId()
     await database["instagram_accounts"].insert_one(
         {
@@ -112,11 +118,23 @@ async def parked(database):
             }
         )
     ).inserted_id
+    comment_id = (
+        await database["comments"].insert_one(
+            {
+                "instagram_account_id": account_id,
+                "instagram_comment_id": "17999000000000000",
+                "instagram_media_id": MEDIA_ID,
+                "instagram_user_id": SENDER,
+                "username": "someone",
+                "text": "link please",
+            }
+        )
+    ).inserted_id
     execution_id = (
         await database["executions"].insert_one(
             {
                 "instagram_account_id": account_id,
-                "comment_id": ObjectId(),
+                "comment_id": comment_id,
                 "rule_id": rule_id,
                 "action": "private_reply",
                 "status": "awaiting_email",
@@ -125,7 +143,12 @@ async def parked(database):
             }
         )
     ).inserted_id
-    return {"account_id": account_id, "rule_id": rule_id, "execution_id": execution_id}
+    return {
+        "account_id": account_id,
+        "rule_id": rule_id,
+        "execution_id": execution_id,
+        "comment_id": comment_id,
+    }
 
 
 def ctx(database, client):
@@ -198,7 +221,77 @@ async def test_a_repeat_capture_updates_rather_than_duplicating(database, parked
     await process_message_event(ctx(database, client), "e", ACCOUNT_IG_ID, SENDER, "two@x.com")
 
     assert await database["contacts"].count_documents({}) == 1
-    assert (await database["contacts"].find_one({}))["email"] == "two@x.com"
+    contact = await database["contacts"].find_one({})
+    assert contact["email"] == "two@x.com"
+    # Same post, same rule: one source, not two.
+    assert len(contact["sources"]) == 1
+
+
+# --- which post a lead came from ---------------------------------------------
+
+
+async def test_a_capture_records_the_post_that_earned_it(database, parked):
+    """`source_rule_id` alone cannot answer this: a rule can target many posts."""
+    client = MockInstagramClient()
+    await process_message_event(ctx(database, client), "e", ACCOUNT_IG_ID, SENDER, "a@b.com")
+
+    (source,) = (await database["contacts"].find_one({}))["sources"]
+    assert source["instagram_media_id"] == MEDIA_ID
+    assert source["rule_id"] == parked["rule_id"]
+    assert source["rule_name"] == "Email gate"
+    assert source["backfilled"] is False
+
+
+async def test_a_second_post_gives_the_same_person_a_second_source(database, parked):
+    """Someone who replies to two posts belongs to both, so neither post's CSV
+    shrinks when the other captures them."""
+    client = MockInstagramClient()
+    await process_message_event(ctx(database, client), "e", ACCOUNT_IG_ID, SENDER, "a@b.com")
+
+    other_comment = (
+        await database["comments"].insert_one(
+            {
+                "instagram_account_id": parked["account_id"],
+                "instagram_comment_id": "17999000000000001",
+                "instagram_media_id": "17890000000000999",
+                "instagram_user_id": SENDER,
+                "username": "someone",
+                "text": "link please",
+            }
+        )
+    ).inserted_id
+    await database["executions"].insert_one(
+        {
+            "instagram_account_id": parked["account_id"],
+            "comment_id": other_comment,
+            "rule_id": parked["rule_id"],
+            "action": "private_reply",
+            "status": "awaiting_email",
+            "instagram_user_id": SENDER,
+            "created_at": datetime.now(UTC),
+        }
+    )
+    await process_message_event(ctx(database, client), "e", ACCOUNT_IG_ID, SENDER, "a@b.com")
+
+    contact = await database["contacts"].find_one({})
+    assert sorted(s["instagram_media_id"] for s in contact["sources"]) == [
+        MEDIA_ID,
+        "17890000000000999",
+    ]
+
+
+async def test_a_capture_with_no_comment_behind_it_has_no_post(database, parked):
+    """A story reply or DM-keyword rule parks on `trigger_message_id`. Recorded
+    as null rather than inferred from the rule's target posts."""
+    await database["executions"].update_one(
+        {"_id": parked["execution_id"]},
+        {"$unset": {"comment_id": ""}, "$set": {"trigger_message_id": "mid-1"}},
+    )
+    client = MockInstagramClient()
+    await process_message_event(ctx(database, client), "e", ACCOUNT_IG_ID, SENDER, "a@b.com")
+
+    (source,) = (await database["contacts"].find_one({}))["sources"]
+    assert source["instagram_media_id"] is None
 
 
 # --- the seam that was missing -----------------------------------------------

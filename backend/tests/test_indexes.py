@@ -215,3 +215,23 @@ def test_the_non_partial_predecessor_is_retired():
 def test_rules_can_be_looked_up_by_trigger():
     doc = index_named("rules", "ix_account_trigger_enabled")
     assert list(doc["key"]) == ["instagram_account_id", "trigger", "enabled", "priority"]
+
+
+def test_the_contact_source_index_is_not_unique():
+    """Deliberately the opposite choice to the executions block above.
+
+    That block's rule is about a *unique* index created before its backfill.
+    This one is created before `backfill_sources` too, so every legacy contact
+    still indexes as null -- harmless here, but fatal if anyone ever "tightens"
+    it: they would all collide and startup would abort on exactly the installs
+    that still need backfilling.
+    """
+    doc = index_named("contacts", "ix_account_source_media")
+    assert doc.get("unique") is None
+    assert list(doc["key"]) == ["instagram_account_id", "sources.instagram_media_id"]
+
+
+def test_awaiting_email_lookups_are_indexed():
+    """`find_awaiting_email` runs on every inbound DM and had no index at all."""
+    doc = index_named("executions", "ix_account_user_created")
+    assert list(doc["key"]) == ["instagram_account_id", "instagram_user_id", "created_at"]

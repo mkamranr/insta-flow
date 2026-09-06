@@ -224,6 +224,18 @@ INDEXES: dict[str, list[IndexModel]] = {
             name="ix_account_created",
         ),
         IndexModel([("status", ASCENDING), ("created_at", DESCENDING)], name="ix_status_created"),
+        # `find_awaiting_email` runs on every inbound DM and matches exactly this
+        # key; it had no index at all and scanned the largest collection in the
+        # system. The contacts backfill reconstructs a lead's source posts with
+        # the same query, so one index serves both.
+        IndexModel(
+            [
+                ("instagram_account_id", ASCENDING),
+                ("instagram_user_id", ASCENDING),
+                ("created_at", DESCENDING),
+            ],
+            name="ix_account_user_created",
+        ),
     ],
     "webhook_events": [
         # Webhook-level idempotency (§25).
@@ -247,6 +259,20 @@ INDEXES: dict[str, list[IndexModel]] = {
         IndexModel(
             [("instagram_account_id", ASCENDING), ("created_at", DESCENDING)],
             name="ix_account_created",
+        ),
+        # Which post a lead came from. Multikey on `sources`, and it MUST stay
+        # non-unique -- which is the opposite of the rule the executions block
+        # follows, so it is worth being explicit about why.
+        #
+        # That rule is about a *unique* index created before its backfill.
+        # `create_indexes()` runs before `backfill_sources`, so at this moment
+        # every legacy contact has no `sources` field at all and indexes as null.
+        # Under a non-unique index that is a harmless no-op. Under a unique one
+        # they would all collide on null and startup would abort on exactly the
+        # installs that still need the backfill.
+        IndexModel(
+            [("instagram_account_id", ASCENDING), ("sources.instagram_media_id", ASCENDING)],
+            name="ix_account_source_media",
         ),
     ],
     "ai_classifications": [
