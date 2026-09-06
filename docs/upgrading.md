@@ -76,8 +76,8 @@ make verify-backup ARCHIVE=backups/mongo-<stamp>.archive
 It never touches live data. You should see your real numbers.
 
 This is not optional ceremony. Some releases write to collections that already hold your
-data — the one below rewrites every row in `users`. A dump you have never restored is a
-hypothesis, not a backup.
+data — the newest below rewrites every row in `contacts`, and the workspaces one rewrote every
+row in `users`. A dump you have never restored is a hypothesis, not a backup.
 
 ## Step 3 — Pull, build, reload
 
@@ -154,6 +154,154 @@ and for some releases that matters — see the warning under this release's note
 ---
 
 # Release notes
+
+## Contacts grouped by post, and CSV export per post
+
+### What is new
+
+- **Contacts are grouped by the post that earned them.** Each group is a collapsible card
+  showing the post's thumbnail and caption with a contact count, ordered newest post first.
+  Story replies, DM-keyword automations and anything untraceable sit in a final
+  **Not from a post** group rather than being hidden.
+- **A CSV per post**, from inside each group, plus **Download all (CSV)** on the page. The
+  aggregated file carries `post_caption`, `post_media_id` and `automation` alongside
+  `email`, `instagram_user_id` and `captured_at`, so a joined export still says where each
+  lead came from.
+- **A person captured on two posts now belongs to both.** A contact is still one row per
+  person, but it accumulates a `sources` entry per (post, automation) that captured them.
+  Recording only the most recent would mean a post's CSV shrank between downloads because a
+  later post captured the same person — the kind of thing nobody notices and nobody can
+  explain afterwards.
+
+### What is fixed
+
+- **The CSV silently truncated at 50 rows.** It was built in the browser from the array the
+  page had fetched, and `list_for_account` inherits `BaseRepository.list`, whose default
+  `limit` is 50 (clamped to 200). An operator with 300 leads downloaded 50 and was told
+  nothing. Both files are now generated server-side from an uncapped read, so an export is
+  never bounded by what the page happened to show.
+- **`serialise` did not recurse into a list of dicts.** It stringified the ObjectIds sitting
+  directly in a list but passed a list of dicts through untouched. `sources` is exactly that
+  shape, so the first route returning one would have raised in FastAPI's encoder — a 500,
+  not a test failure.
+- **`find_awaiting_email` had no index.** It matches
+  `(instagram_account_id, instagram_user_id, status)` on **every inbound DM** and was
+  scanning the largest collection in the system. The new backfill needs the same key, so one
+  index serves both.
+- **Spreadsheet formula injection.** Captions come from Instagram and automation names from
+  an operator; a cell opening `=`, `+`, `-` or `@` is executed by Excel and Sheets. Every
+  cell is now prefixed with an apostrophe when it starts with one of those.
+
+### What this release does to your database
+
+On the first start of the new API:
+
+1. Adds `ix_account_source_media` to `contacts` — **non-unique**, and it must stay that way.
+   The index is created before the backfill runs, so at that moment every existing contact
+   has no `sources` field and indexes as null. Under a non-unique index that is a harmless
+   no-op; a unique one would collide across all of them and abort startup on exactly the
+   deployments that need backfilling. This is the same trap as `uq_user_slug` in the release
+   below, solved by not needing uniqueness rather than by a partial filter.
+2. Adds `ix_account_user_created` to `executions`.
+3. **Rewrites every row in `contacts` that has no `sources` field**, reconstructing which
+   post each lead came from: contact, to its executions, to their comments, to the media id.
+
+No new collection, no permission changes — `contacts.view` still gates the page and now also
+the export, so no role needs re-syncing and no custom role loses anything.
+
+**The reconstruction is an inference, and the data says so.** Nothing on an execution records
+that it produced the email; by the time it finishes its status is `success` like any other.
+So every backfilled entry is stamped `backfilled: true` and the dashboard marks it
+**Inferred**. Only automations with the email gate switched on are attributed — otherwise
+someone who gave their address once would appear under every post they ever commented on,
+presented as fact. Anything unresolvable gets a single "not from a post" entry rather than an
+empty list, because the watermark is `sources` not existing and an empty list would re-run the
+job on every startup forever.
+
+It is logged only when it does something:
+
+```bash
+docker compose logs api --tail 80 | grep contact_sources_backfilled
+# contact_sources_backfilled  {"contacts": 1}
+```
+
+**Nobody is signed out**, **no `.env` change is needed** — no new environment variables and
+no new dependencies — and **nothing changes in the Meta dashboard**: no new webhook URL, no
+new redirect URI, no verify-token change.
+
+### Deploy the API and the dashboard together
+
+The general rule further up — that an old frontend against a new API is safe because it
+ignores fields it does not know about — **does not hold for this release.**
+`GET /api/analytics/contacts` returns an array of *groups* where it used to return an array of
+*contacts*. An old dashboard against the new API renders one blank row per group on Contacts:
+no crash, no error, just wrong.
+
+`make build && make reload` does both together, which is what you want. It only matters if you
+deploy services one at a time.
+
+### Verifying this release
+
+The migration first. Expect zero contacts without sources, and a `sources` array on each:
+
+```bash
+docker compose exec -T mongodb mongosh instaflow --quiet --eval '
+  print("contacts: " + db.contacts.countDocuments({}));
+  print("without sources: " + db.contacts.countDocuments({sources: {$exists: false}}));
+  db.contacts.find({}, {email: 1, _id: 0, "sources.instagram_media_id": 1,
+                        "sources.rule_name": 1, "sources.backfilled": 1})
+             .forEach(c => print(JSON.stringify(c)));'
+```
+
+Then prove it is idempotent, which is the check actually worth running — a backfill that
+re-runs every boot is silent until the collection is large:
+
+```bash
+docker compose restart api && sleep 10
+docker compose logs api --since 30s | grep -c contact_sources_backfilled
+# 0   <- correct: it found nothing to do the second time
+```
+
+Both indexes:
+
+```bash
+docker compose exec -T mongodb mongosh instaflow --quiet --eval '
+  print(db.contacts.getIndexes().map(i => i.name).join(", "));
+  print(db.executions.getIndexes().map(i => i.name).join(", "));'
+# ... ix_account_source_media
+# ... ix_account_user_created
+```
+
+The export is gated, not merely hidden behind a button:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}
+' localhost:8090/api/analytics/contacts.csv   # 401
+```
+
+In the dashboard: Contacts shows one card per post, the first open, each with its own
+**Download CSV**, and pre-upgrade leads carry the **Inferred** pill. Open both files in a
+spreadsheet and check the caption, media id and automation columns are populated, that a
+caption with a comma or a quote stays in one field, and that a caption beginning `=` is
+displayed rather than evaluated.
+
+Then confirm new captures record their post for real, rather than only being reconstructed:
+comment on a post whose automation has the email gate on, reply with an address, and look for
+a `sources` entry with `backfilled: false`.
+
+### Rolling back this release — read this first
+
+Mechanically safe, and no data is lost. Older code ignores `sources` entirely, and its
+`upsert` writes the same top-level fields it always did, so an existing contact keeps its
+array untouched. The two new indexes linger and are harmless.
+
+One nicety worth knowing: a contact captured *while* rolled back gets no `sources` field, so
+it is picked up automatically when you roll forward — that missing field is precisely the
+watermark the backfill looks for.
+
+The CSV reverts to the browser-built one, and with it the silent 50-row truncation.
+
+---
 
 ## Workspaces: per-user Meta apps and `/u/<slug>/` URLs
 
