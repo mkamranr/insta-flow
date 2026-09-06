@@ -117,6 +117,18 @@ async def test_a_clone_does_not_inherit_provenance_it_does_not_have(
     assert "disabled_reason" not in clone
 
 
+async def test_a_clone_inherits_the_template_it_came_from(signed_in, database, source_rule):
+    """The clone *is* that template, so it should filter alongside its source."""
+    await database["rules"].update_one({"_id": source_rule}, {"$set": {"template": "two-step"}})
+
+    await signed_in.post(
+        f"/api/rules/{source_rule}/clone", json={"instagram_media_ids": [TARGETS[0]]}
+    )
+
+    clone = await database["rules"].find_one({"instagram_media_ids": [TARGETS[0]]})
+    assert clone["template"] == "two-step"
+
+
 async def test_an_account_wide_source_is_refused(signed_in, database, source_rule):
     """It already fires on every post. Cloning it would produce rules that shadow
     the original -- equal priority, and `select_rule` breaks the tie on newer _id."""

@@ -1924,3 +1924,43 @@ button.backlog-choice:hover:not(:disabled) {
   border-color: var(--border-strong);
   color: var(--text);
 }
+
+/* -- Automations list: search, filters, roomier rows -------------------------
+   Appended after the polish pass, like every feature section since. */
+
+.rules-toolbar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+/* The app's only search input. Bare `input` is globally width:100%, so this
+   has to set its own or it spans the card. */
+.rules-toolbar input.search {
+  width: 100%;
+  max-width: 420px;
+  margin: 0;
+}
+.rules-toolbar .filters { margin: 0; align-items: center; }
+.filters-label { margin-right: 2px; }
+
+/* Row sizing, scoped to this table. `.row-thumb` and `.row-caption` are shared
+   with Posts, Stories, Clone, the editor and the template picker, so widening
+   them globally would resize four pages nobody asked about. Same technique as
+   `.editor-post .row-thumb` above. */
+.rules-table .row-thumb { width: 56px; height: 56px; border-radius: 10px; }
+/* The text block beside it is already ~76px tall (name + two-line describe +
+   post line), so the taller thumbnail costs no extra row height. */
+.rules-table .row-caption { max-width: 680px; }
+.rules-table .row-post { max-width: 680px; }
+
+/* Keyword pills in the automations table. `.chip` is the editor's removable
+   one, so its padding is lopsided to make room for the × — this is the
+   read-only sibling. */
+.row-keywords { display: flex; flex-wrap: wrap; gap: 5px; max-width: 220px; }
+.rules-table .kw {
+  display: inline-block;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text);
+  white-space: nowrap;
+}

@@ -37,6 +37,10 @@ export type RuleTrigger = 'comment' | 'story_reply' | 'dm_keyword'
 export interface Rule {
   id: string
   name: string
+  /** The starter template's stable id, or null when built by hand. Mapped
+      back to a title through STARTER_TEMPLATES; an unknown id shows as-is,
+      so retiring a template does not break rules that came from it. */
+  template: string | null
   trigger: RuleTrigger
   scope: 'specific' | 'any'
   instagram_media_ids: string[]

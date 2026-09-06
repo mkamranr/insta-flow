@@ -205,7 +205,12 @@ export function Posts() {
                     key={template.id}
                     className="template-card"
                     onClick={() => {
-                      setEditing({ post: templateFor, initial: template.rule })
+                      setEditing({
+                        post: templateFor,
+                        // Same stamp as Templates.tsx: the id comes from
+                        // the entry itself, so the two cannot disagree.
+                        initial: { ...template.rule, template: template.id },
+                      })
                       setTemplateFor(null)
                     }}
                   >

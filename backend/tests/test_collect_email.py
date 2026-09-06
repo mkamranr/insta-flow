@@ -421,3 +421,31 @@ async def test_a_comment_then_a_tap_asks_for_the_email_and_parks(database, armed
     row = await database["executions"].find_one({"_id": ObjectId(tapped["execution_id"])})
     assert row["status"] == "awaiting_email"
     assert "Here is the guide." not in [m["text"] for m in client.sent_direct_messages]
+
+
+# --- which template an automation came from ----------------------------------
+
+
+async def test_the_template_it_came_from_round_trips(signed_in, account_with_post):
+    """Stored as the gallery's stable id, never its title: a title is display
+    text that can be reworded, and the frontend maps the id back for the label."""
+    created = await signed_in.post("/api/rules", json=rule_body(template="collect-emails"))
+
+    assert created.status_code == 201, created.text
+    assert created.json()["template"] == "collect-emails"
+
+
+async def test_a_rule_built_by_hand_records_no_template(signed_in, account_with_post):
+    assert (await signed_in.post("/api/rules", json=rule_body())).json()["template"] is None
+
+
+async def test_editing_an_automation_does_not_blank_its_template(signed_in, account_with_post):
+    """The editor PATCHes the whole draft, but a PATCH that omits the field must
+    leave it alone -- otherwise every save would erase where the rule came from."""
+    rule_id = (
+        await signed_in.post("/api/rules", json=rule_body(template="collect-emails"))
+    ).json()["id"]
+
+    patched = await signed_in.patch(f"/api/rules/{rule_id}", json={"name": "Renamed"})
+
+    assert patched.json()["template"] == "collect-emails"

@@ -59,7 +59,7 @@ export function Templates() {
               <button
                 key={template.id}
                 className="template-card"
-                onClick={() => setChosen(template.rule)}
+                onClick={() => setChosen({ ...template.rule, template: template.id })}
               >
                 <strong>{template.title}</strong>
                 <span className="muted small tpl-blurb">{template.blurb}</span>

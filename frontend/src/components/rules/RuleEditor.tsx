@@ -44,6 +44,7 @@ const EMAIL_PROMPT_DEFAULT = "What's your email? I'll send it straight over."
 
 const BLANK: Partial<Rule> = {
   name: '',
+  template: null,
   scope: 'specific',
   keywords: [],
   any_word: false,

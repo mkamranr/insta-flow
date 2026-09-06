@@ -161,6 +161,12 @@ class Attachment(BaseModel):
 
 class RuleBase(BaseModel):
     name: str = Field(default="", max_length=120)
+    # Which starter template this was created from, as the gallery's stable id
+    # ("collect-emails"), never its title. A title is display text that can be
+    # reworded; an id is not, and the frontend maps it back for the label,
+    # falling back to the raw id so retiring a template cannot break old rules.
+    # Opaque to the backend -- the gallery lives entirely in the frontend.
+    template: str | None = Field(default=None, max_length=64)
     trigger: RuleTrigger = "comment"
     scope: RuleScope = "specific"
     instagram_media_ids: list[str] = Field(default_factory=list)
@@ -225,6 +231,7 @@ class RuleCreate(RuleBase):
 
 class RuleUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
+    template: str | None = Field(default=None, max_length=64)
     trigger: RuleTrigger | None = None
     scope: RuleScope | None = None
     instagram_media_ids: list[str] | None = None

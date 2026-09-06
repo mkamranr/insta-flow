@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getRulePerformance } from '../api/analytics'
 import {
@@ -11,6 +11,7 @@ import {
   mediaImage,
   patchRule,
   postKind,
+  STARTER_TEMPLATES,
   type Post,
   type Rule,
 } from '../api/rules'
@@ -41,7 +42,47 @@ function subjectLine(rule: Rule, post?: Post): string {
   if (rule.trigger === 'dm_keyword') return 'Direct messages'
   if (rule.scope === 'any' || rule.instagram_media_ids.length === 0) return 'Any post'
   if (!post) return rule.instagram_media_ids[0]
-  return captionLine(post.caption) || `${postKind(post)} ${post.instagram_media_id}`
+  return captionLine(post.caption, 110) || `${postKind(post)} ${post.instagram_media_id}`
+}
+
+/**
+ * What an automation does, derived from its own shape.
+ *
+ * Derived rather than read off a field because it is true of every rule,
+ * including the ones built before templates recorded themselves. A rule can be
+ * several of these at once -- a two-step opener that also captures an email --
+ * so these are capabilities to match against, not one exclusive kind.
+ */
+const KINDS: { id: string; label: string; has: (rule: Rule) => boolean }[] = [
+  { id: 'comment', label: 'Comments', has: (r) => (r.trigger ?? 'comment') === 'comment' },
+  { id: 'story_reply', label: 'Stories', has: (r) => r.trigger === 'story_reply' },
+  { id: 'dm_keyword', label: 'DMs', has: (r) => r.trigger === 'dm_keyword' },
+  { id: 'two_step', label: 'Two-step', has: (r) => Boolean(r.opening_dm?.enabled) },
+  { id: 'collect_email', label: 'Email capture', has: (r) => Boolean(r.collect_email?.enabled) },
+  { id: 'require_follow', label: 'Follow gate', has: (r) => Boolean(r.require_follow?.enabled) },
+  { id: 'public_reply', label: 'Public reply', has: (r) => Boolean(r.public_reply?.enabled) },
+  { id: 'attachment', label: 'Attachment', has: (r) => Boolean(r.attachment) },
+  { id: 'ai', label: 'AI matching', has: (r) => Boolean(r.ai?.enabled) },
+]
+
+/** The gallery's title for a stored template id, or the id if it is gone. */
+const templateTitle = (id: string) =>
+  STARTER_TEMPLATES.find((t) => t.id === id)?.title ?? id
+
+/**
+ * Everything worth typing to find one automation: its name, the keywords that
+ * trigger it, and the caption of the post it runs on. One box rather than three,
+ * because the operator knows what they are looking for, not which field holds it.
+ */
+function haystack(rule: Rule, post?: Post): string {
+  return [
+    rule.name,
+    ...(rule.keywords ?? []),
+    post?.caption ?? '',
+    rule.template ? templateTitle(rule.template) : '',
+  ]
+    .join(' ')
+    .toLowerCase()
 }
 
 /** Stands in for the thumbnail when a rule has no one post to picture. */
@@ -93,6 +134,29 @@ export function Automations() {
   const statsFor = (id: string) => performance?.find((p) => p.id === id)
   const withoutRules = posts?.filter((p) => p.rule_count === 0).length ?? 0
 
+  const [search, setSearch] = useState('')
+  const [kind, setKind] = useState<string | null>(null)
+  const [template, setTemplate] = useState<string | null>(null)
+
+  // Only offer a filter that would return something. On a small account the bar
+  // stays short, and a chip can never lead to an empty table.
+  const kinds = useMemo(
+    () => KINDS.filter((k) => (rules ?? []).some((rule) => k.has(rule))),
+    [rules],
+  )
+  const templates = useMemo(
+    () => [...new Set((rules ?? []).map((r) => r.template).filter((t): t is string => !!t))],
+    [rules],
+  )
+
+  const query = search.trim().toLowerCase()
+  const shown = (rules ?? []).filter((rule) => {
+    if (kind && !KINDS.find((k) => k.id === kind)?.has(rule)) return false
+    if (template && rule.template !== template) return false
+    if (query && !haystack(rule, postFor(rule)).includes(query)) return false
+    return true
+  })
+
   return (
     <>
       <h1>Automations</h1>
@@ -131,11 +195,79 @@ export function Automations() {
         )}
 
         {rules && rules.length > 0 && (
+          <div className="rules-toolbar">
+            <input
+              className="search"
+              type="search"
+              value={search}
+              placeholder="Search by caption, keyword or name"
+              aria-label="Search automations"
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {kinds.length > 1 && (
+              <div className="filters" role="group" aria-label="Filter by what it does">
+                <button
+                  className={kind === null ? 'filter active' : 'filter'}
+                  onClick={() => setKind(null)}
+                >
+                  All
+                </button>
+                {kinds.map((k) => (
+                  <button
+                    key={k.id}
+                    className={kind === k.id ? 'filter active' : 'filter'}
+                    onClick={() => setKind(kind === k.id ? null : k.id)}
+                  >
+                    {k.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {templates.length > 0 && (
+              <div className="filters" role="group" aria-label="Filter by template">
+                <span className="muted small filters-label">From template</span>
+                {templates.map((id) => (
+                  <button
+                    key={id}
+                    className={template === id ? 'filter active' : 'filter'}
+                    onClick={() => setTemplate(template === id ? null : id)}
+                  >
+                    {templateTitle(id)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {rules && rules.length > 0 && shown.length === 0 && (
+          <div className="card">
+            <div className="empty-state">
+              <p className="empty-title">Nothing matches</p>
+              <p className="muted small">
+                No automation matches that search or filter.{' '}
+                <button
+                  className="link"
+                  onClick={() => {
+                    setSearch('')
+                    setKind(null)
+                    setTemplate(null)
+                  }}
+                >
+                  Clear it
+                </button>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {rules && shown.length > 0 && (
           <div className="card table-card">
-            <table className="table">
+            <table className="table rules-table">
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Keywords</th>
                   <th>DMs</th>
                   <th>Clicks</th>
                   <th>CTR</th>
@@ -144,7 +276,7 @@ export function Automations() {
                 </tr>
               </thead>
               <tbody>
-                {rules.map((rule) => {
+                {shown.map((rule) => {
                   const stats = statsFor(rule.id)
                   const post = postFor(rule)
                   const thumb = post ? mediaImage(post) : undefined
@@ -170,6 +302,24 @@ export function Automations() {
                             <div className="muted row-post">{subjectLine(rule, post)}</div>
                           </div>
                         </div>
+                      </td>
+                      <td>
+                        {rule.any_word ? (
+                          // Not a keyword, so not a pill: this rule answers
+                          // every comment on the post and should not read as
+                          // though it were matching a word.
+                          <span className="muted small">Any word</span>
+                        ) : rule.keywords?.length ? (
+                          <span className="row-keywords">
+                            {rule.keywords.map((keyword) => (
+                              <span key={keyword} className="kw">
+                                {keyword}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="muted small">—</span>
+                        )}
                       </td>
                       <td>{stats?.dms_sent ?? 0}</td>
                       <td>{stats?.link_clicks ?? 0}</td>
