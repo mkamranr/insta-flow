@@ -129,15 +129,8 @@ async def create_admin(
         logger.warning("setup_lost_the_race")
         raise ConflictError("This app is already set up. Sign in instead.") from exc
 
-    token = sessions.issue(settings.session_secret, str(user["_id"]), 0)
-    response.set_cookie(
-        key=settings.session_cookie_name,
-        value=token,
-        max_age=settings.session_lifetime_hours * 3600,
-        httponly=True,
-        samesite="lax",
-        secure=settings.session_cookie_secure,
-        path="/",
+    sessions.set_cookie(
+        response, settings, sessions.issue(settings.session_secret, str(user["_id"]), 0)
     )
 
     await audit.record(

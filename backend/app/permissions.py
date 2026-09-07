@@ -80,14 +80,15 @@ MODULES: Final[tuple[Module, ...]] = (
     Module(
         "settings",
         "Settings",
-        "The automation disclosure line.",
-        ("view", "edit"),
+        "Open the Settings page. What is editable there depends on the other modules.",
+        ("view",),
     ),
     Module(
         "instance",
         "Server settings",
-        "The public address and the GeoLite2 credentials. One setting for the "
-        "whole server, shared by every workspace.",
+        "The public address, the outbound mail account, the GeoLite2 credentials "
+        "and the automated-experience disclosure. One value each for the whole "
+        "server, shared by every workspace.",
         ("view", "manage"),
     ),
     Module(
@@ -162,6 +163,7 @@ class SystemRole(NamedTuple):
 
 
 OWNER_SLUG: Final[str] = "owner"
+WORKSPACE_OWNER_SLUG: Final[str] = "workspace-owner"
 
 
 def _of(modules: frozenset[str]) -> frozenset[str]:
@@ -175,9 +177,22 @@ def _of(modules: frozenset[str]) -> frozenset[str]:
 # every workspace at once, which is not what "runs the automations" means.
 OWNER_ONLY_MODULES: Final[frozenset[str]] = frozenset({"workspaces", "instance"})
 
-# Additionally hidden from Viewer. Broader, because a Manager may legitimately
-# *see* who has an account without being able to change anything about them.
-_HIDDEN_FROM_VIEWER: Final[frozenset[str]] = OWNER_ONLY_MODULES | {"users", "roles"}
+# Every module that reaches past a single workspace. Two roles are built by
+# subtracting it, which is why it is named for what it *is* rather than for one
+# of the roles that excludes it.
+#
+# `users` and `roles` are in here because `GET /api/users` returns every user's
+# email, role and last sign-in. That is fine for a Manager helping run one
+# deployment, and wrong for someone who was invited to run their own workspace
+# and is a stranger to everybody else on the install.
+_BEYOND_ONE_WORKSPACE: Final[frozenset[str]] = OWNER_ONLY_MODULES | {"users", "roles"}
+
+# Hidden from Viewer for the same reason, plus one of its own: a Manager may
+# legitimately *see* who has an account without being able to change anything
+# about them, so this set being broader than OWNER_ONLY_MODULES is deliberate.
+# Aliased rather than duplicated -- two lists that must stay equal are two lists
+# that will not.
+_HIDDEN_FROM_VIEWER: Final[frozenset[str]] = _BEYOND_ONE_WORKSPACE
 
 SYSTEM_ROLES: Final[tuple[SystemRole, ...]] = (
     # Owner is ALL by construction, not by a hand-written list, and is re-synced
@@ -195,8 +210,31 @@ SYSTEM_ROLES: Final[tuple[SystemRole, ...]] = (
         "Manager",
         "Runs the automations end to end. Cannot change who gets in, "
         "or anything that applies to the whole server.",
-        ALL - {"users.manage", "roles.manage", "settings.edit"} - _of(OWNER_ONLY_MODULES),
+        ALL - {"users.manage", "roles.manage"} - _of(OWNER_ONLY_MODULES),
         locked=False,
+    ),
+    # The role an invited person receives. Locked, and that is the point: every
+    # tenant holds this one role, so an operator widening it by hand would widen
+    # it for all of them at once. Locked also means the API refuses to edit it,
+    # which is the precondition `ensure_system_roles` requires before it may
+    # re-sync permissions on every boot.
+    #
+    # Built by subtraction so a permission added to MODULES reaches it without a
+    # migration -- but see `test_the_workspace_owner_role_is_exactly_these_permissions`:
+    # that same property means a NEW module silently lands in every existing
+    # tenant's role on the next boot, and only a frozen literal catches it.
+    #
+    # Nothing needs excluding beyond `_BEYOND_ONE_WORKSPACE`: the disclosure
+    # wording, which used to need its own exclusion here, moved to `instance.*`
+    # once it was clear that it is one line for the whole deployment and every
+    # workspace's worker reads it.
+    SystemRole(
+        WORKSPACE_OWNER_SLUG,
+        "Workspace owner",
+        "Runs their own workspace: their Meta app, their Instagram account, "
+        "their automations. Sees nothing outside it.",
+        ALL - _of(_BEYOND_ONE_WORKSPACE),
+        locked=True,
     ),
     SystemRole(
         "viewer",

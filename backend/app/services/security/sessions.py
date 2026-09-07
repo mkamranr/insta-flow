@@ -45,3 +45,23 @@ def verify(secret: str, cookie: str, max_age_seconds: int) -> SessionData | None
         return SessionData(user_id=str(payload["uid"]), epoch=int(payload.get("epoch", 0)))
     except (TypeError, ValueError):
         return None
+
+
+def set_cookie(response: Any, settings: Any, token: str) -> None:
+    """Attach a session cookie to a response.
+
+    Shared rather than inlined per call site: three routes now issue a session
+    -- login, first-run setup and accepting an invitation -- and each was a
+    verbatim copy of the same six flags. Six flags copied three times is how one
+    of them later ships with `secure` or `httponly` wrong, in one place only,
+    and nothing says so.
+    """
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=token,
+        max_age=settings.session_lifetime_hours * 3600,
+        httponly=True,
+        samesite="lax",
+        secure=settings.session_cookie_secure,
+        path="/",
+    )

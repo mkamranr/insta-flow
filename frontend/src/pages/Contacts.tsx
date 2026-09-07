@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { getContacts, type ContactGroup } from '../api/analytics'
 import { captionLine, mediaImage, postKind } from '../api/rules'
 import { basename } from '../app/workspace'
+import { InviteDialog } from '../components/admin/InviteDialog'
+import { usePermissions } from '../hooks/usePermissions'
 
 /**
  * The download is a plain anchor, not a fetch.
@@ -47,10 +49,20 @@ function GroupCard({
   group,
   open,
   onToggle,
+  selectable,
+  selected,
+  onToggleEmail,
+  onSelectGroup,
+  onClearGroup,
 }: {
   group: ContactGroup
   open: boolean
   onToggle: () => void
+  selectable: boolean
+  selected: Set<string>
+  onToggleEmail: (email: string) => void
+  onSelectGroup: (emails: string[]) => void
+  onClearGroup: (emails: string[]) => void
 }) {
   const thumbnail = group.post ? mediaImage(group.post) : null
   const placed = group.instagram_media_id !== null
@@ -108,9 +120,27 @@ function GroupCard({
             <DownloadCsv post={group.instagram_media_id} label="Download CSV" />
           </div>
 
+          {selectable && (
+            <div className="row">
+              <button
+                className="link"
+                onClick={() => onSelectGroup(group.contacts.map((c) => c.email))}
+              >
+                Select all {group.count}
+              </button>
+              <button
+                className="link"
+                onClick={() => onClearGroup(group.contacts.map((c) => c.email))}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
           <table className="table">
             <thead>
               <tr>
+                {selectable && <th className="select-cell" />}
                 <th>Email</th>
                 <th>Instagram ID</th>
                 <th>Captured</th>
@@ -120,7 +150,37 @@ function GroupCard({
             <tbody>
               {group.contacts.map((contact) => (
                 <tr key={`${contact.id}-${contact.rule_name}`}>
-                  <td>{contact.email}</td>
+                  {selectable && (
+                    <td className="select-cell">
+                      {contact.invite_state === 'accepted' ? (
+                        // Not a disabled checkbox: "already has an account" is
+                        // a different claim from "not selected", and a checkbox
+                        // that silently ignores a click is the worst thing a
+                        // checkbox can do.
+                        <span className="muted" aria-hidden="true">—</span>
+                      ) : (
+                        <label className="pick">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${contact.email}`}
+                            checked={selected.has(contact.email.toLowerCase())}
+                            onChange={() => onToggleEmail(contact.email)}
+                          />
+                        </label>
+                      )}
+                    </td>
+                  )}
+                  <td>
+                    {contact.email}
+                    {contact.invite_state === 'invited' && (
+                      <span className="pill paused" title="An invitation is outstanding.">
+                        Invited
+                      </span>
+                    )}
+                    {contact.invite_state === 'accepted' && (
+                      <span className="pill on">Has an account</span>
+                    )}
+                  </td>
                   <td className="muted small">{contact.instagram_user_id}</td>
                   <td className="muted small">
                     {contact.captured_at
@@ -161,6 +221,40 @@ export function Contacts() {
   const [openKey, setOpenKey] = useState<string | null | undefined>(undefined)
   const current = openKey === undefined ? groupKey(groups?.[0]) : openKey
 
+  // Keyed on the normalised email, never on the row. The same address appears
+  // in several groups *and* can repeat inside one -- rows are keyed
+  // `id-rule_name` precisely because two automations on one post capture the
+  // same person -- so keying on rows would double-count and could send two
+  // invitations to one inbox. Deduplication is structural this way rather than
+  // a step somebody has to remember.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [inviting, setInviting] = useState<string[] | null>(null)
+  const { can } = usePermissions()
+  const selectable = can('users.manage')
+
+  const toggleEmail = (email: string) =>
+    setSelected((current) => {
+      const next = new Set(current)
+      const key = email.toLowerCase()
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  const selectMany = (emails: string[]) =>
+    setSelected((current) => {
+      const next = new Set(current)
+      emails.forEach((email) => next.add(email.toLowerCase()))
+      return next
+    })
+
+  const clearMany = (emails: string[]) =>
+    setSelected((current) => {
+      const next = new Set(current)
+      emails.forEach((email) => next.delete(email.toLowerCase()))
+      return next
+    })
+
   return (
     <>
       <div className="page-head">
@@ -186,6 +280,20 @@ export function Contacts() {
         </div>
       )}
 
+      {selectable && selected.size > 0 && (
+        <div className="select-bar">
+          <span className="count">
+            {selected.size} {selected.size === 1 ? 'recipient' : 'recipients'} selected
+          </span>
+          <button className="link" onClick={() => setSelected(new Set())}>
+            Clear
+          </button>
+          <button className="cta" onClick={() => setInviting([...selected])}>
+            Invite {selected.size} {selected.size === 1 ? 'person' : 'people'}…
+          </button>
+        </div>
+      )}
+
       {groups && groups.length > 0 && (
         <div className="card auto-list">
           {groups.map((group) => {
@@ -196,10 +304,25 @@ export function Contacts() {
                 group={group}
                 open={current === key}
                 onToggle={() => setOpenKey(current === key ? null : key)}
+                selectable={selectable}
+                selected={selected}
+                onToggleEmail={toggleEmail}
+                onSelectGroup={selectMany}
+                onClearGroup={clearMany}
               />
             )
           })}
         </div>
+      )}
+
+      {inviting && (
+        <InviteDialog
+          emails={inviting}
+          onClose={() => {
+            setInviting(null)
+            setSelected(new Set())
+          }}
+        />
       )}
     </>
   )

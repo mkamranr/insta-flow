@@ -113,14 +113,18 @@ export function Dashboard() {
       <>
         <h1>Welcome</h1>
         <div className="card">
-          <h2>Connect Instagram to get started</h2>
+          <h2>Set up your Instagram app</h2>
           <p className="muted">
-            Once an account is connected you can sync your posts and set up your first
-            automation.
+            Connecting an account needs a Meta app in your own name. The guided setup walks
+            through creating one, then connects the account for you.
           </p>
-          <Link to="/instagram">
-            <button className="cta">Connect Instagram</button>
+          <Link to="/get-started">
+            <button className="cta">Start guided setup</button>
           </Link>
+          <p className="muted small">
+            Already have your Meta app? <Link to="/instagram">Connect Instagram</Link>{' '}
+            directly.
+          </p>
         </div>
       </>
     )

@@ -31,9 +31,13 @@ import {
   TemplatesIcon,
   UsersIcon,
   KeyIcon,
+  MailIcon,
+  RocketIcon,
 } from '../icons/Icons'
 import { AnalyticsDrawer } from '../common/AnalyticsDrawer'
 import { DryRunBanner } from '../common/DryRunBanner'
+import { SetupBanner } from '../common/SetupBanner'
+import { getProgress } from '../../api/onboarding'
 import { StatsRail } from '../common/StatsRail'
 import { usePermissions } from '../../hooks/usePermissions'
 
@@ -101,6 +105,7 @@ const BOTTOM: NavItem[] = [
 
 const ADMIN: NavItem[] = [
   { to: '/users', label: 'Users', icon: <UsersIcon />, permission: 'users.view' },
+  { to: '/invites', label: 'Invites', icon: <MailIcon />, permission: 'users.view' },
   { to: '/roles', label: 'Roles', icon: <KeyIcon />, permission: 'roles.view' },
 ]
 
@@ -246,6 +251,13 @@ export function Layout() {
   const visible = (items: NavItem[]) => items.filter((item) => can(item.permission))
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: getMe })
+  // Ungated, unlike the summary and account queries below, so this is correct
+  // for every role -- including a narrow one that 403s on those.
+  const setup = useQuery({
+    queryKey: ['onboarding', 'progress'],
+    queryFn: getProgress,
+    retry: false,
+  })
   const { data: accounts } = useQuery({ queryKey: ['instagram-accounts'], queryFn: listAccounts })
   const { data: summary } = useQuery({ queryKey: ['summary'], queryFn: () => getSummary(7) })
   const { data: ready } = useQuery({
@@ -304,6 +316,18 @@ export function Layout() {
         )}
 
         <nav className="nav">
+          {/* Derived rather than declared, the same principle the
+              Administration group follows: the entry exists only while setup
+              is unfinished, and carries no permission because the guided setup
+              is where a freshly invited person lands. */}
+          {setup.data && !setup.data.connected && (
+            <NavLink to="/get-started">
+              <span className="nav-tile">
+                <RocketIcon />
+              </span>
+              Finish setup
+            </NavLink>
+          )}
           {visible(TOP).map(({ to, label, icon, end }) => (
             <NavLink key={to} to={to} end={end}>
               <span className="nav-tile">{icon}</span>
@@ -361,6 +385,8 @@ export function Layout() {
       </aside>
 
       <main className="content">
+        {/* Setup precedes sending, so this sits above the dry-run notice. */}
+        <SetupBanner />
         <DryRunBanner />
         <Outlet />
 

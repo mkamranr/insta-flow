@@ -4,10 +4,14 @@ Reviewed 2026-08-31 against the checklist in project-plan.md §50 and §89.
 
 ## Threat model
 
-Social Flow holds one thing worth stealing: a long-lived Meta access token that
-can send DMs as the connected Instagram account. Everything below is arranged
-around not losing it, and around not sending messages the operator did not
-intend.
+Social Flow holds two things worth stealing. The first is a long-lived Meta
+access token that can send DMs as the connected Instagram account. The second
+arrived with outbound email: a password for the operator's own mail account,
+which is worse in one specific way. A Meta token is confined to one Instagram
+account's messages; a mail credential authenticates *as the operator* to anyone
+they can email, which makes it a spoofing and spam-relay capability rather than
+an Instagram one. Everything below is arranged around not losing either, and
+around not sending messages the operator did not intend.
 
 The realistic attackers are: someone on the internet who finds the public
 webhook and OAuth endpoints; someone who obtains the dashboard URL; and a
@@ -72,6 +76,52 @@ take JSON, which forces a CORS preflight, and no CORS middleware is installed,
 so no cross-origin app can call them. There is no separate CSRF token because
 there is no cross-origin surface for one to protect.
 
+**Outbound email** — the SMTP password is AES-256-GCM at rest under the same
+`ENCRYPTION_KEY` as Meta tokens, decrypted in exactly one function
+(`services/email/config.py`), and never returned by the API — not even as
+ciphertext, which would be a decryption-oracle target if the key ever leaked.
+The settings routes are `instance.*`, so no seeded role but Owner reaches them,
+and the test-send endpoint is throttled per actor because it is otherwise an
+unbounded mail emitter from the operator's account to a caller-chosen address.
+Rendered message bodies are never stored on `email_log`; an invitation body
+carries a single-use token, and a plaintext copy with no expiry would defeat
+storing only its hash. Failure text is passed through the log redactor *before*
+the database write, because a mail server can echo an AUTH attempt back inside
+its rejection.
+
+**Invitations** — the activation token is 256 bits from `secrets.token_urlsafe(32)`
+and only its SHA-256 is stored, so a database dump yields no usable links.
+Not `services/links.py`'s 8 bytes: a click token protects a click count, this
+one authorises account creation, and `Throttle` fails open on a Redis outage so
+the entropy has to stand alone. Redemption is a single atomic status flip, which
+*is* the single-use guarantee; a rejected signup (short password, taken
+workspace name) releases the reservation so the link stays usable, guarded on
+the account not yet existing so a successful signup can never be released.
+Resending rotates the token, so exactly one link is live per invitation and a
+forwarded first email dies the moment the operator resends. The accept request
+carries **no email field** — the address comes off the invite row, which is what
+makes it unforgeable rather than the form's `readOnly` attribute. Activation
+links are built from the configured origin, never the request's `Host`, so a
+forged header cannot make the server email a live token to somebody else's
+domain. Both unauthenticated endpoints are throttled per IP before the database
+is touched, and the token travels in the request body rather than a URL, because
+a reverse proxy logs paths and query strings.
+
+The one deliberate departure from the house rule: an unknown token is 404, but a
+token that is genuinely ours and spent, revoked or expired is **410**. Elsewhere
+this codebase collapses those (a 403 would confirm a workspace slug exists), and
+the enumeration argument does not transfer — only a holder of a 256-bit token
+reaches the path and guessing cannot produce a once-valid one. Collapsing them
+would instead make "I clicked three days late" indistinguishable from "your link
+is corrupted", which is the support question that actually happens.
+
+**Job payloads** — an invitation's token travels to the worker as an ARQ
+argument, because the job cannot recover a token from its hash, so it sits in a
+Redis payload for the job's lifetime. Redis is reachable only on the Compose
+network and is not published. ARQ also logs a job's arguments verbatim, so the
+redactor carries a `token=` pattern; verified live that an activation URL does
+not reach the worker log.
+
 **Meta tokens** — AES-256-GCM at rest, key from `ENCRYPTION_KEY`, never in
 MongoDB. The tag makes tampering detectable, so a modified ciphertext fails to
 decrypt rather than yielding a corrupted token that would be sent to Meta.
@@ -129,7 +179,10 @@ they matter before this serves anyone else.
 2. **The deauthorize and data-deletion callbacks only acknowledge.** They return
    200 so the Meta dashboard is satisfied, but do not verify Meta's signed
    request or delete anything. If this ever serves accounts other than your own,
-   both become a compliance obligation rather than a formality.
+   both become a compliance obligation rather than a formality. Note that
+   `email_log` now makes a third place an email address is stored, alongside
+   `users.email` and `contacts.email`, so it is part of whatever those callbacks
+   eventually have to delete.
 3. **Permissions are per-role, not per-record.** A role says *what* someone may
    do, not *which* rows they may do it to. Everyone who can see automations sees
    all of them. That is correct while a deployment serves one Instagram account;
@@ -144,6 +197,9 @@ they matter before this serves anyone else.
 
 `ENCRYPTION_KEY` cannot be rotated in place — stored tokens are encrypted under
 the old key and will fail to decrypt. To rotate: disconnect the Instagram
-account, change the key, `make reload`, reconnect. `SESSION_SECRET` can be
-changed freely; it signs out everyone. `META_APP_SECRET` must match the Meta
+account, change the key, `make reload`, reconnect — **and re-enter the SMTP
+password on the Settings page**, which is encrypted under the same key. The
+symptom of forgetting is a test send failing with "the stored password cannot be
+read"; the Settings card reports that state rather than raising. `SESSION_SECRET`
+can be changed freely; it signs out everyone. `META_APP_SECRET` must match the Meta
 dashboard, and changing it invalidates webhook signatures until both sides agree.

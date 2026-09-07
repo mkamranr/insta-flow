@@ -14,6 +14,7 @@ from app.api.deps import (
     RolesRepo,
     UsersRepo,
     require,
+    role_you_may_grant,
 )
 from app.db.repositories import to_object_id
 from app.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
@@ -61,14 +62,10 @@ async def _target(
     return target
 
 
-async def _role_you_may_grant(roles: Any, role_id: str, grant: Grant) -> dict[str, Any]:
-    role = await roles.get(_object_id(role_id, "role_id"))
-    if role is None:
-        raise ValidationError("That role does not exist.")
-    held = frozenset(str(p) for p in role.get("permissions", ()))
-    if not held <= grant.permissions:
-        raise AuthorizationError("You cannot grant access you do not have yourself.")
-    return role
+# Moved to `deps.role_you_may_grant` when invitations arrived, since an invite
+# grants a role too and the same rule has to hold at both doors. Aliased so this
+# module's call sites read unchanged.
+_role_you_may_grant = role_you_may_grant
 
 
 async def _refuse_removing_the_last_owner(users: Any, roles: Any, target: dict[str, Any]) -> None:

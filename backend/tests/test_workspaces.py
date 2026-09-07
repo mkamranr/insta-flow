@@ -11,7 +11,12 @@ from bson import ObjectId
 from app.config import get_settings
 from app.db.bootstrap import prepare
 from app.db.repositories import RolesRepository, UsersRepository
-from app.permissions import MODULES, OWNER_ONLY_MODULES, SYSTEM_ROLES
+from app.permissions import (
+    MODULES,
+    OWNER_ONLY_MODULES,
+    SYSTEM_ROLES,
+    WORKSPACE_OWNER_SLUG,
+)
 from app.services import slugs
 from app.services.security.encryption import encrypt
 from app.services.security.passwords import hash_password
@@ -237,14 +242,15 @@ async def test_the_permission_widens_the_list(signed_in, admin, other_workspace)
 # --- seeded roles -----------------------------------------------------------
 
 
-def test_neither_manager_nor_viewer_reaches_other_workspaces():
+def test_no_seeded_role_but_owner_reaches_other_workspaces():
     """Viewer is built by comprehension over MODULES, so a new module hands it a
     `.view` automatically. That is how a read-only role would silently acquire
-    the run of every other person's workspace."""
+    the run of every other person's workspace. `workspace-owner` is built by
+    subtraction and has the same exposure from the other direction."""
     by_slug = {role.slug: role for role in SYSTEM_ROLES}
     assert "workspaces.view" in by_slug["owner"].permissions
-    assert "workspaces.view" not in by_slug["manager"].permissions
-    assert "workspaces.view" not in by_slug["viewer"].permissions
+    for slug in ("manager", "viewer", "workspace-owner"):
+        assert "workspaces.view" not in by_slug[slug].permissions, slug
 
 
 def test_owner_only_modules_reach_owner_and_nobody_else():
@@ -259,3 +265,80 @@ def test_owner_only_modules_reach_owner_and_nobody_else():
     assert owner_only <= by_slug["owner"].permissions
     assert not owner_only & by_slug["manager"].permissions
     assert not owner_only & by_slug["viewer"].permissions
+    assert not owner_only & by_slug["workspace-owner"].permissions
+
+
+# The role every invited person holds. Written out rather than derived, because
+# deriving it here would just restate the implementation and pass forever.
+WORKSPACE_OWNER_PERMISSIONS = frozenset(
+    {
+        "analytics.view",
+        "automations.create",
+        "automations.delete",
+        "automations.edit",
+        "automations.view",
+        "contacts.view",
+        "content.edit",
+        "content.view",
+        "instagram.manage",
+        "instagram.view",
+        "settings.view",
+    }
+)
+
+
+def test_the_workspace_owner_role_is_exactly_these_permissions():
+    """The most important assertion in this file, and the least obvious.
+
+    `workspace-owner` is built by subtracting `_BEYOND_ONE_WORKSPACE` from ALL,
+    **and** it is `locked=True`. Together those mean a module added in a later
+    release lands in the role automatically and `ensure_system_roles` then
+    `$set`s the new permission onto every existing tenant on the next boot --
+    no migration, no symptom, nobody asked.
+
+    A subset assertion cannot catch that, because the set only ever grows. Only
+    a frozen literal can. If this test fails after adding a module, that is the
+    guard working: decide deliberately whether tenants should have the new
+    permission, then update this list.
+    """
+    by_slug = {role.slug: role for role in SYSTEM_ROLES}
+    assert by_slug[WORKSPACE_OWNER_SLUG].permissions == WORKSPACE_OWNER_PERMISSIONS
+
+
+def test_the_workspace_owner_role_is_locked():
+    """Unlocked, it would be seeded once and then belong to the operator -- so
+    an edit meant for one person would change what every future invitee gets,
+    with nothing to catch it."""
+    by_slug = {role.slug: role for role in SYSTEM_ROLES}
+    assert by_slug[WORKSPACE_OWNER_SLUG].locked is True
+
+
+def test_a_workspace_owner_cannot_see_who_else_is_on_the_install():
+    """The specific reason Manager is not reused. `GET /api/users` returns every
+    user's email, role and last sign-in, and invitees are strangers to one
+    another."""
+    by_slug = {role.slug: role for role in SYSTEM_ROLES}
+    tenant = by_slug[WORKSPACE_OWNER_SLUG].permissions
+    for permission in ("users.view", "users.manage", "roles.view", "roles.manage"):
+        assert permission not in tenant, permission
+    # Manager, by contrast, does hold them -- which is what made it unusable here.
+    assert "users.view" in by_slug["manager"].permissions
+
+
+def test_a_workspace_owner_cannot_touch_server_wide_settings():
+    """`instance.*` is one value for the whole deployment: the public origin it
+    holds re-points every workspace's Meta callbacks at once."""
+    tenant = {role.slug: role for role in SYSTEM_ROLES}[WORKSPACE_OWNER_SLUG].permissions
+    assert not {p for p in tenant if p.startswith("instance.")}
+    # The disclosure line lives behind `instance.manage` for the same reason:
+    # it is one line every workspace's worker reads.
+    assert "settings.view" in tenant, "a tenant still needs to open the page"
+
+
+def test_a_workspace_owner_can_configure_their_own_meta_app():
+    """The entire point of the role. `instagram.manage` gates
+    `PUT /api/settings/meta-app`, and `settings.view` gates the page it lives
+    on -- without the second, the first is unreachable through the UI."""
+    tenant = {role.slug: role for role in SYSTEM_ROLES}[WORKSPACE_OWNER_SLUG].permissions
+    assert "instagram.manage" in tenant
+    assert "settings.view" in tenant

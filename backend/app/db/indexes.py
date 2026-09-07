@@ -32,9 +32,67 @@ COLLECTIONS = [
     "app_settings",
     "click_events",
     "meta_apps",
+    "email_log",
+    "invites",
 ]
 
 INDEXES: dict[str, list[IndexModel]] = {
+    "invites": [
+        # The redemption lookup: one indexed equality match on the token's
+        # SHA-256. Unique but NOT partial, and the absence is worth stating,
+        # because the loudest trap in this file is a *missing* partial filter
+        # (see `uq_user_slug`) and the next reader will assume one belongs.
+        # `token_hash` is written on every insert and is never absent or null,
+        # so there is no population of nulls for a plain unique index to
+        # collide on -- the exact opposite of the slug situation.
+        IndexModel([("token_hash", ASCENDING)], unique=True, name="uq_invite_token"),
+        # At most one LIVE invite per address, and this index IS the check:
+        # a second invite to a pending address raises DuplicateKeyError, which
+        # the route reports as a conflict. Never a read-then-write (§25, §63).
+        #
+        # Partial on the VALUE `pending`, like `uq_bootstrap_admin`. An accepted
+        # or revoked invite drops out of the index, so the same person can be
+        # invited again later; a plain unique index would block that forever.
+        # `$type` is not wanted here -- the filter is on a value, not presence.
+        IndexModel(
+            [("email", ASCENDING)],
+            unique=True,
+            name="uq_invite_pending_email",
+            partialFilterExpression={"status": "pending"},
+        ),
+        IndexModel(
+            [("status", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_status_created",
+        ),
+        IndexModel(
+            [("email", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_email_created",
+        ),
+        # Deliberately NO TTL index. Deleting an expired invite would turn every
+        # late click into a 404 indistinguishable from a wrong token, which
+        # destroys both the audit trail and the only error message the recipient
+        # can act on. Expiry is evaluated at read time against `expires_at`.
+        # `test_indexes.py` pins the absence, because a TTL is the first thing a
+        # reviewer suggests here.
+    ],
+    "email_log": [
+        IndexModel([("created_at", DESCENDING)], name="ix_created"),
+        IndexModel(
+            [("to_address", ASCENDING), ("created_at", DESCENDING)],
+            name="ix_recipient_created",
+        ),
+        # The idempotency handle. The route mints an RFC 5322 Message-ID, opens
+        # the row, and only then enqueues, so a redelivered job finds the row
+        # already terminal and returns without sending a second copy.
+        #
+        # Unique but NOT partial, and the absence is deliberate enough to write
+        # down: the loudest trap in this file is a MISSING partial filter
+        # (`uq_user_slug`, which must skip slug-less rows until the backfill has
+        # run). Nothing analogous applies here -- `message_id` is written by the
+        # enqueuer on every row from the very first one, so there is no
+        # population of nulls for a plain unique index to collide on.
+        IndexModel([("message_id", ASCENDING)], unique=True, name="uq_message_id"),
+    ],
     "roles": [
         IndexModel([("slug", ASCENDING)], unique=True, name="uq_role_slug"),
     ],

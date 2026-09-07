@@ -206,6 +206,67 @@ rather than spinning. Reconnect from the Instagram page.
 Long-lived tokens last 60 days and a daily cron refreshes them. If the machine
 was off for weeks, the token may be past saving — reconnect.
 
+## An invitation link does not work
+
+The message the recipient sees is deliberately specific, so start from that.
+
+**"That invitation link is not valid" (404).** The token is not one of ours. Either it was
+truncated in transit -- mail clients wrap long URLs -- or the invitation was **resent**, which
+mints a new token and kills the old one on purpose, so an older email in the same thread is
+now dead. Send them the newest link, or resend and use that.
+
+**"No longer usable" (410).** It is ours, and spent: already accepted, revoked, or past its
+deadline. `Invites` shows which. Resend to issue a fresh one. The distinction between this and
+the 404 is deliberate -- collapsing them would make a late click look like a corrupted link.
+
+**"The address /u/<name>/ was just taken" (409).** Two people picked the same workspace name.
+The invitation is **not** consumed -- the reservation is released -- so they can simply choose
+another and the same link still works.
+
+**A 422 on the signup form.** The password is under 12 characters, the two do not match, or the
+workspace name is invalid or reserved. Same as above: the invitation survives, because those
+rules run before the token is spent.
+
+**Nothing arrives at all.** That is a mail problem, not an invitation problem -- see the next
+section. `Invites` shows "Email not sent" against a row whose message could not be queued, and
+the invitation is still valid: use **Copy link** and pass it on directly.
+
+**The link points at the wrong host.** Activation links are built from the configured public
+origin, never the request's `Host` header. Check *Settings → Public address*.
+
+## A test email or invitation never arrives
+
+Five distinct things look identical from the outside, so check them in this order. The last
+five messages and their status are on *Settings → Email*, which answers most of these without
+a shell.
+
+**1. Is there a row at all?** No row means the queue never accepted the job — the API returns
+503 in that case and the row is marked `failed` rather than left pending, so an absent row
+means the request itself never got that far. `docker compose logs api | grep email_enqueue_failed`.
+
+**2. Does the row say `skipped`?** The mail settings are not filled in. The job does not retry,
+because there is nothing to retry.
+
+**3. Does it say `failed` with SMTP 535?** The password was refused. With Gmail that is an App
+Password that is wrong, was revoked, or was never issued — and note Google will not issue one
+at all unless two-step verification is on. The card names the date of the refusal. Retrying is
+deliberately not attempted: repeated auth failures count against the Google account.
+
+**4. Does it say `failed` with a 4xx, or a timeout?** Transient, and the worker will already
+have retried up to five times with backoff. A connect timeout on an otherwise-working host is
+usually egress filtering on TCP 587 — see `docs/deployment.md`.
+
+**5. Is it stuck at `queued` or `sending`?** The worker is not running, or died mid-send.
+`docker compose logs worker | grep email`.
+
+**6. Does it say `sent`?** The mail server accepted it. That is genuinely all SMTP can tell
+us — "sent" means handed off, not delivered. Check the spam folder and the sending account's
+own Sent items. If Gmail accepted it but nothing arrives repeatedly, the daily cap (~500
+recipients) presents as an authentication failure rather than a quota error.
+
+> **`DRY_RUN` is not the answer here.** It suppresses Meta mutations only; email is sent
+> regardless, and the Settings card says so. `EMAIL_CLIENT=mock` is the flag that stops mail.
+
 ## Worker not processing jobs
 
 ```bash

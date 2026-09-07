@@ -50,3 +50,16 @@ def test_meta_credentials_are_not_required_instance_wide():
         session_secret="5",
     )
     assert settings.missing_required() == []
+
+
+def test_mail_is_never_required_config(monkeypatch):
+    """`missing_required()` drives `/ready`, which drives the container's health.
+
+    A deployment that never wanted email must not report itself unhealthy, so
+    nothing about SMTP belongs on that list -- and the settings live in the
+    database anyway, where `missing_required` cannot see them.
+    """
+    monkeypatch.delenv("EMAIL_CLIENT", raising=False)
+    settings = Settings(encryption_key="k" * 64, session_secret="s")
+    assert settings.missing_required() == []
+    assert settings.email_client == "auto"

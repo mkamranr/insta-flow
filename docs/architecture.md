@@ -49,10 +49,16 @@ job → comment repository (insert_unique)
   `InstagramClient` protocol, which is why `MockInstagramClient` can stand in for the whole
   API surface in tests.
 - `services/campaigns/` is pure: functions over plain data, no I/O, no Meta imports.
+- `services/email/` is the only place that knows SMTP exists, and within it only
+  `transport.py` imports a mail library. Everything else depends on the `MailerProtocol`,
+  which is why `MockMailer` stands in for a mail server in tests.
 - `db/repositories/` owns every query. Nothing else touches a collection.
 
-This is what makes the system testable without Meta credentials — and it is enforced by
-review, so keep it intact.
+This is what makes the system testable without Meta credentials — and the first two
+boundaries are enforced by review, so keep them intact. The mail boundary is the one
+exception: `tests/test_email_boundary.py` walks the AST of every file under `app/` and fails
+if anything outside `transport.py` imports `aiosmtplib` or `smtplib`. It is written
+generically, so extending it to the other two is a few lines.
 
 ## Idempotency
 
@@ -62,7 +68,7 @@ Three unique indexes, each guarding a different replay:
 | --- | --- |
 | Meta redelivers the same webhook | `webhook_events.event_hash` |
 | The same comment arrives twice | `comments.(instagram_account_id, instagram_comment_id)` |
-| Two workers process the same job | `executions.(comment_id, campaign_id, action)` |
+| Two workers process the same job | `executions.(comment_id, rule_id, action)` |
 
 The pattern is always *attempt the write, handle `DuplicateKeyError`* — never *check, then
 write*, which races.

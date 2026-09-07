@@ -61,7 +61,15 @@ Layout: `backend/app/{api,db,models,services,workers}`, `frontend/src`, `infra/c
   token. Everything else depends on the `InstagramClient` protocol, so `MockInstagramClient`
   substitutes cleanly in tests.
 - **Campaign logic must not import Meta code.** Matching, priority, and rendering are pure
-  functions over plain data — that is what makes them cheap to test.
+  functions over plain data — that is what makes them cheap to test. Currently held by
+  review, not by a test: `app/constants.py` exists to keep Meta's documented numbers
+  available as plain data so the boundary can be honoured without importing `services.meta`.
+- **All SMTP lives in `services/email/`, and specifically in its `transport.py`.** Everything
+  else depends on the `MailerProtocol`, so `MockMailer` substitutes in tests. Unlike the two
+  boundaries above, this one *is* enforced: `tests/test_email_boundary.py` walks the AST of
+  every file under `app/` and fails if anything else imports `aiosmtplib` or `smtplib` — with
+  a companion test proving the scan itself still bites. Written generically so the two
+  claims above can be closed the same way.
 - **Repositories own all DB access.** API routes and workers never touch a collection
   directly.
 - **An attachment is only deleted once nothing references it.** `attachments.delete` removes
@@ -75,7 +83,12 @@ Layout: `backend/app/{api,db,models,services,workers}`, `frontend/src`, `infra/c
   table and fails on any route that declares nothing, with a short allowlist for the handful
   that legitimately cannot (login, `/me`, and the callbacks Meta drives).
 - **Template rendering is `{{var}}` substitution against a fixed allowlist** — no Jinja, no
-  `eval`, no arbitrary attribute access. Unknown variables are rejected at save time.
+  `eval`, no arbitrary attribute access. Unknown variables are rejected at save time. The
+  substitution itself is `services/templating.py`, shared with outbound email; `allowed` and
+  `max_length` are keyword-only with **no defaults** so each surface must state its own
+  vocabulary. That is what stops a mail variable such as `{{invite_url}}` becoming
+  renderable into a direct message. Email bodies are text/plain only, because the renderer
+  does no HTML escaping.
 - **Structured JSON logs.** Never log a token, password, session secret, encryption key, or
   authorization code.
 - Async throughout: `httpx.AsyncClient`, `pymongo.AsyncMongoClient` (not Motor — deprecated).
@@ -109,12 +122,40 @@ key error means another worker already has it — skip, do not send.
 | --- | --- |
 | `account_snapshots` | Instagram gives a follower total and no history. Growth is only knowable if we write it down daily. One row per account per day, unique index. |
 | `click_events` | One row per click. `link_clicks` is a counter with a first/last timestamp — it knows how many, never when, so an hourly chart cannot come from it. |
-| `app_settings` | A single document for things an operator may edit from the dashboard. Currently the MaxMind credentials; the license key is encrypted like a Meta token. |
+| `app_settings` | A single document for things an operator may edit from the dashboard. The MaxMind credentials and the outbound-mail settings; the license key and the SMTP password are encrypted like a Meta token. |
 | `meta_apps` | One Meta app per user, so a second person can connect their own Instagram account without going through the first person's app -- which is what would turn this into a third-party integration needing App Review. App secret and webhook verify token are encrypted like a Meta token. A separate collection rather than fields on the user document, because `current_user` reads the whole user document on every request. |
-| `app_settings` | Also holds the public origin, which overrides `PUBLIC_BASE_URL`. Server-wide, so it and the GeoLite2 credentials sit behind `instance.*` rather than `settings.*` -- otherwise "may reword an automated reply" would also mean "may re-point the server". |
-| `roles` | A named set of permissions, assigned to users via `users.role_id`. `owner` is seeded from the whole catalogue and re-synced on every boot, so a new permission reaches it with no migration; `manager` and `viewer` are seeded once and then belong to the operator. |
+| `app_settings` | Also holds the public origin (overriding `PUBLIC_BASE_URL`), the outbound mail settings, the invite expiry window, and the automated-experience disclosure. **Everything in it is server-wide and therefore gated `instance.*`.** The disclosure was the last exception: it sat behind `settings.edit` as though it were per-workspace, while `workers/tasks._with_disclosure` takes only a database handle and appends the one saved line to *every* workspace's replies. Moved 2026-09-07, and `settings.edit` -- which guarded nothing else -- was retired with it. `settings.view` remains, because it is what opens the Settings page at all. |
+| `email_log` | One row per message the deployment tried to send, so "did that invitation go out, and if not why" is answerable months later without a mail-server login. **The rendered body and the variable values are never stored** -- an invitation body carries a single-use token, and keeping a plaintext copy with no expiry would defeat storing only its hash. No TTL yet, deliberately: this install sends single digits of mail a month, so growth is not the problem and the row's whole value is being readable long after the incident. When a bulk sender arrives, the right shape is a *partial* TTL over `status: "sent"` rows only, never over `failed` ones. |
+| `invites` | An invitation to create an account. **Only the token's SHA-256 is stored** -- unlike the Meta verify token, which is encrypted because the operator has to read it back; nobody ever reads an invite token again after the email is queued, so the stronger option is available and taken. That matters because MongoDB has no authentication (`docs/security.md`), so a dump must yield no usable links. Two unique indexes carry the logic: `uq_invite_token` for the one-query redemption, and `uq_invite_pending_email` **partial on the value `pending`** so one live invite per address is enforced by the index rather than a read -- and so an accepted or revoked invite drops out and the person can be invited again. `expired` is derived from the clock, never stored, and there is deliberately no TTL: deleting the row would make a late click indistinguishable from a wrong token. |
+| `roles` | A named set of permissions, assigned to users via `users.role_id`. `owner` is seeded from the whole catalogue and re-synced on every boot, so a new permission reaches it with no migration; `manager` and `viewer` are seeded once and then belong to the operator. `workspace-owner` -- the role every invited person holds -- is **locked** like `owner`, because an operator widening it by hand would widen it for every tenant at once. |
 
 ## Workspaces
+
+**The role an invited person gets is `workspace-owner`, and the choice is load-bearing.**
+`current_workspace` returns your own workspace whenever the path carries no slug or names
+your own, so `workspaces.view` is only spent reaching into *someone else's* -- a tenant needs
+none of it. Owner is wrong (it holds `instance.manage`, one public origin for the whole
+server). Manager is also wrong, and less obviously: it carries `users.view` and `roles.view`,
+and `GET /api/users` returns every user's email, role and last sign-in. Invitees are
+strangers to one another, so that is a cross-tenant disclosure.
+
+So the role is `ALL - _of(_BEYOND_ONE_WORKSPACE) - {"settings.edit"}` = 11 permissions:
+automations and content in full, `analytics.view`, `contacts.view`, `instagram.view`,
+`instagram.manage`, and `settings.view` -- the last of which is easy to miss and load-bearing,
+because the frontend gates the whole Settings page on it and the Meta-app card lives there.
+
+**The trap this creates:** the role is built by subtraction over `MODULES` *and* is locked, so
+a module added in a later release lands in it automatically and is `$set` onto every existing
+tenant on the next boot -- no migration, no symptom. A subset assertion cannot catch that.
+`test_the_workspace_owner_role_is_exactly_these_permissions` is a frozen literal of all 11 for
+exactly this reason; if it fails after you add a module, that is the guard working.
+
+**Invitations need no new permission.** They gate on `users.manage`, because an invite is a
+deferred `POST /api/users` -- same outcome, same power. `ACTIONS` is a closed five-verb
+vocabulary so `contacts.invite` is not expressible anyway, but the real saving is that adding
+no `Module` keeps `ALL` the same size, which keeps the Owner re-sync a no-op on upgrade and
+stops any operator-edited Manager or Viewer role shifting underneath them.
+
 
 One user, the Instagram account they connected, and the `/u/<slug>/` prefix both live under.
 `users.slug` is the tenant key; `services/slugs.py` owns its shape and `URL_PREFIX`.
@@ -160,6 +201,36 @@ is given and pymongo writes `_id` back into it, so a reused dict makes every ins
 first collide.
 
 ## Known gaps
+
+**A disabled admin's pending invites stay live.** Not cascaded, deliberately: the invite's
+authority came from the permission held when it was created, that fact is already in
+`audit_logs`, and cascading would mean rotating staff silently killed a dozen legitimate
+pending invitations. The admin list surfaces `invited_by_active: false` so an Owner can revoke
+them on purpose instead. Clearing them is therefore a manual offboarding step.
+
+**Revoking an invite does nothing to an account already created from it.** That is the thing
+an operator will assume it does. Deactivate the user with `PATCH /api/users/{id}` instead.
+
+**An invitation token reaches the worker as an ARQ argument.** Unavoidable: the mail job
+cannot recover a token from its hash. It therefore sits in a Redis payload for the job's
+lifetime, bounded by Redis being internal to the Compose network and by ARQ's `keep_result`.
+ARQ also logs a job's arguments verbatim, which is why the log redactor carries a `token=`
+pattern -- verified live that an activation URL does not reach the worker log.
+
+**Email is handed off, not delivered.** SMTP reports only whether the first hop accepted a
+message, so a mistyped address sits in `email_log` as `sent` and never arrives. The Settings
+card says so rather than implying confirmation. Bounce handling would mean a transactional
+API with webhooks; that is the upgrade path, not a fix to this transport.
+
+**Gmail owns the `From` header.** It rejects or silently rewrites a sender it does not own,
+so the configured sender is not freely settable — keep it equal to the SMTP username, or use
+a verified alias. Gmail also caps outbound at roughly 500 recipients a day, and hitting that
+cap presents as an authentication failure rather than as a quota error.
+
+**A retried mail job can deliver two copies.** The `email_log` row is claimed before the send
+and marked afterwards, so a crash in between leaves it at `sending` and the retry sends
+again. Mongo is not part of the SMTP transaction and cannot be. Harmless for an invitation,
+which is single-use, but it is at-least-once and not exactly-once.
 
 **Three triggers, one matcher.** A rule carries `trigger`: `comment` (the original and the
 default), `story_reply`, or `dm_keyword`. Rules written before that field existed have no

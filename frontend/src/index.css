@@ -512,6 +512,18 @@ input, textarea, select {
 input:focus, textarea:focus, select:focus {
   outline: none; border-color: var(--dark); box-shadow: 0 0 0 3px rgba(128, 138, 156, 0.18);
 }
+/* A value the server decides, not an input waiting for you. `disabled` would
+   drop it out of the tab order, is announced as unavailable, and often fails
+   contrast -- all of which read as "broken" when the truth is "correct and
+   settled". Read-only stays focusable and copyable, which people want: it is
+   the address they are signing up with. */
+input[readonly] {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--muted);
+  cursor: default;
+}
+input[readonly]:focus { border-color: var(--border-strong); box-shadow: none; }
 input::placeholder, textarea::placeholder { color: var(--faint); }
 
 .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
@@ -1964,3 +1976,68 @@ button.backlog-choice:hover:not(:disabled) {
   color: var(--text);
   white-space: nowrap;
 }
+
+/* ---------- guided setup & invites ----------
+   The wizard is the numbered `.step` vocabulary from the rule editor turned
+   into a one-at-a-time accordion, reusing `.auto-card` from the contacts list
+   for the shell. So the genuinely new pieces are only the header button, the
+   two step-number states, and the selection bar the contacts table grows.
+   ------------------------------------------------------------------------- */
+
+/* The header wraps real prose, so it must override the global
+   `button { white-space: nowrap }`. And the hover has to be written
+   `button.wiz-head:hover` -- the global `button:hover:not(:disabled)` scores
+   (0,2,1) and would otherwise repaint the whole row dark. Same note as
+   `button.auto-head`. */
+button.wiz-head {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 16px 22px;
+  background: var(--surface); color: var(--text);
+  border: none; border-radius: 0;
+  text-align: left; white-space: normal;
+  cursor: pointer;
+}
+button.wiz-head:hover:not(:disabled) { background: var(--surface-alt); }
+.wiz-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+
+/* The plain lime `.step-num` stays for the step you are on -- that is
+   `--accent`'s sanctioned use, a fill behind dark text, never text or a
+   border. Done and not-yet get the status pair and a muted sunken chip. */
+.step-num.done { background: var(--ok-bg); color: var(--ok); }
+.step-num.todo { background: var(--surface-sunken); color: var(--muted); }
+
+/* A measure is genuinely earned here: these are the longest paragraphs in the
+   app, and `.content` only caps at 1900px. */
+.wiz-body { padding: 4px 22px 20px; max-width: 72ch; }
+.wiz-body > * + * { margin-top: 12px; }
+.wiz-body p { line-height: 1.6; color: var(--text); }
+.wiz-body .code-block { max-width: 100%; overflow-x: auto; }
+/* Wide comparison tables scroll inside themselves rather than widening the page. */
+.wiz-table { overflow-x: auto; }
+
+.wiz-progress { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.wiz-progress .meter-track { flex: 1; }
+
+/* Sticky, so it survives scrolling a long group. Deliberately NOT `.card-foot`:
+   its negative margins are calibrated to `.card`'s padding, and the contacts
+   accordion is `.card.auto-list` with `padding: 0` -- and a footer inside the
+   open group would move as groups open and read as scoped to that group when
+   the selection is not. */
+.select-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin-bottom: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.select-bar .count { margin-right: auto; font-weight: 600; }
+
+/* A bare checkbox inherits `input { width: 100% }` from the forms block, so it
+   needs the same escape hatch `.perm-check` uses. A sibling of that class
+   rather than a reuse: a `perm-`prefixed name outside the permission grid
+   would mislead. */
+.pick { display: inline-flex; margin: 0; padding: 6px; border-radius: var(--radius-xs); cursor: pointer; }
+.pick:hover { background: var(--surface-alt); }
+.pick input { width: 16px; height: 16px; margin: 0; accent-color: var(--dark); cursor: pointer; }
+.select-cell { width: 1%; white-space: nowrap; }

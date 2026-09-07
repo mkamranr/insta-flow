@@ -42,6 +42,23 @@ UNGATED = {
     ("GET", "/api/auth/instagram/deauthorize"),
     ("POST", "/api/auth/instagram/data-deletion"),
     ("GET", "/api/auth/instagram/data-deletion"),
+    # Where a freshly invited person lands the moment they choose a password,
+    # so it cannot refuse them -- and `progress` also drives the "finish setup"
+    # banner, which has to be right for every role. Gating it the way
+    # /api/analytics/summary is gated would make a narrow role read as "never
+    # connected" forever. Everything returned is scoped to the caller.
+    ("GET", "/api/onboarding/steps"),
+    ("GET", "/api/onboarding/progress"),
+    ("PUT", "/api/onboarding/progress/{step_id}"),
+    ("POST", "/api/onboarding/dismiss"),
+    # An invited person has no account yet, and creating one is the entire
+    # point -- so neither of these can require being signed in. Both are bound
+    # by a single-use 256-bit token carried in the request BODY (never a URL,
+    # which a reverse proxy logs), throttled per client IP before the database
+    # is touched, and neither reveals anything beyond the address its own token
+    # was issued for.
+    ("POST", "/api/invite/lookup"),
+    ("POST", "/api/invite/accept"),
     # Which workspaces you may open is what the frontend gates *on*, exactly like
     # /api/auth/me. Requiring a permission to learn which workspaces you may
     # enter would be circular. `workspaces.view` decides the WIDTH of the answer
@@ -100,8 +117,11 @@ def test_both_mounts_of_every_route_are_walked():
     above still passes -- it would simply be checking half as much. This is the
     assertion that fails instead.
     """
-    prefixed = [r for r in app.routes if isinstance(r, APIRoute)
-                and r.path.startswith(WORKSPACE_PREFIX) and "/api" in r.path]
+    prefixed = [
+        r
+        for r in app.routes
+        if isinstance(r, APIRoute) and r.path.startswith(WORKSPACE_PREFIX) and "/api" in r.path
+    ]
     assert prefixed, "no workspace-prefixed API routes found; is main.py still double-mounting?"
     walked = {path for _, path, _ in _api_routes()}
     for route in prefixed:
@@ -137,9 +157,7 @@ async def test_signed_out_gets_401_not_403(api, database):
     assert (await api.get("/api/rules")).status_code == 401
 
 
-async def test_a_role_without_the_permission_is_refused(
-    api, database, role_factory, user_factory
-):
+async def test_a_role_without_the_permission_is_refused(api, database, role_factory, user_factory):
     viewer = await role_factory("Read only", ["automations.view"])
     await user_factory("viewer@example.com", viewer)
     await api.post(
@@ -204,9 +222,7 @@ async def test_a_role_change_applies_without_signing_in_again(
     effect on the next request, not at the next login."""
     role = await role_factory("Temporary", ["analytics.view"])
     await user_factory("temp@example.com", role)
-    await api.post(
-        "/api/auth/login", json={"email": "temp@example.com", "password": TEST_PASSWORD}
-    )
+    await api.post("/api/auth/login", json={"email": "temp@example.com", "password": TEST_PASSWORD})
     assert (await api.get("/api/analytics/summary")).status_code == 200
 
     await database["roles"].update_one({"_id": role["_id"]}, {"$set": {"permissions": []}})
@@ -220,9 +236,7 @@ async def test_the_user_is_read_once_per_request(api, database, monkeypatch, adm
     lookups. FastAPI caches dependencies per request; this pins that it does."""
     from app.db.repositories import UsersRepository
 
-    await api.post(
-        "/api/auth/login", json={"email": admin["email"], "password": TEST_PASSWORD}
-    )
+    await api.post("/api/auth/login", json={"email": admin["email"], "password": TEST_PASSWORD})
 
     original = UsersRepository.get
     calls = []

@@ -28,6 +28,57 @@ VALID: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
 URL_PREFIX: Final[str] = "/u"
 
 
+# Slugs nobody should hold, for **legibility rather than safety**. The
+# distinction matters: `URL_PREFIX` above already guarantees no slug can collide
+# with a route, and `/u/api/api/rules` genuinely routes to the API correctly. So
+# this is not a vulnerability fix and must not be documented as one -- it exists
+# because a workspace URL that reads like a system page is one nobody should
+# have to debug at 2am.
+RESERVED: Final[frozenset[str]] = frozenset(
+    {
+        "u",  # /u/u/... is confusing at best
+        "api",
+        "webhooks",
+        "privacy",
+        "data-deletion",
+        "health",
+        "ready",
+        "r",
+        "files",
+        "invite",
+        "login",
+        "logout",
+        "setup",
+        "admin",
+        "assets",
+        "static",
+        "well-known",
+    }
+)
+
+
+def is_acceptable_input(slug: str) -> bool:
+    """Whether a slug somebody *typed* is allowed.
+
+    Deliberately stricter than `is_valid`, and separate from it rather than
+    replacing it. `VALID` permits both a trailing hyphen and a doubled one --
+    `abc-` and `a--b` both match -- which no machine-generated slug ever
+    contains, because `slugify` collapses runs and strips the tail. Tightening
+    `VALID` itself would risk rejecting a slug an existing install already
+    stored and backfilled under the looser rule.
+
+    So: `is_valid` is the invariant every *stored* slug satisfies, and this is
+    the gate on *typed* input. Two predicates, both narrow, neither pretending
+    to be the other.
+    """
+    return (
+        is_valid(slug)
+        and not slug.endswith("-")
+        and "--" not in slug
+        and slug not in RESERVED
+    )
+
+
 def workspace_url(origin: str, slug: str | None) -> str:
     """The base URL a workspace's Meta app is configured against.
 

@@ -11,6 +11,9 @@ import { AutoDmPause } from '../pages/AutoDmPause'
 import { Contacts } from '../pages/Contacts'
 import { Dashboard } from '../pages/Dashboard'
 import { Insights } from '../pages/Insights'
+import { Invite } from '../pages/Invite'
+import { Invites } from '../pages/Invites'
+import { GetStarted } from '../pages/GetStarted'
 import { Instagram } from '../pages/Instagram'
 import { Posts } from '../pages/Posts'
 import { Settings } from '../pages/Settings'
@@ -31,6 +34,13 @@ export function Router() {
   return (
     <BrowserRouter basename={basename}>
       <Routes>
+        {/* Public, and declared outside the authenticated parent on purpose.
+            The page has a real "signed in as somebody else" state, so it can
+            never sit behind an auth gate -- and putting the branch inside
+            `RequireAuth` would make an auth gate read the URL while leaving the
+            catch-all below still claiming `/invite` in the route table.
+            React Router scores a static segment above a splat, so this wins. */}
+        <Route path="invite" element={<Invite />} />
         <Route
           element={
             <RequireAuth>
@@ -41,6 +51,18 @@ export function Router() {
           }
         >
           <Route index element={<Dashboard />} />
+          {/* Ungated, like `index`: this is where a freshly invited person
+              lands the moment they choose a password, so it must never refuse
+              them. Steps needing `instagram.manage` degrade in place. */}
+          <Route path="get-started" element={<GetStarted />} />
+          <Route
+            path="invites"
+            element={
+              <RequirePermission perm="users.view">
+                <Invites />
+              </RequirePermission>
+            }
+          />
           <Route
             path="automations"
             element={

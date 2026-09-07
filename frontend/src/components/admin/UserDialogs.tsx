@@ -1,55 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { createUser, resetUserPassword, type Role, type User } from '../../api/admin'
-import { MIN_PASSWORD } from '../../api/auth'
 import type { ApiError } from '../../api/client'
-
-function PasswordFields({
-  password,
-  confirm,
-  onPassword,
-  onConfirm,
-}: {
-  password: string
-  confirm: string
-  onPassword: (value: string) => void
-  onConfirm: (value: string) => void
-}) {
-  const tooShort = password.length > 0 && password.length < MIN_PASSWORD
-  const mismatch = confirm.length > 0 && confirm !== password
-
-  return (
-    <>
-      <label htmlFor="user-password">Password</label>
-      <input
-        id="user-password"
-        type="password"
-        autoComplete="new-password"
-        value={password}
-        onChange={(e) => onPassword(e.target.value)}
-      />
-      {tooShort && (
-        <p className="err small">At least {MIN_PASSWORD} characters.</p>
-      )}
-      <p className="muted small">
-        A passphrase of a few words is easier to remember and harder to guess.
-      </p>
-
-      <label htmlFor="user-password-confirm">Confirm password</label>
-      <input
-        id="user-password-confirm"
-        type="password"
-        autoComplete="new-password"
-        value={confirm}
-        onChange={(e) => onConfirm(e.target.value)}
-      />
-      {mismatch && <p className="err small">The two passwords do not match.</p>}
-    </>
-  )
-}
-
-const usable = (password: string, confirm: string) =>
-  password.length >= MIN_PASSWORD && password === confirm
+import { PasswordFields, usable } from '../common/PasswordFields'
 
 export function NewUserDialog({ roles, onClose }: { roles: Role[]; onClose: () => void }) {
   const queryClient = useQueryClient()
@@ -109,8 +62,10 @@ export function NewUserDialog({ roles, onClose }: { roles: Role[]; onClose: () =
               ))}
             </select>
             <p className="muted small">
-              Nothing is emailed — pass the password on yourself, and they can change it once
-              they are in.
+              Nothing is emailed. To have Social Flow send an activation link instead, so they
+              choose their own password, use <strong>Invites</strong>. This form stays for an
+              install with no mail configured — pass the password on yourself, and they can
+              change it once they are in.
             </p>
 
             <PasswordFields

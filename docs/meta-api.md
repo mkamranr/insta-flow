@@ -1,6 +1,6 @@
 # Meta Instagram API — Verified Reference
 
-**Verified on: 2026-08-31; §§2, 7, 10 re-verified and corrected 2026-09-02.** Every fact below was read from official Meta documentation on
+**Verified on: 2026-08-31; §§2, 7, 10 re-verified and corrected 2026-09-02; app-creation steps 3-4 and the Tester-role ordering re-verified and corrected 2026-09-07.** Every fact below was read from official Meta documentation on
 that date. Meta changes this platform frequently — before implementing anything not covered
 here, read the official docs and update this file with a new verification date.
 
@@ -861,6 +861,14 @@ registered. `/ready` no longer reports them as missing configuration.
 
 # Meta App Setup — steps for the account owner
 
+> **This walkthrough is also served in-app**, at *Get started*, generated from
+> `backend/app/services/onboarding/steps.py`. That version is written for an invited user who
+> has no shell: it drops the `.env`, `make reload` and `make funnel` steps, replaces the
+> credential step with a paste into Settings, and resolves every copy-out URL from the app so
+> it cannot go stale. **The two need to be kept in step** — if you correct something here,
+> check whether the step module says the same thing, and vice versa.
+
+
 Perform these in the Meta App Dashboard. Everything here is free.
 
 Meta reorganises this dashboard often, and it has two generations of navigation in the wild.
@@ -899,19 +907,46 @@ account* → Business or Creator. Free. A personal account cannot receive commen
 
 ### 3. Create the app
 
-*My Apps → Create App* → name it `Social Flow` → select the use case
-**"Manage messaging and content on Instagram"**.
+*My Apps → Create App*, then four screens:
+
+1. Name it — `Social Flow` is fine.
+2. Asked what you want your app to do: select **Others**.
+3. Under **Looking for something else?**: select **Other**.
+4. App type: **Business**.
+
+**Verified 2026-09-07.** This is the route to take. It puts the app in what Meta calls the
+**old experience**, where you choose from all available permissions, features and products
+yourself rather than being handed a preset — and Instagram is then simply one product you add
+(step 4).
+
+> **The use-case route also still exists** — *Create App* will offer
+> **"Manage messaging and content on Instagram"** — and it works. It is documented in step 4
+> for anyone who took it, but **Other → Business** is the better path: it cannot bind the app
+> to the wrong Instagram setup, which cannot be recovered from without recreating the app.
 
 - A Business portfolio is **optional**. You can defer it.
 - `Required actions` in the sidebar usually asks for business verification. **Standard Access
   does not need it** — ignore it. See §7.
 
-### 4. Open the Instagram API setup page
+### 4. Add the Instagram product
 
-> **This is the step that trips people up.** `API setup with Instagram business login` does
-> **not** exist in the sidebar until you customize the use case. The customize step is what
-> *creates* that menu entry — so if you have not done it, there is no Instagram entry to find,
-> and older guides that say "left sidebar → Instagram" simply do not apply.
+**On the old experience (step 3's route), verified 2026-09-07.** On the app dashboard, scroll
+to **Available products** and click **Set up** next to **Instagram** — the row reading *"Allow
+creators and businesses to manage messages and comments, publish content, track insights,
+hashtags and mentions"*. Within its setup, take **Instagram business login**.
+
+> **⚠ `Facebook Login for Business` is in that same products list.** Setting it up instead is
+> the most expensive wrong turn available here: it is a separate flow with its own redirect
+> URI list, its settings page looks correct, and its redirect-URI validator will report our
+> callback as *valid* while our flow never reads it. See §7a and step 7b. Add **Instagram**
+> and nothing else from that list.
+
+**On the use-case experience**, if you took that route instead:
+
+> `API setup with Instagram business login` does **not** exist in the sidebar until you
+> customize the use case. The customize step is what *creates* that menu entry — so if you
+> have not done it, there is no Instagram entry to find, and older guides that say
+> "left sidebar → Instagram" simply do not apply.
 
 Open your app and look at the left sidebar:
 
@@ -934,14 +969,14 @@ Do you see "API setup with Instagram business login"?
 │         │         │        the sidebar entry now exists → step 5
 │         │         │
 │         │         └─ ONLY "API setup with Facebook login" is offered
-│         │              └─▶ this app is bound to the wrong setup
-│         │                  and cannot be converted → step 3b
+│         │              └─▶ bound to the wrong setup, NOT convertible:
+│         │                  recreate via step 3's Other → Business
 │         │
 │         └─ the Instagram use case is NOT listed
 │              └─▶ "Add use case" → add it → Customize as above
 │
 └─ NO, and there is no "Use cases" either
-     └─▶ the app type does not support Instagram → step 3b
+     └─▶ you are in the old experience — use the products list above
 ```
 
 Required permissions on that page: `instagram_business_basic`,
@@ -951,16 +986,15 @@ three are requested.
 **Seeing `Facebook login for business` in the sidebar is normal.** Meta adds it alongside many
 use cases. It is not the problem, and it does not need to be removed.
 
-### 3b. Fallback — start a clean app
-
-*Out of order deliberately: you only arrive here from step 4's tree.*
-
-Meta's rule: **"You can only add one setup per app. If you want to implement both setups,
-create an app for each setup."** An app already bound to the *Facebook login* setup therefore
-cannot be converted to *Instagram login*.
-
-Do not fight it. Create a new app from step 3, choosing the Instagram business login setup at
-the customize step. Apps are free and take about a minute. Leave the old app alone.
+> **If the use-case route offered you only `API setup with Facebook login`**, that app is
+> bound to the wrong setup and **cannot be converted** — Meta's rule is *"You can only add one
+> setup per app. If you want to implement both setups, create an app for each setup."* Do not
+> fight it: create a new app following step 3 (**Other → Business**), which lands in the old
+> experience where Instagram is simply one of the products you add, with no use case to bind
+> the app to anything. Apps are free and take about a minute. Leave the old one alone.
+>
+> This was step 3b until 2026-09-07; it is folded in here because the route it recovered from
+> is no longer the one this document recommends.
 
 ### 5. Copy the credentials
 
@@ -1006,7 +1040,7 @@ Live mode requires **App Settings → Basic** to be complete first:
 
 | Field | Notes |
 | --- | --- |
-| Privacy Policy URL | `https://<your-host>/api/auth/instagram/data-deletion` serves a page, or host your own |
+| Privacy Policy URL | `https://<your-host>/privacy` serves a page, or host your own |
 | Terms of Service URL | Any reachable page you control |
 | App Icon | 1024×1024 PNG — `frontend/public/icon-1024.png` is generated at the right size |
 | Data Deletion Instructions URL | `https://<your-host>/api/auth/instagram/data-deletion` |
@@ -1065,7 +1099,12 @@ On the **API setup with Instagram business login** page → *Set up Instagram bu
 | --- | --- |
 | Valid OAuth Redirect URI | `https://your-machine.your-tailnet.ts.net/api/auth/instagram/callback` |
 | Deauthorize callback URL | `https://your-machine.your-tailnet.ts.net/api/auth/instagram/deauthorize` |
-| Data deletion request URL | `https://your-machine.your-tailnet.ts.net/api/auth/instagram/data-deletion` |
+| Data deletion request URL | `https://your-machine.your-tailnet.ts.net/data-deletion` |
+
+> All three are produced by `services/meta/credentials.urls_for` and shown on the Settings
+> page. **The deauthorize callback was missing from that set until the guided setup was
+> built**, so an app configured by copying from the Settings page before then has it blank.
+> Take the values from the app, not from this table — the app knows the workspace prefix.
 
 Must match byte-for-byte, including the absence of a trailing slash. Run `make tunnel-status`
 to print both URLs ready to copy, rather than typing them out.
@@ -1145,6 +1184,12 @@ already be running — that is why this step follows Milestone 3.
 Two halves. **Both are required**, and missing the second is a common cause of OAuth failing
 for an account that looks correctly configured.
 
+> **Do this before clicking `Add account`** in the Instagram API setup page's *Generate access
+> tokens* section. That page says so itself, in one line of grey text — *"before proceeding,
+> make sure to assign the Instagram Tester role to the account in the Roles tab"* — which is
+> very easy to read past. The in-app walkthrough orders it that way; this document keeps Meta's
+> own numbering, so here it appears later than you will actually need it. Verified 2026-09-07.
+
 **9a — invite, from the Meta side.** *App roles → Roles* → add your Instagram account as an
 **Instagram Tester**.
 
@@ -1186,8 +1231,9 @@ other symptom looks identical.
 
 | Symptom | Cause |
 | --- | --- |
-| No `Instagram` / `API setup…` entry in the sidebar | Use case not customized yet — step 4 |
-| Only *API setup with Facebook login* is offered | App bound to the wrong setup; one setup per app — step 3b |
+| No `Instagram` / `API setup…` entry in the sidebar | On the use-case route: not customized yet — step 4. On the old experience there is no sidebar entry at all; Instagram is under *Available products* |
+| Only *API setup with Facebook login* is offered | Use-case route; one setup per app and not convertible. Recreate via step 3's Other → Business |
+| Set up `Facebook Login for Business` by mistake | It sits directly below Instagram in the products list. Add Instagram instead; nothing saved under Facebook Login is read — §7a |
 | `Required actions` demands business verification | Not needed for Standard Access — ignore |
 | OAuth fails immediately | Facebook App ID used instead of Instagram App ID — step 5 |
 | `Invalid redirect_uri` on Connect | OAuth redirect URI not registered — step 7, not step 8 |

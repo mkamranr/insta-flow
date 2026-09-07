@@ -21,8 +21,10 @@ from app.db.repositories import (
     ClickEventsRepository,
     CommentsRepository,
     ContactsRepository,
+    EmailLogRepository,
     ExecutionsRepository,
     InstagramAccountsRepository,
+    InvitesRepository,
     LinkClicksRepository,
     MediaRepository,
     MetaAppsRepository,
@@ -33,7 +35,13 @@ from app.db.repositories import (
     UsersRepository,
     WebhookEventsRepository,
 )
-from app.errors import AuthenticationError, AuthorizationError, NotFoundError
+from app.db.repositories.base import to_object_id
+from app.errors import (
+    AuthenticationError,
+    AuthorizationError,
+    NotFoundError,
+    ValidationError,
+)
 from app.permissions import is_valid
 from app.services.geoip import GeoIpReader
 from app.services.meta.credentials import (
@@ -86,6 +94,14 @@ def account_snapshots_repo(db: DbDep) -> AccountSnapshotsRepository:
 
 def app_settings_repo(db: DbDep) -> AppSettingsRepository:
     return AppSettingsRepository(db)
+
+
+def email_log_repo(db: DbDep) -> EmailLogRepository:
+    return EmailLogRepository(db)
+
+
+def invites_repo(db: DbDep) -> InvitesRepository:
+    return InvitesRepository(db)
 
 
 def click_events_repo(db: DbDep) -> ClickEventsRepository:
@@ -143,6 +159,8 @@ StoriesRepo = Annotated[StoriesRepository, Depends(stories_repo)]
 UpcomingRepo = Annotated[UpcomingPostsRepository, Depends(upcoming_repo)]
 SnapshotsRepo = Annotated[AccountSnapshotsRepository, Depends(account_snapshots_repo)]
 AppSettingsRepo = Annotated[AppSettingsRepository, Depends(app_settings_repo)]
+EmailLogRepo = Annotated[EmailLogRepository, Depends(email_log_repo)]
+InvitesRepo = Annotated[InvitesRepository, Depends(invites_repo)]
 ClickEventsRepo = Annotated[ClickEventsRepository, Depends(click_events_repo)]
 GeoIpDep = Annotated[GeoIpReader, Depends(geoip_reader)]
 RolesRepo = Annotated[RolesRepository, Depends(roles_repo)]
@@ -269,6 +287,32 @@ def require_any(*permissions: str) -> Callable[[Grant], Awaitable[None]]:
 
     dependency.__permissions__ = wanted  # type: ignore[attr-defined]
     return dependency
+
+
+async def role_you_may_grant(roles: Any, role_id: str, grant: Grant) -> dict[str, Any]:
+    """Load a role you are allowed to hand to somebody else.
+
+    You may grant only a role whose permissions are a subset of your own.
+    Without this, `users.manage` without `roles.manage` would be enough to hand
+    someone the Owner role and take the deployment -- the horizontal escalation
+    an otherwise correct permission grid does not close.
+
+    Lives here rather than in `api/users.py`, where it started, because
+    invitations grant a role too: an invite is a deferred user creation, and the
+    same rule has to hold at both doors.
+    """
+    try:
+        wanted = to_object_id(role_id)
+    except ValueError as exc:
+        raise ValidationError("role_id is not a valid id.") from exc
+
+    role = await roles.get(wanted)
+    if role is None:
+        raise ValidationError("That role does not exist.")
+    held = frozenset(str(p) for p in role.get("permissions", ()))
+    if not held <= grant.permissions:
+        raise AuthorizationError("You cannot grant access you do not have yourself.")
+    return role
 
 
 # --- workspaces -------------------------------------------------------------

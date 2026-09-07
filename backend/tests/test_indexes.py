@@ -13,7 +13,7 @@ def index_named(collection: str, name: str) -> dict:
 
 
 def test_every_specified_collection_is_present():
-    assert len(COLLECTIONS) == 18
+    assert len(COLLECTIONS) == 20
     assert set(INDEXES) <= set(COLLECTIONS)
     assert "account_snapshots" in COLLECTIONS
     assert "stories" in COLLECTIONS
@@ -235,3 +235,49 @@ def test_awaiting_email_lookups_are_indexed():
     """`find_awaiting_email` runs on every inbound DM and had no index at all."""
     doc = index_named("executions", "ix_account_user_created")
     assert list(doc["key"]) == ["instagram_account_id", "instagram_user_id", "created_at"]
+
+
+def test_the_pending_invite_index_is_unique_and_partial_on_the_value():
+    """One live invite per address, enforced by the index rather than a read.
+
+    Partial on the *value* `pending`, not on `$type`: an accepted or revoked
+    invite has to drop out of the index so the same person can be invited again
+    later. A plain unique index would block that forever, and a `$type` filter
+    would match every row regardless of status and do the same.
+    """
+    index = index_named("invites", "uq_invite_pending_email")
+    assert index["unique"] is True
+    assert index["partialFilterExpression"] == {"status": "pending"}
+
+
+def test_the_invite_token_index_is_unique_and_deliberately_not_partial():
+    """Documenting an absence, because the loudest trap in this file is a
+    *missing* partial filter and the next reader will assume one belongs here.
+
+    `uq_user_slug` needs one because it is created before its backfill, so
+    slug-less rows would all collide on null. Nothing analogous applies to
+    `token_hash`: the repository writes it on every insert from the first one,
+    so there is no population of nulls to collide.
+    """
+    index = index_named("invites", "uq_invite_token")
+    assert index["unique"] is True
+    assert "partialFilterExpression" not in index
+
+
+def test_there_is_no_ttl_index_on_invites():
+    """Pinned because a TTL is the first thing a reviewer suggests here.
+
+    Deleting an expired invite would make every late click a 404 that cannot be
+    told apart from a wrong token -- destroying the audit trail and the only
+    error message the recipient can act on ("it expired, ask for another").
+    Expiry is evaluated at read time against `expires_at` instead.
+    """
+    for model in INDEXES["invites"]:
+        assert "expireAfterSeconds" not in model.document, model.document["name"]
+
+
+def test_the_email_log_message_id_is_unique():
+    """The idempotency handle: a redelivered job must not open a second row."""
+    index = index_named("email_log", "uq_message_id")
+    assert index["unique"] is True
+    assert "partialFilterExpression" not in index

@@ -68,6 +68,11 @@ export interface Contact {
   /** Reconstructed by the startup backfill rather than recorded at capture time.
    *  Shown as such: nothing on an execution states that it produced the email. */
   backfilled: boolean
+  /** Whether this address already has an account or a live invitation.
+   *  Computed into this payload rather than fetched separately, because both
+   *  `/api/invites` and `/api/users` need permissions a `contacts.view`-only
+   *  role does not hold. Optional so the frontend degrades if it is absent. */
+  invite_state?: 'none' | 'invited' | 'accepted'
 }
 
 /**

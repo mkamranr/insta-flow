@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiDelete, apiGet, apiGetInstance, apiPost, apiPut } from '../api/client'
+import { Link } from 'react-router-dom'
+import { getMe } from '../api/auth'
+import { clearMetaApp, getMetaApp } from '../api/settings'
+import { CopyField } from '../components/common/CopyField'
+import { MetaAppCredentials } from '../components/settings/MetaAppCredentials'
+import { VerifyTokenField } from '../components/settings/VerifyTokenField'
 import { usePermissions } from '../hooks/usePermissions'
 import type { ReadyResponse } from '../types/health'
 
@@ -23,6 +29,7 @@ interface DisclosureSettings {
 
 function DisclosureCard() {
   const queryClient = useQueryClient()
+  const { can } = usePermissions()
   const { data } = useQuery({
     queryKey: ['disclosure'],
     queryFn: () => apiGet<DisclosureSettings>('/api/settings/disclosure'),
@@ -58,11 +65,16 @@ function DisclosureCard() {
         automation. The obligation is yours, so the wording is too — but silence is the wrong
         default, so this starts switched on.
       </p>
+      <p className="muted small">
+        <strong>One line for the whole server.</strong> Every workspace&rsquo;s automated
+        replies use it, so it is an owner-only setting rather than a per-account one.
+      </p>
 
       <label className="inline">
         <input
           type="checkbox"
           checked={current.enabled}
+          disabled={!can('instance.manage')}
           onChange={(e) => edit({ enabled: e.target.checked })}
         />
         Add a disclosure line to automated replies
@@ -73,7 +85,7 @@ function DisclosureCard() {
         id="disclosure-text"
         maxLength={200}
         value={current.text}
-        disabled={!current.enabled}
+        disabled={!current.enabled || !can('instance.manage')}
         placeholder="Automated reply."
         onChange={(e) => edit({ text: e.target.value })}
       />
@@ -107,96 +119,18 @@ function DisclosureCard() {
   )
 }
 
-interface MetaAppState {
-  configured: boolean
-  source: 'workspace' | 'instance' | 'unknown'
-  app_id: string
-  secret_set: boolean
-  verify_token: string
-  /** What to register in your own Meta app. Always workspace-prefixed. */
-  urls: {
-    webhook_url: string
-    redirect_uri: string
-    privacy_url: string
-    data_deletion_url: string
-  }
-  /** What is in force right now — differs only while on the instance-wide app. */
-  active_urls: { webhook_url: string }
-  workspace: { slug: string | null; is_own: boolean }
-  using_instance_app: boolean
-  has_own_row: boolean
-  note?: string
-}
-
-/** Copy-to-clipboard for a value that has to be pasted into Meta's dashboard. */
-function CopyField({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <div className="copy-field">
-      <div className="copy-field-head">
-        <span className="small muted">{label}</span>
-        <button
-          className="link"
-          onClick={() => {
-            navigator.clipboard?.writeText(value)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          }}
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <code className="copy-field-value">{value}</code>
-      {hint && <div className="small faint">{hint}</div>}
-    </div>
-  )
-}
-
 function MetaAppCard() {
   const queryClient = useQueryClient()
-  const { data } = useQuery({
-    queryKey: ['meta-app'],
-    queryFn: () => apiGet<MetaAppState>('/api/settings/meta-app'),
-  })
-  const [appId, setAppId] = useState<string | null>(null)
-  const [appSecret, setAppSecret] = useState('')
-  const [showToken, setShowToken] = useState(false)
+  const { data } = useQuery({ queryKey: ['meta-app'], queryFn: getMetaApp })
   const [note, setNote] = useState<string | null>(null)
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['meta-app'] })
-  const currentId = appId ?? data?.app_id ?? ''
-
-  const save = useMutation({
-    mutationFn: () =>
-      apiPut<MetaAppState>('/api/settings/meta-app', {
-        app_id: currentId,
-        app_secret: appSecret,
-      }),
-    onSuccess: () => {
-      setAppSecret('')
-      setAppId(null)
-      setNote('Saved. Paste the URLs below into your Meta app, then verify the webhook.')
-      invalidate()
-    },
-  })
-  const regenerate = useMutation({
-    mutationFn: () => apiPost<MetaAppState>('/api/settings/meta-app/verify-token'),
-    onSuccess: (result) => {
-      setShowToken(true)
-      setNote(result?.note ?? 'A new verify token was generated.')
-      invalidate()
-    },
-  })
   const clear = useMutation({
-    mutationFn: () => apiDelete('/api/settings/meta-app'),
+    mutationFn: clearMetaApp,
     onSuccess: () => {
       setNote('Removed. This workspace falls back to the instance-wide Meta app.')
-      invalidate()
+      queryClient.invalidateQueries({ queryKey: ['meta-app'] })
     },
   })
-
-  const busy = save.isPending || regenerate.isPending || clear.isPending
-  const failure = save.error ?? regenerate.error ?? clear.error
 
   return (
     <div className="card">
@@ -206,6 +140,10 @@ function MetaAppCard() {
         Review: automating <em>your own</em> Instagram account needs only Live mode, while
         reaching someone else&rsquo;s through your app is the case Meta requires Advanced
         Access, App Review and Business Verification for.
+      </p>
+      <p className="muted small">
+        New to this? The <Link to="/get-started">guided setup</Link> walks through creating
+        the app in Meta&rsquo;s dashboard step by step.
       </p>
 
       {data?.using_instance_app && (
@@ -222,60 +160,18 @@ function MetaAppCard() {
         </div>
       )}
 
-      <label htmlFor="meta-app-id">App ID</label>
-      <input
-        id="meta-app-id"
-        value={currentId}
-        placeholder="From Instagram → API setup with Instagram business login"
-        onChange={(e) => setAppId(e.target.value)}
-      />
+      <MetaAppCredentials />
 
-      <label htmlFor="meta-app-secret">App Secret</label>
-      <input
-        id="meta-app-secret"
-        type="password"
-        value={appSecret}
-        placeholder={data?.secret_set ? 'Stored — type to replace' : 'Required'}
-        onChange={(e) => setAppSecret(e.target.value)}
-      />
-      <p className="muted small">
-        Encrypted before it is stored and never sent back to this page. Leave it blank to
-        correct the App ID without retyping the secret.
-      </p>
-
-      <div className="row">
-        <button disabled={!currentId || busy} onClick={() => save.mutate()}>
-          {save.isPending ? 'Saving…' : 'Save app'}
-        </button>
-        {data?.has_own_row && (
-          <button className="secondary" disabled={busy} onClick={() => clear.mutate()}>
+      {data?.has_own_row && (
+        <div className="row">
+          <button className="secondary" disabled={clear.isPending} onClick={() => clear.mutate()}>
             Remove
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       <h3>Webhook verify token</h3>
-      <p className="muted small">
-        Generated here, pasted into Meta&rsquo;s webhook configuration. Regenerating invalidates
-        the old one, so the subscription has to be verified again.
-      </p>
-      <div className="row">
-        <code className="copy-field-value">
-          {showToken ? data?.verify_token || '—' : '••••••••••••••••••••'}
-        </code>
-        <button className="link" onClick={() => setShowToken((v) => !v)}>
-          {showToken ? 'Hide' : 'Reveal'}
-        </button>
-        <button
-          className="link"
-          onClick={() => data?.verify_token && navigator.clipboard?.writeText(data.verify_token)}
-        >
-          Copy
-        </button>
-        <button className="secondary" disabled={busy} onClick={() => regenerate.mutate()}>
-          Regenerate
-        </button>
-      </div>
+      <VerifyTokenField />
 
       <h3>Paste these into your Meta app</h3>
       <p className="muted small">
@@ -292,6 +188,11 @@ function MetaAppCard() {
         <>
           <CopyField label="Webhook callback URL" value={data.urls.webhook_url} />
           <CopyField label="Valid OAuth Redirect URI" value={data.urls.redirect_uri} />
+          <CopyField
+            label="Deauthorize callback URL"
+            value={data.urls.deauthorize_url}
+            hint="Same panel as the redirect URI. Easy to leave blank — Meta does not insist."
+          />
           <CopyField label="Privacy Policy URL" value={data.urls.privacy_url} />
           <CopyField
             label="Data Deletion Instructions URL"
@@ -301,11 +202,12 @@ function MetaAppCard() {
         </>
       )}
 
-      {failure && <p className="err small">{(failure as Error).message}</p>}
-      {note && !failure && <p className="ok small">{note}</p>}
+      {clear.error && <p className="err small">{(clear.error as Error).message}</p>}
+      {note && !clear.error && <p className="ok small">{note}</p>}
     </div>
   )
 }
+
 
 interface InstanceOrigin {
   origin: string
@@ -522,6 +424,315 @@ function GeoIpCard() {
   )
 }
 
+interface EmailLogRow {
+  message_id: string
+  to_address: string
+  subject: string
+  status: string
+  error: string | null
+  smtp_code: number | null
+  created_at: string | null
+}
+
+interface EmailSettings {
+  configured: boolean
+  host: string
+  port: number
+  security: 'starttls' | 'ssl' | 'none'
+  username: string
+  from_address: string
+  from_name: string
+  password_set: boolean
+  auth_refused_at: string | null
+  auth_error: string
+  dry_run: boolean
+  recent: EmailLogRow[]
+}
+
+/** The six fields that round-trip. The password is deliberately not among them. */
+type EmailDraft = Pick<
+  EmailSettings,
+  'host' | 'port' | 'security' | 'username' | 'from_address' | 'from_name'
+>
+
+const EMAIL_DEFAULTS: EmailDraft = {
+  host: '',
+  port: 587,
+  security: 'starttls',
+  username: '',
+  from_address: '',
+  from_name: '',
+}
+
+function statusClass(status: string): string {
+  if (status === 'sent') return 'ok'
+  if (status === 'failed') return 'err'
+  return 'muted'
+}
+
+function EmailCard() {
+  const queryClient = useQueryClient()
+  const { can } = usePermissions()
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: getMe, retry: false })
+  const [watching, setWatching] = useState(false)
+  const { data } = useQuery({
+    queryKey: ['email'],
+    queryFn: () => apiGet<EmailSettings>('/api/settings/email'),
+    // Bounded, and only after a test send: the send is asynchronous, so the
+    // immediate response can only say "queued" and the result arrives seconds
+    // later. Polling forever would be a request every few seconds for a page
+    // nobody is watching.
+    refetchInterval: watching ? 2_000 : false,
+  })
+
+  // `draft ?? data` for everything that round-trips, plus one separate piece of
+  // state for the password. GeoIpCard uses independent fields throughout, which
+  // is right for a write-only secret -- a draft-shaped form would need `data`
+  // to carry the password, which it must not -- but it only gets away with that
+  // because it has two fields. With six, fixing the sender name would mean
+  // retyping the host. So: a draft for the six, and one field that is
+  // structurally incapable of holding a server value. No effect seeds either.
+  const [draft, setDraft] = useState<EmailDraft | null>(null)
+  const [password, setPassword] = useState('')
+  const [note, setNote] = useState<string | null>(null)
+
+  const current: EmailDraft = draft ?? (data ? {
+    host: data.host,
+    port: data.port,
+    security: data.security,
+    username: data.username,
+    from_address: data.from_address,
+    from_name: data.from_name,
+  } : EMAIL_DEFAULTS)
+  const dirty = draft !== null || password !== ''
+
+  const edit = (patch: Partial<EmailDraft>) => {
+    setNote(null)
+    setDraft({ ...current, ...patch })
+  }
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['email'] })
+
+  const save = useMutation({
+    mutationFn: () => apiPut('/api/settings/email', { ...current, password }),
+    onSuccess: () => {
+      setDraft(null)
+      setPassword('')
+      setNote('Saved.')
+      invalidate()
+    },
+  })
+  const [testTo, setTestTo] = useState('')
+  const sendTest = useMutation({
+    mutationFn: () => apiPost('/api/settings/email/test', { to: testTo || me?.email }),
+    onSuccess: () => {
+      setNote('Queued. The result appears below within a few seconds.')
+      setWatching(true)
+      window.setTimeout(() => setWatching(false), 20_000)
+      invalidate()
+    },
+  })
+  const clear = useMutation({
+    mutationFn: () => apiDelete('/api/settings/email'),
+    onSuccess: () => {
+      setDraft(null)
+      setPassword('')
+      setNote('Mail settings removed.')
+      invalidate()
+    },
+  })
+
+  const busy = save.isPending || sendTest.isPending || clear.isPending
+  const failure = save.error ?? sendTest.error ?? clear.error
+  const editable = can('instance.manage')
+
+  return (
+    <div className="card">
+      <h2>Email</h2>
+      <p className="muted small">
+        Used to send invitations. One account sends for the whole server. With a Gmail
+        address this wants an <strong>App Password</strong> — a 16-character code from
+        Google, not your normal password — which needs two-step verification switched on.
+        Gmail also rewrites a sender address it does not own, so keep{' '}
+        <em>Send from</em> the same as the username.
+      </p>
+
+      <dl className="kv">
+        <Row
+          label="Status"
+          value={
+            data?.configured
+              ? <span className="ok">Configured</span>
+              : <span className="muted">Not set up</span>
+          }
+        />
+        <Row
+          label="Sending"
+          value={<span className="ok">Live</span>}
+          hint={
+            data?.dry_run
+              ? 'Email is not affected by DRY_RUN. Messages really are sent, even though Meta replies are only recorded.'
+              : undefined
+          }
+        />
+      </dl>
+
+      {data?.auth_refused_at && (
+        <p className="err small">
+          The mail server refused these credentials on{' '}
+          {new Date(data.auth_refused_at).toLocaleString()}. The App Password is probably no
+          longer valid — enter a new one.
+        </p>
+      )}
+
+      {editable && (
+        <>
+          <label htmlFor="smtp-host">SMTP server</label>
+          <input
+            id="smtp-host"
+            value={current.host}
+            placeholder="smtp.gmail.com"
+            onChange={(e) => edit({ host: e.target.value })}
+          />
+
+          <label htmlFor="smtp-port">Port</label>
+          <input
+            id="smtp-port"
+            type="number"
+            value={current.port}
+            onChange={(e) => edit({ port: Number(e.target.value) })}
+          />
+
+          <label htmlFor="smtp-security">Connection security</label>
+          <select
+            id="smtp-security"
+            value={current.security}
+            onChange={(e) => edit({ security: e.target.value as EmailDraft['security'] })}
+          >
+            <option value="starttls">STARTTLS (port 587)</option>
+            <option value="ssl">SSL/TLS (port 465)</option>
+            <option value="none">None</option>
+          </select>
+
+          <label htmlFor="smtp-username">Username</label>
+          <input
+            id="smtp-username"
+            value={current.username}
+            placeholder="you@gmail.com"
+            onChange={(e) => edit({ username: e.target.value })}
+          />
+
+          <label htmlFor="smtp-password">Password</label>
+          <input
+            id="smtp-password"
+            type="password"
+            value={password}
+            placeholder={data?.password_set ? 'Stored — type to replace' : 'App Password'}
+            onChange={(e) => {
+              setNote(null)
+              setPassword(e.target.value)
+            }}
+          />
+          <p className="muted small">
+            Encrypted before it is stored and never returned by the API. Leave it blank to
+            keep the stored one. It is not checked when you save — use{' '}
+            <em>Send test email</em> for that, which exercises the same path a real
+            invitation takes.
+          </p>
+
+          <label htmlFor="smtp-from">Send from</label>
+          <input
+            id="smtp-from"
+            type="email"
+            value={current.from_address}
+            placeholder="you@gmail.com"
+            onChange={(e) => edit({ from_address: e.target.value })}
+          />
+
+          <label htmlFor="smtp-from-name">Sender name</label>
+          <input
+            id="smtp-from-name"
+            value={current.from_name}
+            placeholder="Social Flow"
+            onChange={(e) => edit({ from_name: e.target.value })}
+          />
+
+          <div className="row">
+            <button
+              disabled={!dirty || busy || !current.host.trim() || !current.from_address.trim()}
+              onClick={() => {
+                setNote(null)
+                save.mutate()
+              }}
+            >
+              {save.isPending ? 'Saving…' : 'Save'}
+            </button>
+            {data?.configured && (
+              <button className="danger" disabled={busy} onClick={() => clear.mutate()}>
+                Remove
+              </button>
+            )}
+          </div>
+
+          {data?.configured && (
+            <>
+              <label htmlFor="smtp-test">Send a test email to</label>
+              <div className="row">
+                <input
+                  id="smtp-test"
+                  type="email"
+                  value={testTo}
+                  placeholder={me?.email ?? 'you@example.com'}
+                  onChange={(e) => setTestTo(e.target.value)}
+                />
+                <button className="secondary" disabled={busy} onClick={() => sendTest.mutate()}>
+                  {sendTest.isPending ? 'Queueing…' : 'Send test email'}
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {failure && <p className="err small">{(failure as Error).message}</p>}
+      {note && !failure && <p className="ok small">{note}</p>}
+
+      {data?.recent && data.recent.length > 0 && (
+        <>
+          <h3>Recent messages</h3>
+          <p className="muted small">
+            &ldquo;Sent&rdquo; means the mail server accepted it, which is not the same as
+            it arriving — check the spam folder before anything else.
+          </p>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>To</th>
+                <th>Status</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recent.map((row) => (
+                <tr key={row.message_id}>
+                  <td>{row.created_at ? new Date(row.created_at).toLocaleString() : '—'}</td>
+                  <td className="clamp">{row.to_address}</td>
+                  <td>
+                    <span className={statusClass(row.status)}>{row.status}</span>
+                  </td>
+                  <td className="clamp">
+                    {row.error ?? (row.smtp_code ? `SMTP ${row.smtp_code}` : '—')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
 export function Settings() {
   const { data } = useQuery({
     queryKey: ['ready'],
@@ -568,7 +779,7 @@ export function Settings() {
       {can('instagram.manage') && <MetaAppCard />}
       {can('instance.view') && <InstanceOriginCard />}
 
-      <DisclosureCard />
+      {can('instance.view') && <DisclosureCard />}
 
       <div className="card">
         <h2>Services</h2>
@@ -600,6 +811,7 @@ export function Settings() {
       </div>
 
       {can('instance.view') && <GeoIpCard />}
+      {can('instance.view') && <EmailCard />}
 
       <div className="card">
         <h2>Useful commands</h2>

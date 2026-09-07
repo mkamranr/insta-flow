@@ -43,17 +43,25 @@ class UsersRepository(BaseRepository[Any]):
         *,
         role_id: Any,
         is_bootstrap: bool = False,
+        slug: str | None = None,
     ) -> Document:
         """Create a user. `role_id` is required and keyword-only, deliberately.
 
         A default hidden in here is how an accidental admin gets minted. Making it
         required means the type checker names every call site instead.
+
+        `slug` is for the one caller that has a slug the *user* chose -- accepting
+        an invitation. Everywhere else it stays None and is derived from the
+        email, so all the existing call sites behave exactly as before. Note
+        `claim_slug` is only advisory either way: `uq_user_slug` decides, and a
+        caller-supplied slug that collides raises `DuplicateKeyError` for the
+        route to turn into "that address was just taken".
         """
         now = utcnow()
         email = email.strip().lower()
         document = {
             "email": email,
-            "slug": await self.claim_slug(email),
+            "slug": slug or await self.claim_slug(email),
             "password_hash": password_hash,
             "is_active": True,
             "role_id": to_object_id(role_id),
@@ -138,3 +146,49 @@ class UsersRepository(BaseRepository[Any]):
             # in the upgrade's logs.
             logger.warning("users_backfilled_to_owner", extra={"count": result.modified_count})
         return int(result.modified_count)
+
+    async def set_onboarding_step(self, user_id: Any, step_id: str, done: bool) -> Document:
+        """Record one step of the guided setup as done or not done.
+
+        Kept on the user document rather than in a collection of its own: it is
+        a handful of booleans per person, and `current_user` has already loaded
+        this document on every request, so a read costs nothing extra.
+
+        Dotted `$set` so two steps ticked from two tabs cannot clobber each
+        other by writing the whole map back.
+        """
+        updated = await self.collection.find_one_and_update(
+            {"_id": to_object_id(user_id)},
+            {
+                "$set": {
+                    f"onboarding.steps.{step_id}": {"done": bool(done), "at": utcnow()},
+                    "updated_at": utcnow(),
+                }
+            },
+            return_document=True,
+        )
+        return updated or {}
+
+    async def dismiss_onboarding(self, user_id: Any) -> Document:
+        """Hide the setup banner. Deliberately permanent, and deliberately not
+        the same thing as finishing: the banner clears by itself once an
+        Instagram account is connected."""
+        updated = await self.collection.find_one_and_update(
+            {"_id": to_object_id(user_id)},
+            {"$set": {"onboarding.dismissed": True, "updated_at": utcnow()}},
+            return_document=True,
+        )
+        return updated or {}
+
+    async def emails_in(self, emails: list[str]) -> set[str]:
+        """Which of these addresses already have an account.
+
+        One query for a list, rather than one per address: the Contacts page
+        asks about every lead it is about to show.
+        """
+        if not emails:
+            return set()
+        cursor = self.collection.find(
+            {"email": {"$in": [e.strip().lower() for e in emails]}}, {"email": 1}
+        )
+        return {str(row["email"]) async for row in cursor}

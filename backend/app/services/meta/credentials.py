@@ -72,6 +72,10 @@ class MetaCredentials:
     def data_deletion_url(self) -> str:
         return f"{self.base_url}/data-deletion"
 
+    @property
+    def deauthorize_url(self) -> str:
+        return f"{self.base_url}/api/auth/instagram/deauthorize"
+
     def public_urls(self) -> dict[str, str]:
         """The URLs the app *currently acting* is configured with."""
         return urls_for(self.base_url)
@@ -93,6 +97,13 @@ def urls_for(base_url: str) -> dict[str, str]:
     return {
         "webhook_url": f"{base_url}/webhooks/instagram",
         "redirect_uri": f"{base_url}/api/auth/instagram/callback",
+        # `Set up Instagram business login` on Meta's dashboard has THREE fields,
+        # not two: alongside the redirect URI it wants a deauthorize callback and
+        # a data deletion request URL. This one was missing from the set for the
+        # whole life of the Settings page, so anybody who configured their app by
+        # copying from the dashboard left it blank -- and the endpoint has existed
+        # at `api/instagram.py` all along. See docs/meta-api.md step 7.
+        "deauthorize_url": f"{base_url}/api/auth/instagram/deauthorize",
         "privacy_url": f"{base_url}/privacy",
         "data_deletion_url": f"{base_url}/data-deletion",
     }

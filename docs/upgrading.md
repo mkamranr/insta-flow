@@ -155,6 +155,95 @@ and for some releases that matters — see the warning under this release's note
 
 # Release notes
 
+## Invite-only signup
+
+Adds invitations, a guided Meta-app setup, and a fourth seeded role. Additive: nothing
+existing changes behaviour.
+
+```bash
+git pull
+make build
+make reload          # required: the Caddyfile changed
+```
+
+**`make reload`, not `docker compose up -d`.** The Caddyfile gained one line -- an invitation
+token is redacted from the access log the same way the webhook verify token already is -- and
+Caddy reads that file into memory at startup, so `up -d` sees an unchanged container spec and
+silently keeps the old logging.
+
+On first boot: an `invites` collection with four indexes, and a `workspace-owner` role seeded
+alongside the existing three. **No existing user is repointed at it**, and `ALL` is unchanged
+in size because no permission module was added -- so the Owner re-sync stays a no-op and any
+Manager or Viewer role you have edited is untouched.
+
+Verify:
+
+```bash
+# The role, with exactly 11 permissions and locked
+docker compose exec mongodb mongosh --quiet instaflow --eval \
+  'db.roles.find({slug:"workspace-owner"},{permissions:1,is_system:1}).toArray()'
+
+# The pending-invite index must be partial on the VALUE, or an address can
+# never be re-invited after a revoke
+docker compose exec mongodb mongosh --quiet instaflow --eval \
+  'db.invites.getIndexes().filter(i => i.name == "uq_invite_pending_email")'
+
+# The token is redacted in the edge log
+curl -s "http://127.0.0.1:8090/invite?token=probe" > /dev/null
+docker compose logs caddy --since 1m | grep -o '"uri":"/invite[^"]*"'
+# Expect: "uri":"/invite?token=REDACTED"
+```
+
+Then send yourself one from **Invites**. Sending needs *Settings → Email*; without it the
+invitation is still created and the page offers **Copy link**, which is also the way to
+exercise the flow before mail is configured.
+
+Two things worth knowing before inviting anybody real. An invited person gets **their own
+workspace and their own Meta app** -- they are not joining yours, and they see nothing of it;
+that separation is what keeps this install out of Meta App Review. And revoking an invitation
+does nothing to an account already created from it: deactivate the user instead.
+
+## Outbound email
+
+Adds the ability to send mail, which nothing in the product did before. Groundwork for
+invitations; on its own it gives you a "Send test email" button and an audit of what was sent.
+
+**This release adds a dependency**, so a plain `docker compose up -d` is not enough:
+
+```bash
+git pull
+make build          # aiosmtplib is new -- the pip layer must be rebuilt
+make reload
+```
+
+A new `email_log` collection and its three indexes are created by `prepare()` on first boot;
+there is no backfill and nothing to migrate. Nothing is required in `.env` — the SMTP host,
+credentials and sender live in the database and are filled in on *Settings → Email* by an
+Owner. A deployment that never configures mail behaves exactly as before and still reports
+healthy: `missing_required()` deliberately does not mention SMTP.
+
+Verify:
+
+```bash
+# The collection and its unique index exist
+docker compose exec mongodb mongosh --quiet instaflow \
+  --eval 'db.email_log.getIndexes().map(i => i.name)'
+# Expect: [ '_id_', 'ix_created', 'ix_recipient_created', 'uq_message_id' ]
+
+# The worker registered the job
+docker compose logs worker | grep worker_started
+```
+
+Then configure Gmail on the Settings page and click **Send test email**. See
+`docs/deployment.md` § Email for the App Password steps, and `docs/troubleshooting.md` for
+the six things that look identical when a message does not arrive.
+
+**Note `DRY_RUN` does not suppress email.** It means "no Meta mutation", and a message to a
+person is not one — so mail is sent even on an install that is otherwise in dry run. Set
+`EMAIL_CLIENT=mock` if you want the pipeline to run without anything leaving the server.
+
+
+
 ## Contacts grouped by post, and CSV export per post
 
 ### What is new

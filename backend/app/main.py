@@ -13,8 +13,10 @@ from app.api import (
     analytics,
     auth,
     instagram,
+    invites,
     legal,
     links,
+    onboarding,
     roles,
     rules,
     settings_api,
@@ -107,6 +109,8 @@ WORKSPACE_ROUTERS = (
     rules.posts_router,
     rules.stories_router,
     rules.upcoming_router,
+    invites.router,
+    onboarding.router,
     instagram.auth_router,
     instagram.router,
     webhooks.router,
@@ -129,6 +133,10 @@ for router in WORKSPACE_ROUTERS:
 # would add a segment that carries no information and one more URL to get wrong.
 app.include_router(links.router)
 app.include_router(uploads.public_router)
+# Bare only. The activation page has no workspace and no session, so a
+# `/u/<slug>/api/invite/...` twin would be a second URL that can mint an account
+# with no caller -- surface the security review would have to reason about twice.
+app.include_router(invites.public_router)
 
 
 @app.get("/health", tags=["health"])

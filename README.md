@@ -152,10 +152,13 @@ rather than worked around.
 
 ## Tests
 
-581 tests covering keyword matching, template rendering, policy decisions, webhook signature
+1069 tests covering keyword matching, template rendering, policy decisions, webhook signature
 validation, idempotency under concurrency, token encryption, retry semantics, and the AI
 classifier's prompt-injection resistance, the follow gate, deferred delivery after a follow,
-attachment storage and path traversal, the reply delay, and who counts as a superfan. Meta is
+attachment storage and path traversal, the reply delay, who counts as a superfan, and how
+a failed email is classified for retry, plus the invitation flow: single use, expiry
+boundaries, that a rejected signup does not consume the link, and that a new tenant can reach
+nothing outside their own workspace. Meta is
 never contacted in tests.
 
 ```bash

@@ -18,12 +18,26 @@ SERVICE = "api"
 _SECRET_PATTERNS = [
     re.compile(r"(access_token=)[^&\s\"']+", re.I),
     re.compile(r"(client_secret=)[^&\s\"']+", re.I),
+    # A bare `password=value` in free text, which the quoted-JSON pattern below
+    # does not reach. Mail servers can echo the AUTH attempt back in a rejection
+    # message, and that message is stored on the `email_log` row -- so without
+    # this the credential would be redacted in the settings response and left in
+    # plain sight in the failure it caused. No `\b` before "password", so
+    # `smtp_password=` is covered too.
+    re.compile(r"(password=)[^&\s\"']+", re.I),
     re.compile(r"(\bcode=)[^&\s\"']+", re.I),
     # The webhook verification handshake carries the verify token in the query
     # string, and Meta sends it under BOTH spellings in the same request --
     # `hub.verify_token` and `hub_verify_token`. Redacting only the documented
     # dotted form leaves the value in the log twice over.
     re.compile(r"(hub[._]verify_token=)[^&\s\"']+", re.I),
+    # Any `token=` in a URL, which is broader than the two hub spellings above
+    # and covers the invite activation link. Needed because ARQ logs a job's
+    # arguments verbatim -- verified live: the worker prints
+    # `send_email(context={...}, ...)` at INFO -- so an invitation's URL would
+    # otherwise reach the container log even though the token is only ever
+    # stored as a hash.
+    re.compile(r"(\btoken=)[^&\s\"']+", re.I),
     re.compile(
         r"(\"(?:access_token|password|token|secret|encryption_key|"
         r"session_secret|client_secret)\"\s*:\s*\")[^\"]*",
@@ -52,6 +66,16 @@ _SENSITIVE_KEYS = {
     "app_secret_encrypted",
     "verify_token",
     "verify_token_encrypted",
+    # Outbound mail (`services/email/config.py`). Matching here is EXACT, not by
+    # substring -- `k.lower() in _SENSITIVE_KEYS` below -- so the plain
+    # "password" entry above does not cover these two spellings.
+    "smtp_password",
+    "smtp_password_encrypted",
+    # Invite activation tokens. `token` already covers the bare key; these are
+    # the two names the invite code actually uses, spelled out because of the
+    # same exact-match behaviour.
+    "token_hash",
+    "invite_token",
     "code",
     "authorization",
 }

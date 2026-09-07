@@ -12,6 +12,7 @@ from app.db.indexes import create_indexes
 from app.logging import configure_logging
 from app.services.ai.client import AiClient
 from app.services.meta.factory import build_client
+from app.workers.email_tasks import send_email
 from app.workers.tasks import (
     MAX_ATTEMPTS,
     deliver_paused_backlog,
@@ -56,6 +57,11 @@ async def startup(ctx: dict[str, Any]) -> None:
     )
     if settings.dry_run:
         logger.warning("dry_run_enabled_no_meta_mutations_will_be_sent")
+        # Stated separately rather than by rewording the line above, which is
+        # grepped in ops notes. Dry run is scoped to Meta: mail still goes out,
+        # because an invitation that silently never arrives sends whoever
+        # debugs it into the mail server instead of a flag.
+        logger.warning("dry_run_does_not_apply_to_email_mail_will_still_be_sent")
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -79,6 +85,7 @@ class WorkerSettings:
         snapshot_account_metrics,
         sync_posts,
         sync_stories,
+        send_email,
     ]
     cron_jobs = [
         # Daily token check. Meta kills a token not refreshed within 60 days.

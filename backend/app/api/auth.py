@@ -24,15 +24,8 @@ _DUMMY_HASH = hash_password(secrets.token_urlsafe(32))
 
 
 def _set_session_cookie(response: Response, settings, token: str) -> None:
-    response.set_cookie(
-        key=settings.session_cookie_name,
-        value=token,
-        max_age=settings.session_lifetime_hours * 3600,
-        httponly=True,
-        samesite="lax",
-        secure=settings.session_cookie_secure,
-        path="/",
-    )
+    """Kept as a local alias so this module's call sites read unchanged."""
+    sessions.set_cookie(response, settings, token)
 
 
 @router.post("/login", response_model=UserPublic)

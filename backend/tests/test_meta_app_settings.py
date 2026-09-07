@@ -216,7 +216,7 @@ async def test_click_geography_is_out_of_reach_for_manager_and_viewer(
     automated reply" also meant "may re-point the server".
     """
     role = await role_factory(
-        "Runs automations", ["settings.view", "settings.edit", "automations.view"]
+        "Runs automations", ["settings.view", "automations.view"]
     )
     await user_factory("runner@example.com", role)
     await api.post(
@@ -229,9 +229,17 @@ async def test_click_geography_is_out_of_reach_for_manager_and_viewer(
         await api.put("/api/settings/instance", json={"origin": "https://evil.example"})
     ).status_code == 403
 
-    # The disclosure line is still theirs: it is per-deployment wording, not
-    # server plumbing, and taking it away was not the point.
-    assert (await api.get("/api/settings/disclosure")).status_code == 200
+    # The disclosure line went the same way on 2026-09-07, and this assertion
+    # was inverted deliberately. It had been treated as "per-deployment wording,
+    # not server plumbing" -- but `workers/tasks._with_disclosure` takes only a
+    # database handle and a message, so the one line it reads is appended to
+    # EVERY workspace's replies. That is server-wide blast radius wearing a
+    # per-workspace name, which is the exact mistake `instance.*` exists to
+    # prevent. `settings.edit` guarded nothing else and was retired with it.
+    assert (await api.get("/api/settings/disclosure")).status_code == 403
+    assert (
+        await api.put("/api/settings/disclosure", json={"enabled": False, "text": "x"})
+    ).status_code == 403
 
 
 async def test_the_owner_still_reaches_them(signed_in):
@@ -251,3 +259,28 @@ async def test_viewing_does_not_imply_editing(api, database, role_factory, user_
     assert (
         await api.put("/api/settings/instance", json={"origin": "https://moved.ts.net"})
     ).status_code == 403
+
+
+async def test_the_disclosure_is_one_line_for_the_whole_server(signed_in, database):
+    """Pins the reason it is Owner-only.
+
+    `_with_disclosure` reads the `app_settings` singleton and takes no account or
+    workspace, so whatever is saved here is appended to every workspace's
+    automated replies. If that ever becomes per-workspace, this test should fail
+    and the permission should move back.
+    """
+    import inspect
+
+    from app.workers.tasks import _with_disclosure
+
+    parameters = set(inspect.signature(_with_disclosure).parameters)
+    assert parameters == {"db", "message"}, (
+        "if _with_disclosure gained an account or workspace parameter, the "
+        "disclosure is no longer server-wide and instance.* is the wrong scope"
+    )
+
+    await signed_in.put(
+        "/api/settings/disclosure", json={"enabled": True, "text": "Automated."}
+    )
+    saved = await database["app_settings"].find_one({"_id": "app"})
+    assert saved["automation_disclosure"] == "Automated."

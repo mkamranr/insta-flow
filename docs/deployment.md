@@ -119,6 +119,10 @@ them, so this holds unless someone changes it.
 With Tailscale Funnel, nothing needs to be open on the host firewall at all: Tailscale dials
 out.
 
+Everything above is about **inbound** traffic. Outbound email needs egress on TCP 587 (or 465
+for SSL) from the `worker` container. On an egress-filtered host that is easy to miss, because
+the symptom is a connect timeout on the Settings page's test send with nothing else wrong.
+
 ## Attachment storage
 
 Rules can carry a file — image, video, audio or PDF — that Meta delivers with the payoff DM.
@@ -138,6 +142,40 @@ publicly (docs/meta-api.md §4c).
   Nothing else references them, so an orphan would sit there at up to 25MB a time.
 
 Back these up with the database if the automations matter; `uploads/` is gitignored.
+
+## Email (optional)
+
+Needed only for sending invitations. Nothing else in the product sends mail, and a deployment
+that never configures it reports itself healthy — `missing_required()` deliberately does not
+mention SMTP.
+
+The settings live in the database, not in `.env`, so they are filled in on
+*Settings → Email* by anyone holding `instance.manage` (Owner only, by default). With a Gmail
+account:
+
+1. Turn on two-step verification for the Google account — Google will not issue an App
+   Password without it.
+2. Create an **App Password** at <https://myaccount.google.com/apppasswords>. It is 16
+   characters, shown with spaces; either form is accepted.
+3. Fill in `smtp.gmail.com`, port `587`, STARTTLS, the Gmail address as both username and
+   sender, and the App Password.
+4. Click **Send test email**. The credentials are deliberately *not* checked when you save —
+   verifying would mean an AUTH round trip on every save, and Google rate-limits and
+   eventually flags that. The test send is the check, and it exercises the same path a real
+   invitation takes.
+
+Two Gmail constraints worth knowing before relying on it. Gmail rejects or silently rewrites
+a `From` address the account does not own, so keep the sender equal to the username or use a
+verified alias. And it caps outbound at roughly **500 recipients a day**; exceeding it
+presents as an authentication failure rather than a quota error.
+
+The send happens in the **worker**, not the API, so `docker compose logs worker` is where to
+look. The Settings card also lists the last five messages with their status, which is the
+faster answer.
+
+**`DRY_RUN` does not suppress email.** It means "no Meta mutation", and an invitation is not
+one — so mail is sent even on a default install. `EMAIL_CLIENT=mock` in `.env` is what stops
+mail leaving the server.
 
 ## Click geography (optional)
 

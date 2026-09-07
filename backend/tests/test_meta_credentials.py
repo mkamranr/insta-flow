@@ -78,6 +78,9 @@ def test_a_workspace_with_its_own_app_gets_prefixed_urls():
         "redirect_uri": (
             "https://your-machine.your-tailnet.ts.net/u/userabc/api/auth/instagram/callback"
         ),
+        "deauthorize_url": (
+            "https://your-machine.your-tailnet.ts.net/u/userabc/api/auth/instagram/deauthorize"
+        ),
         "privacy_url": "https://your-machine.your-tailnet.ts.net/u/userabc/privacy",
         "data_deletion_url": "https://your-machine.your-tailnet.ts.net/u/userabc/data-deletion",
     }
@@ -159,6 +162,11 @@ def test_workspace_urls_do_not_depend_on_which_app_is_acting():
     assert workspace_urls("https://x.ts.net", "userabc") == {
         "webhook_url": "https://x.ts.net/u/userabc/webhooks/instagram",
         "redirect_uri": "https://x.ts.net/u/userabc/api/auth/instagram/callback",
+        # Meta's `Set up Instagram business login` panel has THREE fields, and
+        # this was missing from the set entirely until the guided setup needed
+        # it -- so anybody who configured their app from the Settings page left
+        # it blank. The endpoint has existed all along.
+        "deauthorize_url": "https://x.ts.net/u/userabc/api/auth/instagram/deauthorize",
         "privacy_url": "https://x.ts.net/u/userabc/privacy",
         "data_deletion_url": "https://x.ts.net/u/userabc/data-deletion",
     }

@@ -8,8 +8,10 @@ from .base import BaseRepository, serialise, serialise_required, to_object_id, u
 from .click_events import ClickEventsRepository
 from .comments import CommentsRepository
 from .contacts import ContactsRepository
+from .email_log import EmailLogRepository
 from .executions import ExecutionsRepository
 from .instagram_accounts import InstagramAccountsRepository
+from .invites import InvitesRepository
 from .link_clicks import LinkClicksRepository
 from .media import MediaRepository
 from .meta_apps import MetaAppsRepository
@@ -24,6 +26,8 @@ __all__ = [
     "AccountSnapshotsRepository",
     "AiClassificationsRepository",
     "AppSettingsRepository",
+    "EmailLogRepository",
+    "InvitesRepository",
     "AuditLogsRepository",
     "BaseRepository",
     "ClickEventsRepository",

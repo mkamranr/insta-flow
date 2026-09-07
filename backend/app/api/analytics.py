@@ -18,10 +18,12 @@ from app.api.deps import (
     ContactsRepo,
     CurrentWorkspace,
     ExecutionsRepo,
+    InvitesRepo,
     LinkClicksRepo,
     MediaRepo,
     RulesRepo,
     SnapshotsRepo,
+    UsersRepo,
     Workspace,
     require,
 )
@@ -583,8 +585,36 @@ async def post_performance(
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
+async def _invite_states(
+    rows: list[dict[str, Any]], users: Any, invites: Any
+) -> dict[str, str]:
+    """Which of these addresses already has an account or a live invitation.
+
+    Computed here and returned inline rather than left to the Contacts page to
+    fetch, because `GET /api/invites` and `GET /api/users` both need permissions
+    a `contacts.view`-only role does not hold -- so a second request would 403
+    for exactly the person the page is built for.
+    """
+    addresses = sorted({str(row["email"]).lower() for row in rows if row.get("email")})
+    if not addresses:
+        return {}
+
+    registered = await users.emails_in(addresses)
+    invited = await invites.emails_with_live_invites(addresses)
+    return {
+        address: (
+            "accepted" if address in registered else "invited" if address in invited else "none"
+        )
+        for address in addresses
+    }
+
+
 async def _contact_groups(
-    account_id: Any, contacts: ContactsRepo, media: MediaRepo
+    account_id: Any,
+    contacts: ContactsRepo,
+    media: MediaRepo,
+    *,
+    invite_states: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Captured leads, gathered under the post that earned each one.
 
@@ -610,6 +640,9 @@ async def _contact_groups(
                     "captured_at": source.get("captured_at") or contact.get("created_at"),
                     "rule_name": source.get("rule_name") or "",
                     "backfilled": bool(source.get("backfilled")),
+                    "invite_state": (invite_states or {}).get(
+                        str(contact.get("email") or "").lower(), "none"
+                    ),
                 }
             )
 
@@ -648,13 +681,17 @@ async def contacts_list(
     accounts: AccountsRepo,
     contacts: ContactsRepo,
     media: MediaRepo,
+    users: UsersRepo,
+    invites: InvitesRepo,
 ) -> list[dict[str, Any]]:
     """Captured leads, grouped by post. Emails are shown to the operator who
     collected them."""
     account_id = await _account_id(accounts, workspace)
     if account_id is None:
         return []
-    return await _contact_groups(account_id, contacts, media)
+    rows = await contacts.all_for_account(account_id)
+    states = await _invite_states(rows, users, invites)
+    return await _contact_groups(account_id, contacts, media, invite_states=states)
 
 
 @router.get(

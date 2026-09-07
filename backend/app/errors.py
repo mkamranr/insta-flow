@@ -99,3 +99,51 @@ class TemplateError(SocialFlowError):
 class QueueError(SocialFlowError):
     status_code = 503
     code = "queue_error"
+
+
+class GoneError(SocialFlowError):
+    """The thing existed and no longer does; the caller cannot make it exist again.
+
+    Used for an invite that is genuinely ours but spent -- accepted, revoked or
+    past its deadline. A 404 would be the house choice, and elsewhere it is the
+    right one: `current_workspace` returns 404 rather than 403 so a slug cannot
+    be enumerated. That argument does not apply here, because only a holder of a
+    256-bit token ever reaches this path, and a guesser cannot produce a
+    once-valid token. Collapsing spent into unknown would instead make the
+    common real case -- clicking a link three days late -- indistinguishable
+    from a corrupted one, which is the support question that actually happens.
+    """
+
+    status_code = 410
+    code = "gone"
+
+
+class MailError(SocialFlowError):
+    """A send failed. `retryable` decides whether the worker tries again.
+
+    Note the inversion against `MetaAPIError`, which is built from HTTP where
+    `retryable = status >= 500`. SMTP is the other way round (RFC 5321 §4.2.1):
+    4xx is a transient "try later" and 5xx is permanent. The classifier in
+    `services/email/client.py` is the only place that decides, and
+    `tests/test_email_retry.py` pins every case.
+    """
+
+    status_code = 502
+    code = "mail_error"
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        smtp_code: int | None = None,
+        retryable: bool = False,
+        auth_refused: bool = False,
+        refused: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.smtp_code = smtp_code
+        self.retryable = retryable
+        # Set only for a rejected credential. Surfaced on the Settings card
+        # rather than used to block later sends -- see the job's docstring.
+        self.auth_refused = auth_refused
+        self.refused = refused

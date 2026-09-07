@@ -162,3 +162,18 @@ export const KeyIcon = () => (
     <path d="m10.6 12.6 7.4-7.4M15.6 7.6l2 2M17.8 5.4l2 2" />
   </svg>
 )
+
+export const MailIcon = () => (
+  <svg {...base}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M3 8l9 6 9-6" />
+  </svg>
+)
+
+export const RocketIcon = () => (
+  <svg {...base}>
+    <path d="M14 4c3 2 5 6 5 10l-4 3-5-5 4-8z" />
+    <path d="M9 14l-4 6 6-3" />
+    <circle cx="15" cy="9" r="1.5" />
+  </svg>
+)

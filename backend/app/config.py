@@ -48,7 +48,27 @@ class Settings(BaseSettings):
     session_secret: str = ""
 
     # When true the full pipeline runs but no Meta mutation is ever sent.
+    # Deliberately scoped to Meta: outbound email is NOT suppressed by dry run,
+    # because an invitation that silently never arrives sends the operator
+    # debugging the wrong subsystem. `tests/test_email_client.py` pins this.
     dry_run: bool = True
+
+    # auto = real SMTP when the mail settings are configured, mock otherwise.
+    # There is no EMAIL_ENABLED flag on purpose: "is email set up" is a question
+    # about the `app_settings` document, and a second env-var answer to it would
+    # be two sources of truth for one fact. Host, port, credentials and sender
+    # all live in the database and are edited on the Settings page.
+    email_client: Literal["auto", "real", "mock"] = "auto"
+
+    # Invitations. The send limits are per actor, the redemption limits per IP:
+    # the send routes require a session and so have a stable identity to count,
+    # while the activation endpoints have none. Generous, because the entropy of
+    # the token is the real control -- `Throttle` fails open on a Redis outage
+    # and must not be the only barrier.
+    invite_send_limit: int = 50
+    invite_lookup_limit: int = 30
+    invite_accept_limit: int = 10
+    invite_attempt_window_seconds: int = 900
 
     # Session cookie. `secure` must be True in production; it is off by default so
     # the dashboard is reachable over plain http://localhost during development.
