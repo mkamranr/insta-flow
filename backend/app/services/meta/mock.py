@@ -141,10 +141,31 @@ class MockInstagramClient:
         return self.account
 
     async def get_media(
-        self, access_token: str, instagram_user_id: str, limit: int = 25
+        self, access_token: str, instagram_user_id: str, limit: int = 25, max_pages: int = 1
     ) -> list[MetaMedia]:
-        self._record("get_media", instagram_user_id=instagram_user_id, limit=limit)
-        return self.media[:limit]
+        """Walks `self.media` in `limit`-sized slices, one `_record` per page.
+
+        Recording per page rather than per call is the point: a test asserts
+        `len(client.calls_to("get_media"))` to prove how many requests a sync
+        made, which is the only way to catch a change that silently turns every
+        Refresh into a full walk.
+        """
+        collected: list[MetaMedia] = []
+        for page in range(max(1, max_pages)):
+            offset = page * limit
+            self._record(
+                "get_media",
+                instagram_user_id=instagram_user_id,
+                limit=limit,
+                after=str(offset) if offset else None,
+            )
+            batch = self.media[offset : offset + limit]
+            collected.extend(batch)
+            # Short page means Meta returned no `next` -- the real client stops
+            # on the same condition.
+            if len(batch) < limit:
+                break
+        return collected
 
     async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
         self._record("get_stories", instagram_user_id=instagram_user_id)

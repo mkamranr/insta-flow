@@ -66,7 +66,7 @@ async def list_workspaces(
         if not slug:
             # A user still awaiting `backfill_missing_slugs` has no URL to offer.
             continue
-        found = await accounts.list({"user_id": owner["_id"]}, limit=1)
+        found = await accounts.live_for_user(owner["_id"])
         account = found[0] if found else None
         summaries.append(
             WorkspaceSummary(

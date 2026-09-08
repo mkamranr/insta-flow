@@ -35,6 +35,16 @@ class InstagramAccountPublic(BaseModel):
     automation_paused_until: datetime | None = None
     automation_paused_at: datetime | None = None
     last_webhook_at: datetime | None = None
+    # Meta's own count, from `GET /me?fields=...media_count`. The authoritative
+    # total, so the resync card can say "30 of 30" rather than only how many it
+    # happened to fetch.
+    media_count: int | None = None
+    media_resync_state: str | None = None
+    media_resync_started_at: datetime | None = None
+    media_resync_finished_at: datetime | None = None
+    media_resync_count: int | None = None
+    media_resync_pages: int | None = None
+    media_resync_error: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -63,6 +73,13 @@ class InstagramAccountPublic(BaseModel):
             automation_paused_until=document.get("automation_paused_until"),
             automation_paused_at=document.get("automation_paused_at"),
             last_webhook_at=document.get("last_webhook_at"),
+            media_count=document.get("media_count"),
+            media_resync_state=document.get("media_resync_state"),
+            media_resync_started_at=document.get("media_resync_started_at"),
+            media_resync_finished_at=document.get("media_resync_finished_at"),
+            media_resync_count=document.get("media_resync_count"),
+            media_resync_pages=document.get("media_resync_pages"),
+            media_resync_error=document.get("media_resync_error"),
             created_at=document.get("created_at"),
             updated_at=document.get("updated_at"),
         )

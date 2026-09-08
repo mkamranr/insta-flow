@@ -4,11 +4,15 @@ import { apiDelete, apiGet, apiGetInstance, apiPost, apiPut } from '../api/clien
 import { Link } from 'react-router-dom'
 import { getMe } from '../api/auth'
 import { clearMetaApp, getMetaApp } from '../api/settings'
+import { listAccounts, resyncAllPosts } from '../api/instagram'
 import { CopyField } from '../components/common/CopyField'
 import { MetaAppCredentials } from '../components/settings/MetaAppCredentials'
 import { VerifyTokenField } from '../components/settings/VerifyTokenField'
 import { usePermissions } from '../hooks/usePermissions'
 import type { ReadyResponse } from '../types/health'
+
+/** Mirrors MEDIA_PAGE_SIZE in `services/meta/http_client.py`. Copy only. */
+const MEDIA_PAGE = 50
 
 function Row({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
   return (
@@ -733,6 +737,114 @@ function EmailCard() {
   )
 }
 
+function ResyncPostsCard() {
+  const queryClient = useQueryClient()
+  const [note, setNote] = useState<string | null>(null)
+  const { data: accounts } = useQuery({
+    queryKey: ['instagram-accounts'],
+    queryFn: listAccounts,
+    retry: false,
+    // Only while a walk is in flight. A full resync of a large account is
+    // hundreds of requests to Meta, and a button that goes quiet is
+    // indistinguishable from a broken one.
+    refetchInterval: (query) =>
+      query.state.data?.some((a) => a.media_resync_state === 'running') ? 2_000 : false,
+  })
+  const account = accounts?.find((a) => a.status !== 'disconnected')
+
+  const resync = useMutation({
+    mutationFn: resyncAllPosts,
+    onSuccess: () => {
+      setNote('Started. This page updates when it finishes.')
+      queryClient.invalidateQueries({ queryKey: ['instagram-accounts'] })
+    },
+  })
+
+  const running = account?.media_resync_state === 'running'
+  const when = (value?: string | null) =>
+    value ? new Date(value).toLocaleString() : null
+
+  return (
+    <div className="card">
+      <h2>Resync all posts</h2>
+      <p className="muted small">
+        Refresh on the Posts and Home pages fetches the {MEDIA_PAGE} most recent posts,
+        which is all a routine check needs. This walks <em>every</em> post instead — use it
+        after editing the caption of something older, since that edit is otherwise invisible
+        here.
+      </p>
+
+      {!account ? (
+        <p className="muted small">Connect an Instagram account first.</p>
+      ) : (
+        <>
+          <dl className="kv">
+            <Row
+              label="Posts stored"
+              value={
+                <>
+                  {account.media_resync_count ?? '—'}
+                  {account.media_count ? (
+                    <span className="muted"> of {account.media_count} on Instagram</span>
+                  ) : null}
+                </>
+              }
+            />
+            <Row
+              label="Last full resync"
+              value={
+                running ? (
+                  <span className="muted">Running…</span>
+                ) : when(account.media_resync_finished_at) ? (
+                  <span className={account.media_resync_state === 'failed' ? 'err' : 'ok'}>
+                    {when(account.media_resync_finished_at)}
+                  </span>
+                ) : (
+                  <span className="muted">Never</span>
+                )
+              }
+              hint={
+                account.media_resync_pages
+                  ? `${account.media_resync_pages} request${account.media_resync_pages === 1 ? '' : 's'} to Meta`
+                  : undefined
+              }
+            />
+          </dl>
+
+          {account.media_resync_error && (
+            <p className="err small" role="alert">
+              {account.media_resync_error}
+            </p>
+          )}
+
+          <div className="row">
+            <button
+              className="secondary"
+              disabled={running || resync.isPending}
+              onClick={() => {
+                setNote(null)
+                resync.mutate()
+              }}
+            >
+              {running ? 'Resyncing…' : resync.isPending ? 'Starting…' : 'Resync all posts'}
+            </button>
+          </div>
+          <p className="muted small">
+            Pressing it again while a resync is running does nothing — the job is keyed per
+            account. The Posts page still lists at most 200 at a time, however many are
+            stored.
+          </p>
+
+          {resync.error && (
+            <p className="err small" role="alert">{(resync.error as Error).message}</p>
+          )}
+          {note && !resync.error && <p className="ok small">{note}</p>}
+        </>
+      )}
+    </div>
+  )
+}
+
 export function Settings() {
   const { data } = useQuery({
     queryKey: ['ready'],
@@ -812,6 +924,7 @@ export function Settings() {
 
       {can('instance.view') && <GeoIpCard />}
       {can('instance.view') && <EmailCard />}
+      {can('content.edit') && <ResyncPostsCard />}
 
       <div className="card">
         <h2>Useful commands</h2>

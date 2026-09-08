@@ -52,3 +52,29 @@ class MediaRepository(BaseRepository[Any]):
             upsert=True,
             return_document=True,
         )
+
+    async def drop_orphaned(self, account_ids: list[Any]) -> int:
+        """Delete media belonging to accounts that no longer exist.
+
+        A disconnect used to hard-delete the account row and leave its posts
+        behind, keyed on an `_id` nothing pointed at any more -- 168 such rows on
+        the live install, across four dead accounts. They cannot be remapped:
+        `media` carries no `instagram_user_id`, so there is no way to tell which
+        Instagram account a row belonged to once its account document is gone.
+        Deleting them is safe because media is a re-fetchable cache of what Meta
+        holds; the automations that referenced them are left alone, since those
+        contain text somebody wrote.
+
+        The caller passes the live account ids rather than this method reading
+        them, so the guard against an empty list is impossible to skip -- see
+        `prepare`.
+        """
+        if not account_ids:
+            raise ValueError(
+                "drop_orphaned needs the live account ids; an empty list would "
+                "delete every media row in the database"
+            )
+        result = await self.collection.delete_many(
+            {"instagram_account_id": {"$nin": [to_object_id(a) for a in account_ids]}}
+        )
+        return int(result.deleted_count)

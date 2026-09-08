@@ -1,6 +1,6 @@
 # Meta Instagram API — Verified Reference
 
-**Verified on: 2026-08-31; §§2, 7, 10 re-verified and corrected 2026-09-02; app-creation steps 3-4 and the Tester-role ordering re-verified and corrected 2026-09-07.** Every fact below was read from official Meta documentation on
+**Verified on: 2026-08-31; §§2, 7, 10 re-verified and corrected 2026-09-02; app-creation steps 3-4 and the Tester-role ordering re-verified and corrected 2026-09-07; §2c media pagination verified 2026-09-08.** Every fact below was read from official Meta documentation on
 that date. Meta changes this platform frequently — before implementing anything not covered
 here, read the official docs and update this file with a new verification date.
 
@@ -72,6 +72,45 @@ request, takes every other field down with it.
 
 **No follower *history* is available from Meta.** `followers_count` is a point-in-time value,
 so growth (new / unfollowed / net) has to be derived from snapshots this app records itself.
+
+## 2c. Media pagination — verified live 2026-09-08
+
+`GET /me/media` is paginated, which nothing here recorded before. The Instagram
+reference page for this edge documents only *time*-based pagination (`since`,
+`until`) and never mentions `limit`, `after` or `paging` — yet `limit` has always
+worked and the edge does return cursors. So this was verified against a live
+account rather than taken from the page.
+
+**Response shape.** Observed, with `limit=2`:
+
+```json
+"paging": { "cursors": { "after": "...", "before": "..." }, "next": "https://..." }
+```
+
+| Fact | Source |
+| --- | --- |
+| `paging.cursors.after` / `.before`, plus `paging.next` | verified live |
+| **`next` absent means this is the last page** | official Graph pagination doc |
+| **`after` works as a query parameter on this edge** | verified live: two pages requested, disjoint ids returned |
+| `next` is absolute, and **carries the access token** in its query string | verified live |
+| `next` **pins its own API version** — observed `…/v26.0/…` while we request `v25.0` | verified live |
+| The edge returns **at most 10K** most-recent media | official Instagram reference |
+| Cursors must **not** be stored between runs — they invalidate when the data changes | official Graph pagination doc |
+
+**We paginate with `after`, and deliberately do not follow `next`.** Three
+reasons, in order of weight: following it would silently move the walk onto
+whatever API version Meta pinned into the URL, rather than the one
+`META_API_VERSION` selects; `_request` builds its URL from a *path*, so an
+absolute URL would produce `…/v25.0/https://…`; and it means re-sending a token
+inside a URL this codebase did not construct.
+
+Because cursors expire, a full walk happens in **one pass** — there is no
+resumable "carry on where we left off". `MEDIA_MAX_PAGES` is 200, which at
+`MEDIA_PAGE_SIZE` 50 is exactly the documented 10K ceiling, so nothing
+legitimate is truncated and a cursor that never terminates cannot spin forever.
+
+Routine syncs — the 15-minute cron and every Refresh button — request **one
+page**. Only the manual *Resync all posts* action in Settings walks the edge.
 
 ## 3. OAuth
 

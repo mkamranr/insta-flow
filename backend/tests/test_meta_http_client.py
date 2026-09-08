@@ -127,6 +127,117 @@ async def test_get_media_parses_timestamps():
     assert media[0].published_at is not None
 
 
+# --- media pagination -------------------------------------------------------
+#
+# Every fact asserted here was verified against a live account on 2026-09-08 and
+# is recorded in `docs/meta-api.md` §2c. The Instagram reference page for this
+# edge documents only `since`/`until` and never mentions `after`, so none of it
+# could be taken on trust.
+
+
+def _page(ids, after=None):
+    """A media response, with `paging` shaped the way Meta actually returns it."""
+    body = {"data": [{"id": i, "timestamp": "2026-08-01T10:00:00+0000"} for i in ids]}
+    if after:
+        # `next` is what signals "there is more"; the cursor is read from
+        # `cursors.after`. Meta sends an absolute `next` URL too, deliberately
+        # left out here because the client must not use it.
+        body["paging"] = {"cursors": {"after": after}, "next": "https://ignored.example"}
+    else:
+        body["paging"] = {"cursors": {"after": "last"}}
+    return httpx.Response(200, json=body)
+
+
+async def test_one_page_is_the_default():
+    """The contract the 15-minute cron and every Refresh button rely on.
+
+    Nothing pinned this before pagination existed, so a change that turned every
+    Refresh into a full walk would have been silent.
+    """
+    seen = []
+
+    def handler(request):
+        seen.append(dict(request.url.params))
+        return _page(["1", "2"], after="cursor-1")
+
+    media = await make_client(handler).get_media(TOKEN, IG_ID, limit=50)
+
+    assert len(seen) == 1, "a routine sync must make exactly one request"
+    assert "after" not in seen[0]
+    assert [m.instagram_media_id for m in media] == ["1", "2"]
+
+
+async def test_pagination_follows_the_after_cursor_until_next_is_absent():
+    seen = []
+
+    def handler(request):
+        seen.append(dict(request.url.params))
+        if len(seen) == 1:
+            return _page(["1", "2"], after="cursor-1")
+        return _page(["3"])  # no `next` -> last page
+
+    media = await make_client(handler).get_media(TOKEN, IG_ID, limit=2, max_pages=10)
+
+    assert len(seen) == 2
+    assert seen[1]["after"] == "cursor-1", "the cursor must be sent as `after`"
+    assert [m.instagram_media_id for m in media] == ["1", "2", "3"]
+
+
+async def test_the_absolute_next_url_is_never_followed():
+    """`paging.next` pins its own API version -- observed v26.0 while we request
+    v25.0 -- so following it would silently switch version mid-walk."""
+    hosts = []
+
+    def handler(request):
+        hosts.append(str(request.url.copy_with(query=None)))
+        return _page(["1"], after="c") if len(hosts) == 1 else _page(["2"])
+
+    await make_client(handler).get_media(TOKEN, IG_ID, limit=1, max_pages=5)
+
+    assert len(hosts) == 2
+    assert all("/v25.0/me/media" in h for h in hosts), hosts
+    assert not any("ignored.example" in h for h in hosts)
+
+
+async def test_pagination_stops_at_the_page_cap():
+    """A cursor that never terminates must not spin until the job timeout."""
+    seen = []
+
+    def handler(request):
+        seen.append(1)
+        return _page([str(len(seen))], after="always-more")
+
+    media = await make_client(handler).get_media(TOKEN, IG_ID, limit=1, max_pages=3)
+
+    assert len(seen) == 3
+    assert len(media) == 3
+
+
+async def test_the_field_fallback_applies_to_a_later_page_too():
+    """The 400-retry was hoisted into `_media_page` for exactly this case: an
+    account whose media type rejects `like_count` must not fail on page two
+    having succeeded on page one."""
+    calls = []
+
+    def handler(request):
+        params = dict(request.url.params)
+        calls.append(params)
+        if len(calls) == 1:
+            return _page(["1"], after="c")
+        if "like_count" in params["fields"]:
+            return httpx.Response(400, json={"error": {"message": "bad field", "code": 100}})
+        return _page(["2"])
+
+    media = await make_client(handler).get_media(TOKEN, IG_ID, limit=1, max_pages=5)
+
+    assert [m.instagram_media_id for m in media] == ["1", "2"]
+    assert "like_count" not in calls[-1]["fields"], "the retry must drop the optional fields"
+    # The point of the test: the retry has to carry the CURSOR as well as the
+    # narrower field list, or the fallback silently restarts the walk at page one
+    # and every later page is a duplicate of the first.
+    assert calls[-1]["after"] == "c"
+
+
 # --- error mapping ----------------------------------------------------------
 
 

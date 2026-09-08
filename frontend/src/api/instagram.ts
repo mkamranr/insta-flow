@@ -18,6 +18,15 @@ export interface InstagramAccount {
   automation_paused: boolean
   automation_paused_until: string | null
   automation_paused_at: string | null
+  /** Meta's own total, so a resync can report "30 of 30" rather than only how
+   *  many it happened to fetch. */
+  media_count?: number | null
+  media_resync_state?: 'running' | 'done' | 'failed' | null
+  media_resync_started_at?: string | null
+  media_resync_finished_at?: string | null
+  media_resync_count?: number | null
+  media_resync_pages?: number | null
+  media_resync_error?: string | null
 }
 
 export const listAccounts = () => apiGet<InstagramAccount[]>('/api/instagram/accounts')
@@ -31,3 +40,7 @@ export const checkSubscription = (id: string) =>
   )
 export const refreshToken = (id: string) => apiPost<InstagramAccount>(`/api/instagram/${id}/refresh`)
 export const disconnect = (id: string) => apiDelete<void>(`/api/instagram/${id}`)
+
+/** Queues a full walk of the media edge. `POST /api/posts/sync` stays at one
+ *  page — this is the manual escape hatch for an edit to an older post. */
+export const resyncAllPosts = () => apiPost<{ queued: boolean }>('/api/posts/resync')

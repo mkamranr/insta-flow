@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request, status
 from pymongo.errors import DuplicateKeyError
 
+from app import queue
 from app.api.deps import (
     AccountsRepo,
     AuditRepo,
@@ -65,7 +66,7 @@ async def _only_account(accounts: Any, workspace: Workspace) -> dict[str, Any]:
     The workspace is usually the caller's own. It is somebody else's only when the
     path said so and `current_workspace` allowed it, which costs `workspaces.view`.
     """
-    found = await accounts.list({"user_id": workspace.user_id})
+    found = await accounts.live_for_user(workspace.user_id)
     if not found:
         raise ValidationError("No Instagram account is connected yet.")
     return found[0]
@@ -425,6 +426,47 @@ async def sync_posts(
 
     logger.info("media_synced", extra={"count": len(fetched), "armed": armed})
     return {"synced": len(fetched), "armed": armed}
+
+
+@posts_router.post("/resync", dependencies=[Depends(require("content.edit"))])
+async def resync_all_posts(
+    request: Request,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    audit: AuditRepo,
+) -> dict[str, Any]:
+    """Queue a full walk of the media edge, updating every post.
+
+    `POST /sync` above stays deliberately cheap -- one page of the most recent
+    posts, which is all the Refresh buttons and the 15-minute cron need. This is
+    the manual escape hatch for the case that one cannot serve: an edit to a post
+    old enough to have fallen out of the first page.
+
+    Queued rather than done inline. A large account is hundreds of requests to
+    Meta, which would hold an HTTP request open far past any sensible timeout,
+    and the worker's own ceiling is 60s class-wide -- the job carries its own.
+
+    `_job_id` makes a second press a no-op while the first is still running,
+    which is the whole of the double-click story. ARQ discards a duplicate id,
+    so this needs no lock and no status pre-check.
+    """
+    account = await _only_account(accounts, workspace)
+
+    await queue.enqueue(
+        "resync_all_media",
+        str(account["_id"]),
+        _job_id=f"media-resync:{account['_id']}",
+    )
+    await audit.record(
+        user_id=user["_id"],
+        action="instagram.media_resync_queued",
+        entity_type="instagram_account",
+        entity_id=account["_id"],
+        ip_address=request.client.host if request.client else None,
+    )
+    logger.info("media_resync_queued", extra={"account_id": str(account["_id"])})
+    return {"queued": True}
 
 
 # --- rules ------------------------------------------------------------------

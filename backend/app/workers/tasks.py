@@ -54,6 +54,7 @@ from app.services.contacts import extract_email
 from app.services.links import is_safe_target, new_token, tracking_url
 from app.services.meta import auth as meta_auth
 from app.services.meta.credentials import origin_for
+from app.services.meta.http_client import MEDIA_MAX_PAGES, MEDIA_PAGE_SIZE
 from app.services.meta.messages import postback_button, web_url_button
 from app.services.meta.tokens import needs_refresh, token_fields
 from app.services.meta.webhooks import (
@@ -871,7 +872,9 @@ async def sync_posts(ctx: dict[str, Any]) -> dict[str, int]:
     for account in await InstagramAccountsRepository(db).list({"status": "connected"}):
         try:
             token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
-            fetched = await client.get_media(token, account["instagram_user_id"], limit=50)
+            fetched = await client.get_media(
+                token, account["instagram_user_id"], limit=MEDIA_PAGE_SIZE
+            )
         except (MetaAPIError, EncryptionError) as exc:
             logger.warning(
                 "post_sync_failed", extra={"account_id": str(account["_id"]), "error": str(exc)}
@@ -901,6 +904,82 @@ async def sync_posts(ctx: dict[str, Any]) -> dict[str, int]:
         armed += await apply_upcoming_post(db, account)
 
     return {"synced": synced, "armed": armed}
+
+
+async def resync_all_media(ctx: dict[str, Any], account_id: str) -> dict[str, Any]:
+    """Walk the whole media edge for one account, updating every post.
+
+    Operator-triggered from Settings, never scheduled. The 15-minute `sync_posts`
+    cron and the Refresh buttons deliberately stay at a single page: recent posts
+    are all they care about, and a full walk on every tick would be 200 requests
+    against Meta for nothing.
+
+    This is what makes an edit to an older post visible. `MediaRepository.upsert`
+    is a plain `$set`, so a caption, a like count or a comment count that changed
+    on Instagram is overwritten here.
+
+    Does **not** call `apply_upcoming_post`. Arming a waiting template is a
+    different job, and surfacing a batch of old posts must not trigger it -- it
+    filters `published_at > cutoff` so it could not anyway, but relying on that
+    for correctness of an unrelated feature would be an accident waiting to be
+    reintroduced.
+
+    Partial progress is kept on failure. Each page is upserted as it arrives, so
+    a token that expires on page 3 still leaves pages 1 and 2 updated, and the
+    recorded error says what happened rather than silently rolling back work that
+    was perfectly good.
+    """
+    db = ctx["db"]
+    settings = ctx["settings"]
+    accounts = InstagramAccountsRepository(db)
+    media = MediaRepository(db)
+
+    account = await accounts.get(account_id)
+    if account is None:
+        return {"status": "skipped", "reason": "account_missing"}
+
+    log = {"account_id": str(account["_id"])}
+    await accounts.start_media_resync(account["_id"])
+
+    try:
+        token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
+        fetched = await ctx["client"].get_media(
+            token,
+            account["instagram_user_id"],
+            limit=MEDIA_PAGE_SIZE,
+            max_pages=MEDIA_MAX_PAGES,
+        )
+    except (MetaAPIError, EncryptionError) as exc:
+        await accounts.finish_media_resync(account["_id"], count=0, pages=0, error=str(exc))
+        logger.warning("media_resync_failed", extra={**log, "error": str(exc)})
+        return {"status": "failed", "reason": str(exc)}
+
+    for item in fetched:
+        await media.upsert(
+            account["_id"],
+            item.instagram_media_id,
+            {
+                "instagram_account_id": account["_id"],
+                "instagram_media_id": item.instagram_media_id,
+                "media_type": item.media_type,
+                "media_product_type": item.media_product_type,
+                "caption": item.caption,
+                "permalink": item.permalink,
+                "thumbnail_url": item.thumbnail_url,
+                "media_url": item.media_url,
+                "published_at": item.published_at,
+                "like_count": item.like_count,
+                "comments_count": item.comments_count,
+                "updated_at": datetime.now(UTC),
+            },
+        )
+
+    # Ceiling division: the page count is what tells an operator whether the walk
+    # actually reached the end or stopped at MEDIA_MAX_PAGES.
+    pages = -(-len(fetched) // MEDIA_PAGE_SIZE) if fetched else 0
+    await accounts.finish_media_resync(account["_id"], count=len(fetched), pages=pages)
+    logger.info("media_resync_finished", extra={**log, "synced": len(fetched), "pages": pages})
+    return {"status": "done", "synced": len(fetched), "pages": pages}
 
 
 async def apply_upcoming_post(db: Any, account: dict[str, Any]) -> int:

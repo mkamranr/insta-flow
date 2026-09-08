@@ -112,9 +112,15 @@ class InstagramClient(Protocol):
         ...
 
     async def get_media(
-        self, access_token: str, instagram_user_id: str, limit: int = 25
+        self, access_token: str, instagram_user_id: str, limit: int = 25, max_pages: int = 1
     ) -> list[MetaMedia]:
-        """List recent media for campaign media-targeting."""
+        """List recent media for campaign media-targeting.
+
+        `max_pages=1` is one request, which is what every routine sync wants:
+        the 15-minute cron and the Refresh buttons only care about recent posts.
+        A full resync passes `MEDIA_MAX_PAGES` to walk the whole edge, following
+        Meta's `paging.cursors.after`. See `docs/meta-api.md` §2c.
+        """
         ...
 
     async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:

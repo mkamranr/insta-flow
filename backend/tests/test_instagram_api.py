@@ -271,9 +271,89 @@ async def test_token_status_reports_expiry(signed_in, connected):
     assert response.json()["needs_refresh"] is False
 
 
-async def test_disconnect_removes_the_account(signed_in, database, connected):
+async def test_disconnect_marks_the_account_rather_than_deleting_it(
+    signed_in, database, connected
+):
+    """This assertion was inverted deliberately on 2026-09-08.
+
+    It used to require the row to be gone. But `media` and `rules` are keyed on
+    the account's `_id`, and `accounts.upsert` is keyed on `instagram_user_id`,
+    so deleting the row meant a reconnect of the SAME Instagram account minted a
+    new `_id` and orphaned every post and automation, with nothing able to remap
+    them afterwards -- 168 media rows and 8 rules on the live install. Meta's own
+    deauthorize callback already only marked the row; the two paths disagreeing
+    was the bug.
+    """
     assert (await signed_in.delete(f"/api/instagram/{connected['_id']}")).status_code == 204
-    assert await database["instagram_accounts"].count_documents({}) == 0
+
+    row = await database["instagram_accounts"].find_one({"_id": connected["_id"]})
+    assert row is not None, "the row must survive so a reconnect can reuse it"
+    assert row["status"] == "disconnected"
+
+
+async def test_a_disconnected_account_does_not_read_as_connected(
+    signed_in, database, connected
+):
+    """The blast radius of keeping the row. Six reads used to ignore `status`,
+    and each would have reported a dead account as live."""
+    await signed_in.delete(f"/api/instagram/{connected['_id']}")
+
+    # `_only_account` -- posts sync and rule creation would otherwise act on it.
+    assert (await signed_in.post("/api/posts/sync")).status_code == 422
+    # The setup banner's signal. Left unfiltered, the banner would wrongly clear.
+    assert (await signed_in.get("/api/onboarding/progress")).json()["connected"] is False
+    # Analytics scopes to the live account, so it should read as having none.
+    assert (await signed_in.get("/api/analytics/contacts")).json() == []
+
+
+async def test_a_disconnected_account_is_still_listed_so_it_can_be_reconnected(
+    signed_in, connected
+):
+    """Deliberately NOT filtered here: the Instagram page has to be able to
+    offer a reconnect, which it cannot do for a row it never sees."""
+    await signed_in.delete(f"/api/instagram/{connected['_id']}")
+
+    listed = (await signed_in.get("/api/instagram/accounts")).json()
+    assert [a["status"] for a in listed] == ["disconnected"]
+
+
+async def test_reconnecting_the_same_account_adopts_its_posts_and_automations(
+    signed_in, database, connected, admin
+):
+    """The whole point of marking rather than deleting."""
+    await database["media"].insert_one(
+        {
+            "instagram_account_id": connected["_id"],
+            "instagram_media_id": "1789",
+            "caption": "before",
+            "published_at": datetime.now(UTC),
+        }
+    )
+    await database["rules"].insert_one(
+        {
+            "instagram_account_id": connected["_id"],
+            "name": "Handwritten",
+            "instagram_media_ids": ["1789"],
+        }
+    )
+
+    await signed_in.delete(f"/api/instagram/{connected['_id']}")
+
+    # A reconnect is an upsert keyed on `instagram_user_id`, so it lands on the
+    # same row -- which is what carries the media and rules back with it.
+    from app.db.repositories import InstagramAccountsRepository
+
+    revived = await InstagramAccountsRepository(database).upsert(
+        IG_ID, {"user_id": admin["_id"], "status": "connected", "username": "myshop"}
+    )
+
+    assert revived["_id"] == connected["_id"], "a reconnect must reuse the row"
+    assert await database["media"].count_documents(
+        {"instagram_account_id": connected["_id"]}
+    ) == 1
+    assert await database["rules"].count_documents(
+        {"instagram_account_id": connected["_id"]}
+    ) == 1
 
 
 async def test_a_missing_account_returns_404(signed_in):

@@ -51,7 +51,7 @@ _SUPERFAN_RULE = (
 
 async def _account_id(accounts: Any, workspace: Workspace) -> Any:
     """This workspace's account. Scoped so metrics cannot leak across workspaces."""
-    found = await accounts.list({"user_id": workspace.user_id})
+    found = await accounts.live_for_user(workspace.user_id)
     return found[0]["_id"] if found else None
 
 
@@ -487,7 +487,7 @@ async def account_performance(
       is indistinguishable from one that gained 2 and lost none. Reporting a
       gross number would be inventing it, so this endpoint does not.
     """
-    found = await accounts.list({"user_id": workspace.user_id})
+    found = await accounts.live_for_user(workspace.user_id)
     if not found:
         return {"connected": False}
     account = found[0]

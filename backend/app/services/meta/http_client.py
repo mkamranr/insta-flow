@@ -45,6 +45,15 @@ STORY_FIELDS = (
     "id,media_type,media_product_type,caption,permalink,thumbnail_url,media_url,timestamp"
 )
 
+# One page of media. 50 rather than the protocol's 25 default because every
+# caller that cares about volume passes it explicitly anyway, and it halves the
+# request count on a full walk.
+MEDIA_PAGE_SIZE = 50
+# Meta caps this edge at 10K most-recent media, so 200 pages of 50 is the entire
+# edge and nothing legitimate can exceed it. A bound rather than `while True`: a
+# cursor that never terminates would spin against Meta until the job timeout.
+MEDIA_MAX_PAGES = 200
+
 DEFAULT_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 
 
@@ -129,15 +138,26 @@ class MetaInstagramClient:
             raw=body,
         )
 
-    async def get_media(
-        self, access_token: str, instagram_user_id: str, limit: int = 25
-    ) -> list[MetaMedia]:
+    async def _media_page(
+        self, access_token: str, limit: int, after: str | None
+    ) -> tuple[list[MetaMedia], str | None]:
+        """One page of media, plus the cursor for the next one.
+
+        The 400-fallback lives here rather than around the whole walk, so it
+        applies to *every* page. Hoisted out of `get_media` when pagination
+        arrived: an account whose media type rejects `like_count` would
+        otherwise fail on page two having succeeded on page one.
+        """
+        params: dict[str, Any] = {
+            "fields": MEDIA_FIELDS,
+            "limit": limit,
+            "access_token": access_token,
+        }
+        if after:
+            params["after"] = after
+
         try:
-            body = await self._request(
-                "GET",
-                "me/media",
-                params={"fields": MEDIA_FIELDS, "limit": limit, "access_token": access_token},
-            )
+            body = await self._request("GET", "me/media", params=params)
         except MetaAPIError as exc:
             if exc.retryable or exc.meta_status_code != 400:
                 raise
@@ -145,15 +165,43 @@ class MetaInstagramClient:
             # ones: losing engagement counts beats losing the whole sync.
             logger.warning("media_fields_rejected_retrying_base", extra={"error": str(exc)})
             body = await self._request(
-                "GET",
-                "me/media",
-                params={
-                    "fields": MEDIA_FIELDS_BASE,
-                    "limit": limit,
-                    "access_token": access_token,
-                },
+                "GET", "me/media", params={**params, "fields": MEDIA_FIELDS_BASE}
             )
-        return [_media_from(item) for item in body.get("data") or []]
+
+        items = [_media_from(item) for item in body.get("data") or []]
+        paging = body.get("paging") or {}
+        # `next` absent means this was the last page -- Meta's documented stop
+        # condition. The cursor is read from `cursors.after` rather than by
+        # following `next` verbatim: that URL is absolute, carries the access
+        # token, and pins its OWN api version (observed v26.0 while we request
+        # v25.0), so following it would silently switch version mid-walk.
+        # Verified 2026-09-08; see `docs/meta-api.md` §2c.
+        cursor = (paging.get("cursors") or {}).get("after") if paging.get("next") else None
+        return items, str(cursor) if cursor else None
+
+    async def get_media(
+        self, access_token: str, instagram_user_id: str, limit: int = 25, max_pages: int = 1
+    ) -> list[MetaMedia]:
+        collected: list[MetaMedia] = []
+        after: str | None = None
+
+        for _ in range(max(1, max_pages)):
+            items, after = await self._media_page(access_token, limit, after)
+            collected.extend(items)
+            if after is None:
+                break
+        else:
+            # Ran out of pages before Meta ran out of media. Only reachable on an
+            # account larger than MEDIA_MAX_PAGES * limit, which is the whole
+            # edge, so it means something is wrong rather than that the operator
+            # is prolific.
+            if after is not None:
+                logger.warning(
+                    "media_pagination_capped",
+                    extra={"pages": max_pages, "collected": len(collected)},
+                )
+
+        return collected
 
     async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
         """GET /me/stories -- active stories only (docs/meta-api.md §4d).

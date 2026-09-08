@@ -16,6 +16,7 @@ from app.db.repositories import (
     ContactsRepository,
     ExecutionsRepository,
     InstagramAccountsRepository,
+    MediaRepository,
     RolesRepository,
     RulesRepository,
     UsersRepository,
@@ -23,6 +24,26 @@ from app.db.repositories import (
 from app.permissions import OWNER_SLUG
 
 logger = logging.getLogger(__name__)
+
+
+async def _drop_orphaned_media(
+    database: AsyncDatabase[dict[str, Any]], accounts: InstagramAccountsRepository
+) -> int:
+    """Remove media left behind by an account that was hard-deleted.
+
+    **Skipped entirely when no account exists**, and that guard is the whole
+    reason this is a function rather than two inline lines: derived naively,
+    "media whose account is missing" on a fresh install is *every* media row,
+    so a first boot would delete everything the first sync had just written.
+    A deployment with no connected account has nothing worth reconciling anyway.
+
+    Only needed for rows that predate the 2026-09-08 change making disconnect
+    mark rather than delete; nothing can orphan media any more.
+    """
+    live = [row["_id"] for row in await accounts.all_matching()]
+    if not live:
+        return 0
+    return await MediaRepository(database).drop_orphaned(live)
 
 
 async def prepare(database: AsyncDatabase[dict[str, Any]]) -> dict[str, list[str]]:
@@ -57,6 +78,9 @@ async def prepare(database: AsyncDatabase[dict[str, Any]]) -> dict[str, list[str
     accounts = InstagramAccountsRepository(database)
     await accounts.backfill_created_at()
     await accounts.backfill_defaults()
+    dropped = await _drop_orphaned_media(database, accounts)
+    if dropped:
+        logger.info("orphaned_media_dropped", extra={"rows": dropped})
     reconstructed = await ContactsRepository(database).backfill_sources(
         ExecutionsRepository(database),
         CommentsRepository(database),

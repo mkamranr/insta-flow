@@ -5,6 +5,7 @@ from typing import Any
 
 from arq import cron, run_worker
 from arq.connections import RedisSettings
+from arq.worker import func
 
 from app.config import get_settings
 from app.db import mongodb
@@ -23,6 +24,7 @@ from app.workers.tasks import (
     recheck_follow,
     refresh_expiring_tokens,
     refresh_geoip_database,
+    resync_all_media,
     snapshot_account_metrics,
     sync_posts,
     sync_stories,
@@ -86,6 +88,12 @@ class WorkerSettings:
         sync_posts,
         sync_stories,
         send_email,
+        # Its own timeout, because `job_timeout` below is class-wide and 60s
+        # cannot cover a full walk of the media edge -- 200 requests at worst.
+        # `max_tries=1` because the walk is idempotent and operator-triggered:
+        # the button is the retry, and five silent attempts would quadruple the
+        # API cost while hiding the failure the Settings card exists to show.
+        func(resync_all_media, timeout=600, max_tries=1),
     ]
     cron_jobs = [
         # Daily token check. Meta kills a token not refreshed within 60 days.

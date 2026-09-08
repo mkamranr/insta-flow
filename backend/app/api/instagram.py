@@ -519,7 +519,13 @@ async def disconnect(
     audit: AuditRepo,
 ) -> None:
     account = await _load(accounts, account_id, workspace)
-    await accounts.delete(account["_id"])
+    # Marked, not deleted. The row is keyed on `instagram_user_id`, so keeping it
+    # means reconnecting the same account reuses it and its posts and automations
+    # come back with it -- `media` and `rules` are keyed on this `_id`, and
+    # deleting the row orphaned all of them with nothing able to remap them
+    # afterwards. This is also what Meta's own deauthorize callback already does
+    # above; the two paths disagreeing was the bug.
+    await accounts.set_status(account["_id"], "disconnected")
     await audit.record(
         user_id=user["_id"],
         action="instagram.disconnected",

@@ -125,9 +125,28 @@ key error means another worker already has it — skip, do not send.
 | `app_settings` | A single document for things an operator may edit from the dashboard. The MaxMind credentials and the outbound-mail settings; the license key and the SMTP password are encrypted like a Meta token. |
 | `meta_apps` | One Meta app per user, so a second person can connect their own Instagram account without going through the first person's app -- which is what would turn this into a third-party integration needing App Review. App secret and webhook verify token are encrypted like a Meta token. A separate collection rather than fields on the user document, because `current_user` reads the whole user document on every request. |
 | `app_settings` | Also holds the public origin (overriding `PUBLIC_BASE_URL`), the outbound mail settings, the invite expiry window, and the automated-experience disclosure. **Everything in it is server-wide and therefore gated `instance.*`.** The disclosure was the last exception: it sat behind `settings.edit` as though it were per-workspace, while `workers/tasks._with_disclosure` takes only a database handle and appends the one saved line to *every* workspace's replies. Moved 2026-09-07, and `settings.edit` -- which guarded nothing else -- was retired with it. `settings.view` remains, because it is what opens the Settings page at all. |
+| `media` | A cache of what Meta holds for an account, refreshed by `upsert` (a plain `$set`, so an edited caption is overwritten). Routine syncs fetch **one page** of `MEDIA_PAGE_SIZE`; only the manual *Resync all posts* action walks the whole edge, following `paging.cursors.after` — see `docs/meta-api.md` §2c. Rows whose account was hard-deleted before the lifecycle fix are removed once by a backfill in `prepare()`, guarded to do nothing when no account exists at all. |
 | `email_log` | One row per message the deployment tried to send, so "did that invitation go out, and if not why" is answerable months later without a mail-server login. **The rendered body and the variable values are never stored** -- an invitation body carries a single-use token, and keeping a plaintext copy with no expiry would defeat storing only its hash. No TTL yet, deliberately: this install sends single digits of mail a month, so growth is not the problem and the row's whole value is being readable long after the incident. When a bulk sender arrives, the right shape is a *partial* TTL over `status: "sent"` rows only, never over `failed` ones. |
 | `invites` | An invitation to create an account. **Only the token's SHA-256 is stored** -- unlike the Meta verify token, which is encrypted because the operator has to read it back; nobody ever reads an invite token again after the email is queued, so the stronger option is available and taken. That matters because MongoDB has no authentication (`docs/security.md`), so a dump must yield no usable links. Two unique indexes carry the logic: `uq_invite_token` for the one-query redemption, and `uq_invite_pending_email` **partial on the value `pending`** so one live invite per address is enforced by the index rather than a read -- and so an accepted or revoked invite drops out and the person can be invited again. `expired` is derived from the clock, never stored, and there is deliberately no TTL: deleting the row would make a late click indistinguishable from a wrong token. |
 | `roles` | A named set of permissions, assigned to users via `users.role_id`. `owner` is seeded from the whole catalogue and re-synced on every boot, so a new permission reaches it with no migration; `manager` and `viewer` are seeded once and then belong to the operator. `workspace-owner` -- the role every invited person holds -- is **locked** like `owner`, because an operator widening it by hand would widen it for every tenant at once. |
+
+## Account lifecycle
+
+**Disconnecting an Instagram account marks it, it does not delete it.** The row
+gets `status: "disconnected"` and stays. That is load-bearing rather than tidy:
+`media` and `rules` are keyed on the account's `_id`, while `accounts.upsert` is
+keyed on `instagram_user_id` — so a kept row is reused when the same account is
+reconnected and brings its posts and automations back with it, whereas deleting
+it minted a fresh `_id` and orphaned everything, with nothing able to remap the
+rows afterwards (`media` carries no `instagram_user_id`). This also matches what
+Meta's own deauthorize callback always did; the two paths disagreeing was the bug.
+
+The consequence is that **"this workspace's account" now has to mean "not
+disconnected"** everywhere, or a dead account reads as live. That rule lives in
+one place, `InstagramAccountsRepository.live_for_user` / `.LIVE`, and
+`default_for_user` and `ensure_default` route through it. The one deliberate
+exception is `GET /api/instagram/accounts`, which still lists disconnected rows —
+the Instagram page cannot offer to reconnect a row it never sees.
 
 ## Workspaces
 
