@@ -254,6 +254,24 @@ being excluded and its `status` is the thing to look at.
 Do not disconnect the account just to see the new behaviour. It is recoverable now, but
 reconnecting costs a full OAuth round trip against Meta.
 
+### Rolling back
+
+Mostly safe, with two exceptions worth reading before you do it.
+
+**The deleted media rows do not come back.** Rolling back restores the code and nothing else.
+They cannot be re-fetched either: they belonged to accounts that no longer exist, so there is
+no token to fetch them with. `make restore ARCHIVE=...` is the only recovery.
+
+**`status: "disconnected"` rows written by the new disconnect button persist**, and the older
+code does not filter on status -- so a disconnected account reads as live again and the
+Automations and Analytics pages will present it as the workspace's active one. No message goes
+out (the policy engine independently requires `connected`), but the UI will be misleading until
+you reconnect or remove the row.
+
+And the standing warning from the roles release compounds now: rolling back past it turns every
+person you invited -- each holding `workspace-owner` -- into a full administrator of the whole
+install, because the older code has no permission model. Deactivate invited users first.
+
 ## Invite-only signup
 
 Adds invitations, a guided Meta-app setup, and a fourth seeded role. Additive: nothing
@@ -271,9 +289,51 @@ Caddy reads that file into memory at startup, so `up -d` sees an unchanged conta
 silently keeps the old logging.
 
 On first boot: an `invites` collection with four indexes, and a `workspace-owner` role seeded
-alongside the existing three. **No existing user is repointed at it**, and `ALL` is unchanged
-in size because no permission module was added -- so the Owner re-sync stays a no-op and any
-Manager or Viewer role you have edited is untouched.
+alongside the existing three. **No existing user is repointed at it**, and any Manager or
+Viewer role you have edited is untouched -- both are `locked=False`, so the seeder only ever
+`$setOnInsert`s them.
+
+**Correction.** This section previously claimed `ALL` was unchanged in size and that the Owner
+re-sync stayed a no-op. That was wrong. No permission *module* was added, but an *action* was
+removed: `settings.edit` left the catalogue when the disclosure moved to `instance.*`, so `ALL`
+went from 19 to 18 and Owner -- which is `locked=True` and rebuilt from code on every boot --
+does have its stored `permissions` array rewritten. Harmless for Owner itself, but it has a
+consequence that is not:
+
+### A hand-made role that still stores `settings.edit` becomes unassignable
+
+Seeded roles are fine: Manager and Viewer never held it. Only a role you created or hand-edited
+yourself can, and after the upgrade that role is rejected in three places, none of which name
+the real cause:
+
+- **Editing it returns 422** `unknown permissions: settings.edit`. The role editor submits the
+  whole stored array, and the grid cannot show a checkbox for a permission that no longer
+  exists -- so the offending value is invisible on screen while still being sent.
+- **Duplicating it returns 422**, for the same reason.
+- **Assigning it to anyone returns 403** "You cannot grant access you do not have yourself."
+  `role_you_may_grant` requires the role's permissions to be a subset of yours, and after the
+  re-sync even an Owner's 18 do not contain `settings.edit`. That blocks creating a user with
+  that role, changing someone onto it, and inviting anyone into it.
+
+People **already** on such a role keep working. Find them before upgrading:
+
+```bash
+docker compose exec -T mongodb mongosh --quiet "$DB" --eval '
+  db.roles.find({permissions:"settings.edit"},{slug:1,name:1,is_system:1}).forEach(r =>
+    print("  " + r.slug + "  is_system=" + r.is_system +
+          "  users=" + db.users.countDocuments({role_id:r._id})));'
+```
+
+Anything listed needs one line to repair, either before or after the upgrade:
+
+```bash
+docker compose exec -T mongodb mongosh --quiet "$DB" --eval '
+  db.roles.updateMany({permissions:"settings.edit"}, {$pull:{permissions:"settings.edit"}})'
+```
+
+If those holders genuinely need the disclosure or Click geography, grant them
+**Server settings -> Manage** (`instance.manage`) on the Roles page instead. Note that is
+Owner-level: it also carries the server's public address.
 
 Verify:
 
