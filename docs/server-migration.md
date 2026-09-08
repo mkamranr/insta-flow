@@ -46,11 +46,16 @@ laptop:  https://kamrans-macbook-pro.tail2bcecb.ts.net
 server:  https://<whatever-the-server-is-called>.tail2bcecb.ts.net
 ```
 
-That means two things must be updated, and **nothing warns you if you forget** — webhooks just
-silently stop arriving:
+That means **three** things must be updated, and **nothing warns you if you forget** — webhooks
+just silently stop arriving:
 
 1. `PUBLIC_BASE_URL` in `.env` on the server
-2. The **OAuth redirect URI** and the **webhook callback URL** in the Meta dashboard
+2. The **public address saved in Settings**, if one is set — check this, because it
+   **overrides `.env` and wins silently**. `origin_for()` prefers the stored value, so a
+   migration where you carefully update `.env` can still have every workspace URL, Meta
+   callback and invitation link pointing at the machine you just left. Look at
+   *Settings → Public address*: if it shows the old host, clear it or set the new one.
+3. The **OAuth redirect URI** and the **webhook callback URL** in the Meta dashboard
 
 ---
 
@@ -237,6 +242,28 @@ DRY_RUN=true
 # and leave the funnel off.
 ```
 
+## Step 9b — Things added since this guide was first written
+
+Quick checks, each of which is silent if you skip it:
+
+- **Outbound mail still works.** The SMTP password is encrypted under
+  `ENCRYPTION_KEY`, so it survives only if you copied that key byte for byte.
+  *Settings → Email → Send test email* is the check; a wrong key reports "the
+  stored password cannot be read" rather than failing quietly.
+- **Pending invitations embed the old address.** An activation link is built from
+  the public origin at the moment it was sent, so any invitation already in
+  somebody's inbox points at the machine you have just left. Revoke and resend
+  them from *Invites* after step 7. `db.invites.countDocuments({status:"pending"})`
+  tells you whether there are any.
+- **The new collections came across.** `make verify-backup` counts `invites` and
+  `email_log` along with everything else; a restore that reports zero for those
+  when the source had rows means the archive predates them.
+- **A full resync is worth one press.** *Settings → Resync all posts* re-reads
+  every post from Meta, which is the fastest way to confirm the moved token,
+  the moved encryption key and outbound Meta access all work together.
+
+---
+
 ## Step 10 — Confirm it actually works
 
 In order. Each step gates the next:
@@ -329,7 +356,10 @@ explanation rather than letting Docker's raw error surface.
 ### Instagram shows as disconnected after the restore
 
 `ENCRYPTION_KEY` did not survive the move. Meta tokens are AES-256-GCM encrypted at rest with
-that key, so a different one makes every stored token unreadable. Copy the original value from
+that key — and so is the outbound-mail password and each workspace's Meta app secret and
+webhook verify token — so a different one makes all of them unreadable. Mail fails with "the
+stored password cannot be read", which *Settings → Email* reports rather than hiding. Copy the
+original value from
 the laptop's `.env` and `make reload`. If the key is genuinely lost, reconnect the account
 through the dashboard.
 

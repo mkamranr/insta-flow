@@ -108,7 +108,7 @@ verify-backup: db-preflight ## Restore ARCHIVE into a scratch database and count
 	@test -s "$(ARCHIVE)" || { echo "$(ARCHIVE) does not exist, or is empty."; exit 1; }
 	@echo "Restoring into a scratch database. Live data is not touched."
 	@$(COMPOSE) exec -T mongodb mongorestore --archive --drop --nsFrom='instaflow.*' --nsTo='backupcheck.*' < $(ARCHIVE) 2>&1 | tail -1
-	@$(COMPOSE) exec -T mongodb mongosh backupcheck --quiet --eval 'print("");["users","rules","instagram_accounts","media","executions","comments"].forEach(c=>print("  "+c.padEnd(22)+db.getCollection(c).countDocuments({})))'
+	@$(COMPOSE) exec -T mongodb mongosh backupcheck --quiet --eval 'print("");["users","roles","instagram_accounts","media","rules","executions","comments","contacts","invites","email_log"].forEach(c=>print("  "+c.padEnd(22)+db.getCollection(c).countDocuments({})))'
 	@$(COMPOSE) exec -T mongodb mongosh backupcheck --quiet --eval 'db.dropDatabase()' > /dev/null
 	@echo ""
 	@echo "  scratch database dropped; live data untouched"
