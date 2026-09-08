@@ -1527,8 +1527,17 @@ button.start-card:hover:not(:disabled) {
 
 .story-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
 
+/* No `align-items` here, deliberately. This is a COLUMN flex container, so
+   `align-items` governs the horizontal axis -- `flex-start` made every child
+   shrink to its own content width instead of filling the card. `.story-thumb`
+   escaped that by setting `width: 100%`, but `.story-label` did not, so it sized
+   itself to the entire caption: the line-clamp had no width to clamp against,
+   `overflow: hidden` clipped against the label's own over-wide box, and the text
+   ran out past the card border and under the fixed stats rail. `text-align:
+   left` is what was actually wanted. Third variant of the flex/sizing trap this
+   file documents twice below for `aspect-ratio`. */
 button.story-card {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  display: flex; flex-direction: column; gap: 3px;
   padding: 6px; text-align: left; white-space: normal;
   background: var(--surface); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -1554,6 +1563,43 @@ button.story-card.on { border-color: var(--text); box-shadow: 0 0 0 1px var(--te
 .story-label {
   font-size: 12px; font-weight: 600; line-height: 1.3;
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  /* `min-width: 0` is what actually makes a flex child shrinkable; without it a
+     long caption still wins. `overflow-wrap` is for captions with no spaces in
+     them at all -- a row of `=` signs overflows even a correctly sized box. */
+  min-width: 0; overflow-wrap: anywhere;
+}
+
+/* Roomier variant, for the clone picker only.
+   -------------------------------------------------------------------------
+   That page lists every post with no automation -- often dozens -- and each
+   thumbnail is a cover image with its text baked in. At the shared 104px that
+   text is unreadable and every caption clamps to the same two or three words,
+   so the whole grid reads as one texture rather than a set of choices.
+   Scoped rather than changed at the declaration above, because the other
+   consumer is `StoryPicker` inside the rule editor's modal, where 104px is
+   right and 190px would leave it three columns wide. Same technique, and same
+   reason, as `.rules-table .row-thumb` and `.editor-post .row-thumb`. */
+.post-picker { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--s-4); }
+.post-picker button.story-card { padding: var(--s-2); gap: var(--s-2); }
+/* Explicit height, not `aspect-ratio`: see the note above -- this is exactly
+   the column-flex shape where it loses. */
+.post-picker .story-thumb { height: 200px; }
+.post-picker .story-tick {
+  top: var(--s-2); right: var(--s-2);
+  width: 24px; height: 24px; font-size: 13px;
+}
+/* Three lines, not two: the caption is the only thing distinguishing one post
+   from another here, and two lines of a 190px column is not enough to tell
+   them apart. The card also carries a `title` for whatever still clamps. */
+.post-picker .story-label { font-size: 13px; -webkit-line-clamp: 3; }
+/* Border-color alone is enough inside a modal; across a full page of cards it
+   reads as flat. `button.story-card` so it out-specifies the global
+   `button:hover:not(:disabled)` at (0,2,1) -- see the note above. */
+.post-picker button.story-card:hover:not(:disabled) { box-shadow: var(--shadow); }
+/* `.on`'s selected ring is itself a box-shadow, so it has to be restated or
+   hovering a selected card would drop the ring. */
+.post-picker button.story-card.on:hover:not(:disabled) {
+  box-shadow: 0 0 0 1px var(--text) inset, var(--shadow);
 }
 
 /* -- Story tiles ----------------------------------------------------------- */

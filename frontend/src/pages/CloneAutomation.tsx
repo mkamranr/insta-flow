@@ -124,11 +124,13 @@ export function CloneAutomation() {
 
       {rule && (
         <div className="card">
-          <h2>Posts with no automation</h2>
+          <h2>
+            Posts with no automation <span className="pill">{unlinked.length}</span>
+          </h2>
           {unlinked.length === 0 ? (
             <p className="muted">Every synced post already has an automation.</p>
           ) : (
-            <div className="story-grid">
+            <div className="story-grid post-picker">
               {unlinked.map((post: Post) => {
                 const on = selected.has(post.instagram_media_id)
                 return (
@@ -137,6 +139,12 @@ export function CloneAutomation() {
                     type="button"
                     className={on ? 'story-card on' : 'story-card'}
                     aria-pressed={on}
+                    // The caption clamps at three lines, and it is the only
+                    // thing telling one post from another. Screen readers get
+                    // the whole thing already -- CSS clamping does not truncate
+                    // a button's accessible name -- so this closes the gap for
+                    // pointer users, which is the gap that exists.
+                    title={post.caption ?? undefined}
                     onClick={() => toggle(post.instagram_media_id)}
                   >
                     <span className="story-thumb">
