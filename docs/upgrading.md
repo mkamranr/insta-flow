@@ -76,8 +76,9 @@ make verify-backup ARCHIVE=backups/mongo-<stamp>.archive
 It never touches live data. You should see your real numbers.
 
 This is not optional ceremony. Some releases write to collections that already hold your
-data — the newest below rewrites every row in `contacts`, and the workspaces one rewrote every
-row in `users`. A dump you have never restored is a hypothesis, not a backup.
+data: **the newest below deletes rows from `media`**, the contacts one rewrote every row in
+`contacts`, and the workspaces one rewrote every row in `users`. A dump you have never restored
+is a hypothesis, not a backup.
 
 ## Step 3 — Pull, build, reload
 
@@ -114,6 +115,12 @@ there is one code path and it cannot drift.
 What that means in practice: **the migration happens the moment the new API container
 starts**, before it serves a request. If it fails, the container fails its healthcheck and you
 will see it in `docker compose ps`.
+
+**A backfill is not always additive.** Most only fill in a missing field, but one now *deletes*
+rows -- orphaned `media`, see the newest release notes below -- and it runs automatically, with
+no prompt and no dry run. Rolling the image back does not undo it. That is the specific reason
+Step 2 is not ceremony: read the release notes for the version you are moving to and find out
+what its migration writes before you start it.
 
 ## Step 5 — Verify
 
@@ -154,6 +161,98 @@ and for some releases that matters — see the warning under this release's note
 ---
 
 # Release notes
+
+## Orphaned posts, and a full resync
+
+**This is the first release whose migration DELETES rows.** Everything else in it is
+additive. Read this section before pulling.
+
+### What it deletes, and why
+
+A disconnect used to hard-delete the account row and leave its posts and automations behind,
+keyed on an `_id` nothing pointed at any more. Because `accounts.upsert` is keyed on
+`instagram_user_id`, reconnecting the *same* Instagram account then minted a fresh `_id` and
+stranded everything permanently -- there is no `instagram_user_id` on a `media` row, so nothing
+can remap them afterwards. Four connect/disconnect cycles during setup were enough to leave 168
+orphaned rows on the development machine.
+
+Disconnect now marks the account `disconnected` and keeps the row, which is what Meta's own
+deauthorize callback always did. Nothing can orphan media any more. The rows already orphaned
+are removed once, by a backfill in `prepare()`.
+
+**That deletion is irreversible except from a backup.** Rolling the image back does not bring
+the rows back, and a sync cannot re-fetch them: they belonged to accounts that no longer exist,
+so there is no token and no Instagram account to fetch them from.
+
+Orphaned *automations* are left alone and counted in the log. They hold message text somebody
+wrote, they are inert because the worker only iterates accounts that exist, and deleting
+authored content during an upgrade is not a default worth having.
+
+### Predict the deletion before you pull
+
+```bash
+# MONGO_DATABASE is set for the containers, not for your login shell -- a bare
+# "$MONGO_DATABASE" expands to empty, mongosh silently connects to `test`, and
+# the whole check reports a reassuring row of zeroes.
+DB=$(grep -E '^MONGO_DATABASE=' .env | cut -d= -f2- | tr -d '"'"'"' '); DB=${DB:-instaflow}
+echo "querying database: $DB"
+
+docker compose exec mongodb mongosh --quiet "$DB" --eval '
+var live = db.instagram_accounts.find({},{_id:1}).toArray().map(a=>String(a._id));
+var all  = db.media.find({},{instagram_account_id:1}).toArray();
+var orph = all.filter(m => live.indexOf(String(m.instagram_account_id)) === -1);
+print("media rows total : " + all.length);
+print("WILL BE DELETED  : " + orph.length);
+db.instagram_accounts.find({},{username:1,status:1}).forEach(a =>
+  print("  @" + a.username + "  status=" + a.status));'
+```
+
+`WILL BE DELETED: 0` means the backfill is a no-op for you. A non-zero number is what the
+backup in Step 2 is for.
+
+**One finding blocks the upgrade.** If your only account shows `status=disconnected`, stop.
+"This workspace's account" now means "not disconnected", so after upgrading the app would
+report no account connected. `token_error`, or a missing status, is still treated as live --
+the filter is `$ne: "disconnected"`, which matches an absent field too.
+
+### Then
+
+```bash
+git pull
+make build      # mandatory: aiosmtplib is new, so up -d alone reuses the old image
+make reload
+docker compose logs api --since 5m | grep orphaned_media_dropped
+```
+
+Expect `rows: N` matching the prediction, or no line at all if it was zero.
+
+### What else changed
+
+Media fetching now paginates, following `paging.cursors.after` -- see `docs/meta-api.md` §2c,
+where every fact is recorded with the date it was verified against a live account. Routine
+syncs are unaffected and still request **one page**: the 15-minute cron and
+`POST /api/posts/sync`, which is what both the Dashboard's "Sync from Instagram" and the
+Posts & Reels "Refresh" call. Only the new **Settings -> Resync all posts** walks the whole
+edge, and it is the single best end-to-end check after an upgrade -- it exercises the stored
+token, the encryption key protecting it, outbound Meta access and the new job registration in
+one press.
+
+### Verify
+
+```bash
+docker compose exec mongodb mongosh --quiet "$DB" --eval '
+print("media rows now: " + db.media.countDocuments({}));
+db.media.aggregate([{$group:{_id:"$instagram_account_id",n:{$sum:1}}}]).forEach(r=>
+  print("  account " + r._id + ": " + r.n));'
+```
+
+Every row should now belong to an account that exists. Then in the dashboard: sign in, press
+Refresh on Posts & Reels, and press **Resync all posts** in Settings -- it should report a count
+and a finish time. The guided-setup banner should stay absent; if it appears, the account is
+being excluded and its `status` is the thing to look at.
+
+Do not disconnect the account just to see the new behaviour. It is recoverable now, but
+reconnecting costs a full OAuth round trip against Meta.
 
 ## Invite-only signup
 

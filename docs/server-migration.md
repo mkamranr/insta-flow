@@ -1,5 +1,12 @@
 # Moving Social Flow to another server
 
+> **This is for moving to different hardware, keeping the data you already have.**
+> If the target server is **already running Social Flow** and only needs the newest
+> version, you want `docs/upgrading.md` instead — following this guide at a running
+> deployment would restore one machine's database over the other's and copy an
+> `ENCRYPTION_KEY` that cannot decrypt what the target has stored. Standing up a
+> brand new install is `docs/deployment.md`.
+
 This app currently runs on a laptop, which means **automations only work while that laptop is
 awake and online**. Meta does not retry a webhook forever, and a comment that arrives while the
 machine is asleep is simply never answered.
