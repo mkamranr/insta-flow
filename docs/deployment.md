@@ -83,19 +83,43 @@ webhook re-verified each time. Useful for a one-off test, not for ongoing use.
 ### C. Your own domain
 
 Point a domain at a host with a public IP, open 80/443, and let Caddy obtain certificates
-automatically. Replace the Caddyfile's `:8080` block with:
+automatically. This is the only always-on option.
+
+**Change only the site address line.** In `infra/caddy/Caddyfile`, replace
+
+```
+:8080 {
+```
+
+with
 
 ```
 instagram.yourdomain.com {
-    encode gzip
-    handle /api/*      { reverse_proxy api:8000 }
-    handle /webhooks/* { reverse_proxy api:8000 }
-    handle             { reverse_proxy frontend:3000 }
-}
 ```
 
-and publish `80:80` and `443:443` instead of the loopback mapping. This is the only
-always-on option.
+and leave everything inside the block exactly as it is. Then publish `80:80` and
+`443:443` in `docker-compose.yml` instead of the `127.0.0.1:${HOST_PORT}:8080` loopback
+mapping. The comment at the top of the Caddyfile says the file must not contain a public
+hostname; with Caddy terminating TLS itself that no longer applies, so update it rather
+than leaving the next reader to trust it.
+
+> **Do not replace the block with a hand-written one.** An earlier version of this section
+> offered a four-line sample carrying only `/api/*`, `/webhooks/*` and a catch-all to the
+> frontend. Pasting it drops every other route in the file, and each failure is silent:
+>
+> | Dropped | What breaks |
+> | --- | --- |
+> | `@workspace` path_regexp | `/u/<slug>/api/...` falls through to the SPA — the `405 Not Allowed` / raw-`<!doctype html>` trap |
+> | `/privacy`, `/data-deletion` | The two URLs Meta requires for Live mode stop resolving, which can take the app out of Live |
+> | `/files/*` | Meta fetches an attachment for a DM and receives an HTML page instead (`docs/meta-api.md` §4c) |
+> | `/r/*` | Trackable link redirects stop resolving, so every click is lost |
+> | `/health`, `/ready` | Monitoring, and `make funnel`'s `"service":"social-flow"` preflight |
+> | `header` block | CSP, HSTS, `nosniff` and `X-Frame-Options` all silently gone |
+> | `log` filter | The invite token and Meta's verify token reach the container log unredacted |
+> | `trusted_proxies` | Click geography records every visitor as unlocatable |
+>
+> The Makefile carries a comment noting that a Caddyfile mistake of exactly this kind
+> "cost a production incident". Keep the file and change its address.
 
 ## Container runtime
 

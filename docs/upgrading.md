@@ -96,6 +96,122 @@ just `Up`. If anything says `Restarting`, see Troubleshooting in `docs/server-mi
 `make build` rebuilds `api`, `worker` and `frontend`. `api` and `worker` share the same image
 context (`./backend`), so both pick up backend changes.
 
+### If `git pull` refuses to overwrite something
+
+Git has **two** different refusals here and they need different fixes. Read which one you
+got before doing anything:
+
+```
+error: Your local changes to the following files would be overwritten by merge:
+Please commit your changes or stash them before you merge.        <- tracked, modified
+```
+
+```
+error: The following untracked working tree files would be overwritten by merge:
+Please move or remove them before you merge.                      <- untracked
+```
+
+Either way, start with the same read-only diagnosis below. `git status --short` settles it
+in one line: ` M` prefixes are tracked modifications, `??` prefixes are untracked files.
+A live install has hit the untracked case in practice — a release's new files present on
+disk while the checkout's HEAD still predated them, so every one of them blocked the merge
+while `git status` showed no modifications at all.
+
+#### Both cases: diagnose first
+
+A server can carry local edits to tracked files legitimately — a domain deployment is
+*documented* as editing `infra/caddy/Caddyfile` and `docker-compose.yml`
+(`docs/deployment.md` § C). So the first move is **not** `git checkout --`,
+`git reset --hard` or `git clean`: those are irreversible, and on this box the file they
+would throw away might be the TLS configuration the site is served through. Discard it and
+the site comes back on loopback `:8080` with no certificate.
+
+First, what is nothing to worry about. `.gitignore` covers `.env`, `.env.*`, `backups/`,
+`uploads/*` and `*.pem` / `*.key`, and **nothing below touches an ignored file** — the one
+git command that would is `git clean -x`, which is exactly why it never appears here. Your
+secrets, `ENCRYPTION_KEY`, database dumps and uploaded attachments are outside the blast
+radius of everything below, and the database itself is in a Docker volume, not in git.
+
+```bash
+git status --short                     # ` M` = modified, `??` = untracked
+git log --oneline origin/master..HEAD  # any output = commits that exist only here
+git fetch origin
+git diff --stat origin/master          # the decisive one
+```
+
+Read the last of those carefully. **Empty output** means every *tracked* file already
+matches the target and only the HEAD pointer is stale, so nothing tracked is at stake.
+Anything else is the part that is genuinely local, and worth reading before it moves.
+
+It means nothing about untracked files, though, because `git diff` **ignores them
+entirely**. A new file sitting untracked on disk still shows in this diff as *missing*
+relative to `origin/master` — reading as "the box is behind" even though the file is
+physically right there. That is consistent rather than contradictory, and it is the
+giveaway for the untracked case.
+
+#### If they are tracked modifications: stash
+
+`git stash` does the same job as a discard, reversibly:
+
+```bash
+git diff > ~/preupgrade.patch    # belt and braces, readable without git
+
+# No -u and no -a on purpose: tracked modifications only, so untracked and
+# ignored files are left completely alone.
+git stash push -m "pre-upgrade $(date +%F)"
+
+git status --short                # expect clean
+git pull
+```
+
+Finally, find out whether anything was actually lost — this is what makes stashing safe
+rather than merely deferred:
+
+```bash
+git diff stash@{0} --stat
+```
+
+That compares the stashed tree against the one you now have. **Empty** means the local
+changes were exactly the incoming ones; `git stash drop` when convenient, or keep it, it
+costs nothing. **Non-empty** means every line listed existed only on this server: read it
+with `git diff stash@{0}` and re-apply by hand what matters.
+
+Do not `git stash pop` blindly to find out. A release that also modifies the Caddyfile will
+conflict there, and a half-merged Caddyfile is a file Caddy will still happily load.
+
+#### If they are untracked: archive, then clean
+
+`git stash` will not help — without `-u` it ignores untracked files, and with `-u` it
+sweeps up anything untracked you did want. Archive them and remove them instead:
+
+```bash
+STAMP=$(date +%F-%H%M)
+
+# --exclude-standard is the safety: .env, backups/ and uploads/ are ignored,
+# so they are neither archived nor removed.
+git ls-files --others --exclude-standard > /tmp/untracked.list
+wc -l < /tmp/untracked.list
+tar -czf ~/untracked-$STAMP.tgz -T /tmp/untracked.list
+tar -tzf ~/untracked-$STAMP.tgz | wc -l     # must match the count above
+
+git clean -nd        # DRY RUN. Read this list.
+git clean -fd
+git status --short   # expect clean
+git pull
+```
+
+`git clean` does not remove ignored files unless you pass `-x`. Do not pass `-x`: on a
+server that is `.env`, your backups and every uploaded attachment.
+
+Afterwards, check the copies held nothing unique:
+
+```bash
+mkdir -p /tmp/was-untracked && tar -xzf ~/untracked-$STAMP.tgz -C /tmp/was-untracked
+diff -r /tmp/was-untracked/backend backend | grep -v '^Only in /tmp' | head
+```
+
+Silence means they were identical to what the pull brought, and the archive can go.
+
 ### Never deploy the frontend ahead of the API
 
 The dashboard calls endpoints that may not exist in the older API — a new admin page hitting
