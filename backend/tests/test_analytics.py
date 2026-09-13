@@ -126,8 +126,12 @@ async def test_the_two_step_flow_does_not_halve_the_click_through_rate(signed_in
     assert body["click_through_rate"] == 100.0
 
 
-async def _rule_with(database, account_id, *, name, actions=(), links=()):
-    """A rule plus the executions it sent and the tracked links it minted."""
+async def _rule_with(database, account_id, *, name, actions=(), links=(), priority=100):
+    """A rule plus the executions it sent and the tracked links it minted.
+
+    `priority` is the sort key every listing reads, so a test that cares where
+    a rule lands in the list sets it rather than relying on insertion order.
+    """
     rule_id = ObjectId()
     now = datetime.now(UTC)
     await database["rules"].insert_one(
@@ -135,7 +139,7 @@ async def _rule_with(database, account_id, *, name, actions=(), links=()):
             "_id": rule_id,
             "instagram_account_id": account_id,
             "name": name,
-            "priority": 100,
+            "priority": priority,
             "enabled": True,
         }
     )
@@ -222,6 +226,53 @@ async def test_each_destination_is_rated_against_its_own_deliveries(signed_in, d
     assert rates["https://example.com/b"]["click_through_rate"] == 100.0
     # Four links delivered, four clicks -- the rule agrees with its destinations.
     assert row["click_through_rate"] == 100.0
+
+
+async def test_rule_performance_is_not_capped_at_fifty(signed_in, database, admin):
+    """`BaseRepository.list` stops at 50, which silently truncated the table.
+
+    It only ever hid rules from the screen -- the worker matches through
+    `list_for_media`, which reads an uncapped cursor -- so nothing looked
+    broken. The dashboard pages this list now, and a pager that says "50 of
+    50" over an account with 60 automations is asserting something false.
+    """
+    account_id = await seed(database, admin)
+    for n in range(60):
+        await _rule_with(database, account_id, name=f"Rule {n}", actions=("private_reply",))
+
+    assert len((await signed_in.get("/api/analytics/rules")).json()) == 60
+
+
+async def test_listing_automations_is_not_capped_at_fifty(signed_in, database, admin):
+    """The Automations page reads this one, and pages it the same way."""
+    account_id = await seed(database, admin)
+    for n in range(60):
+        await _rule_with(database, account_id, name=f"Rule {n}")
+
+    assert len((await signed_in.get("/api/rules")).json()) == 60
+
+
+async def test_activity_names_a_rule_past_the_fiftieth(signed_in, database, admin):
+    """The cap reached further than the two lists that paged.
+
+    `activity` builds its rule-name map from the same call, so a row belonging
+    to a rule outside the first 50 read as "(deleted rule)" -- a live
+    automation, reported as deleted, in the log an operator checks first.
+
+    The needle is pinned last by `priority`, not by being inserted first: both
+    listings sort on `priority` descending, and with the field tied across
+    every rule the order is Mongo's to choose.
+    """
+    account_id = await seed(database, admin)
+    for n in range(59):
+        await _rule_with(database, account_id, name=f"Rule {n}")
+    await _rule_with(
+        database, account_id, name="Lowest priority", actions=("private_reply",), priority=0
+    )
+
+    rows = (await signed_in.get("/api/analytics/activity")).json()
+
+    assert [row["rule_name"] for row in rows] == ["Lowest priority"]
 
 
 async def test_the_best_automation_is_ranked_on_links_delivered(signed_in, database, admin):

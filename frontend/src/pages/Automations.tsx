@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getRulePerformance } from '../api/analytics'
 import {
@@ -15,6 +15,7 @@ import {
   type Post,
   type Rule,
 } from '../api/rules'
+import { Pager } from '../components/common/Pager'
 import { RuleEditor } from '../components/rules/RuleEditor'
 
 function describe(rule: Rule): string {
@@ -93,10 +94,15 @@ function thumbLabel(rule: Rule): string | null {
   return null
 }
 
+/** Rows per page. Larger than the dashboard's: here the table is the whole point
+ *  of the page rather than one section of five. */
+const PAGE = 20
+
 export function Automations() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [menuFor, setMenuFor] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
   const [editing, setEditing] = useState<{ post?: Post; rule: Rule } | null>(null)
 
   const invalidate = () => {
@@ -156,6 +162,27 @@ export function Automations() {
     if (query && !haystack(rule, postFor(rule)).includes(query)) return false
     return true
   })
+
+  // Narrowing the list should land on its first page, not wherever you happened
+  // to be. One effect rather than a reset in each of the five controls that can
+  // change the filter -- the search box, the All chip, the kind chips, the
+  // template chips and "Clear it".
+  useEffect(() => {
+    setPage(0)
+  }, [query, kind, template])
+
+  // Clamped in the render, because deleting a rule shrinks `shown` underneath a
+  // page index that is already set. Without this the last page empties itself
+  // rather than falling back to the one before it.
+  const pages = Math.max(1, Math.ceil(shown.length / PAGE))
+  const at = Math.min(page, pages - 1)
+  const rows = shown.slice(at * PAGE, at * PAGE + PAGE)
+
+  const goTo = (next: number) => {
+    setPage(next)
+    // An open kebab belongs to a row that is about to be replaced.
+    setMenuFor(null)
+  }
 
   return (
     <>
@@ -276,7 +303,7 @@ export function Automations() {
                 </tr>
               </thead>
               <tbody>
-                {shown.map((rule) => {
+                {rows.map((rule) => {
                   const stats = statsFor(rule.id)
                   const post = postFor(rule)
                   const thumb = post ? mediaImage(post) : undefined
@@ -394,6 +421,13 @@ export function Automations() {
                 })}
               </tbody>
             </table>
+            <Pager
+              page={at}
+              pageSize={PAGE}
+              total={shown.length}
+              onPage={goTo}
+              label="Your automations"
+            />
           </div>
         )}
       </section>

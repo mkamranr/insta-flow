@@ -199,6 +199,65 @@ async def test_all_for_account_is_not_capped_at_the_page_size(database):
     assert len(await repo.all_for_account(ACCOUNT)) == 60
 
 
+async def test_every_rule_for_an_account_is_not_capped_at_the_page_size(database):
+    """Same ceiling, same silence: the Automations page stopped at 50 rules.
+
+    Harmless-looking, because the rules past the fiftieth kept firing --
+    `list_for_media` reads an uncapped cursor. Only the screens truncated. A
+    pager makes it a lie rather than an omission, so the page reads through
+    `all_for_account` now.
+    """
+    from app.db.repositories import RulesRepository
+    from app.db.repositories.base import utcnow
+
+    repo = RulesRepository(database)
+    await database["rules"].insert_many(
+        [
+            {
+                "instagram_account_id": ACCOUNT,
+                "name": f"Rule {n}",
+                "priority": 100,
+                "enabled": True,
+                "created_at": utcnow(),
+            }
+            for n in range(60)
+        ]
+    )
+
+    assert len(await repo.list_for_account(ACCOUNT)) == 50
+    assert len(await repo.all_for_account(ACCOUNT)) == 60
+
+
+async def test_every_rule_for_an_account_comes_back_in_a_stable_order(database):
+    """Ties on `priority` have to break on id, or paging shuffles.
+
+    Every rule defaults to `priority=100`, so the sort key is a tie for the
+    whole collection and Mongo is free to return a different order each time.
+    Client-side paging slices that order, which would move a row to another
+    page on a refetch it had nothing to do with.
+    """
+    from app.db.repositories import RulesRepository
+    from app.db.repositories.base import utcnow
+
+    repo = RulesRepository(database)
+    await database["rules"].insert_many(
+        [
+            {
+                "instagram_account_id": ACCOUNT,
+                "name": f"Rule {n}",
+                "priority": 100,
+                "enabled": True,
+                "created_at": utcnow(),
+            }
+            for n in range(60)
+        ]
+    )
+
+    first = [r["_id"] for r in await repo.all_for_account(ACCOUNT)]
+    assert first == sorted(first, reverse=True)
+    assert first == [r["_id"] for r in await repo.all_for_account(ACCOUNT)]
+
+
 async def test_media_batch_is_keyed_by_id_and_scoped_to_the_account(database):
     """The account scope is what stops `?post=<foreign id>` naming another
     workspace's post."""

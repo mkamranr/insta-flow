@@ -589,7 +589,7 @@ async def list_rules(
     if instagram_media_id:
         found = await rules.list_for_media(account["_id"], instagram_media_id)
     else:
-        found = await rules.list_for_account(account["_id"])
+        found = await rules.all_for_account(account["_id"])
     return [serialise_required(r) for r in found]
 
 

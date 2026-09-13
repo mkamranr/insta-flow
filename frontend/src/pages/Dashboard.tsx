@@ -5,6 +5,7 @@ import { getRulePerformance, getSummary, getTopCommenters } from '../api/analyti
 import { listAccounts } from '../api/instagram'
 import { listPosts, syncPosts, type Post, type Rule } from '../api/rules'
 import { usePermissions } from '../hooks/usePermissions'
+import { Pager } from '../components/common/Pager'
 import { PostCard } from '../components/common/PostCard'
 import { RuleEditor } from '../components/rules/RuleEditor'
 
@@ -98,6 +99,10 @@ export function Dashboard() {
     [rail],
   )
   const { data: rules } = useQuery({ queryKey: ['rule-performance'], queryFn: getRulePerformance })
+  // Smaller than the rail's page: this is one section of five on the home page,
+  // and the complaint was the page scrolling forever, not the table being terse.
+  const RULE_PAGE = 5
+  const [rulePage, setRulePage] = useState(0)
   const { data: commenters } = useQuery({ queryKey: ['top-commenters'], queryFn: getTopCommenters })
 
   const account = accounts?.[0]
@@ -133,6 +138,14 @@ export function Dashboard() {
   if (!editing && isLoading) return <p className="muted">Loading…</p>
 
   const withoutRules = posts?.filter((p) => p.rule_count === 0) ?? []
+
+  // Clamped here rather than reset by an effect. Deleting an automation on
+  // another page invalidates ['rule-performance'], so the list can shrink under
+  // a page index that is already set -- and an effect would correct that only
+  // after a frame of empty table.
+  const rulePages = Math.max(1, Math.ceil((rules?.length ?? 0) / RULE_PAGE))
+  const ruleAt = Math.min(rulePage, rulePages - 1)
+  const shownRules = (rules ?? []).slice(ruleAt * RULE_PAGE, ruleAt * RULE_PAGE + RULE_PAGE)
 
   return (
     <>
@@ -302,7 +315,7 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {rules.map((rule) => (
+                {shownRules.map((rule) => (
                   <tr key={rule.id}>
                     <td>
                       <strong>{rule.name}</strong>
@@ -316,6 +329,13 @@ export function Dashboard() {
                 ))}
               </tbody>
             </table>
+            <Pager
+              page={ruleAt}
+              pageSize={RULE_PAGE}
+              total={rules.length}
+              onPage={setRulePage}
+              label="Automation performance"
+            />
           </div>
         </section>
       )}

@@ -113,6 +113,29 @@ class RulesRepository(BaseRepository[Any]):
             sort_field="priority",
         )
 
+    async def all_for_account(self, instagram_account_id: Any) -> list[Document]:
+        """Every rule for one account, highest priority first, with no page cap.
+
+        `BaseRepository.list` stops at 50. That ceiling silently truncated the
+        Automations page and per-rule analytics -- tolerable while the table was
+        an undifferentiated list, actively wrong once a pager underneath it
+        states a total. The rules past the fiftieth still fired the whole time;
+        `list_for_media` and `list_for_trigger` read uncapped cursors.
+
+        Ties break on id, as they do in `list_for_media` -- every rule defaults
+        to `priority=100`, so without a tiebreak Mongo may return a different
+        order on each refetch and rows would jump between pages.
+
+        Deliberately not hoisted onto `BaseRepository`, for the reason
+        `ContactsRepository.all_for_account` gives: the cap is a sensible
+        default everywhere else, and a base-class escape hatch invites the next
+        uncapped query.
+        """
+        cursor = self.collection.find(
+            {"instagram_account_id": to_object_id(instagram_account_id)}
+        ).sort([("priority", DESCENDING), ("_id", DESCENDING)])
+        return [document async for document in cursor]
+
     async def counts_by_media(self, instagram_account_id: Any) -> dict[str, int]:
         """How many rules each post has, for the posts list."""
         pipeline: list[Document] = [

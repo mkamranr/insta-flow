@@ -127,7 +127,7 @@ async def rule_performance(
     delivered_by_rule = await links.delivered_by_rule(account_id)
     out: list[dict[str, Any]] = []
 
-    for rule in await rules.list_for_account(account_id):
+    for rule in await rules.all_for_account(account_id):
         rule_id = str(rule["_id"])
         sent = await executions.count(
             {"rule_id": rule["_id"], "status": "success", "action": {"$in": list(SENT_ACTIONS)}}
@@ -196,7 +196,7 @@ async def activity(
     rows = await executions.list(query, limit=limit)
     rule_names = {
         str(r["_id"]): r.get("name") or "Comment → DM"
-        for r in await rules.list_for_account(account_id)
+        for r in await rules.all_for_account(account_id)
     }
 
     out: list[dict[str, Any]] = []
@@ -396,7 +396,7 @@ async def highlights(
     delivered_by_rule = await links.delivered_by_rule(account_id)
 
     best = None
-    for rule in await rules.list_for_account(account_id):
+    for rule in await rules.all_for_account(account_id):
         sent = await executions.count(
             {"rule_id": rule["_id"], "status": "success", "action": {"$in": list(SENT_ACTIONS)}}
         )

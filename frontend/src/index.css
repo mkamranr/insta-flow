@@ -2087,3 +2087,15 @@ button.wiz-head:hover:not(:disabled) { background: var(--surface-alt); }
 .pick:hover { background: var(--surface-alt); }
 .pick input { width: 16px; height: 16px; margin: 0; accent-color: var(--dark); cursor: pointer; }
 .select-cell { width: 1%; white-space: nowrap; }
+
+/* ---------- pager ----------
+   Page controls under a table sliced in the browser (`Pager.tsx`). Sits inside
+   the card rather than under it, so the row count reads as part of the table it
+   describes. Appended after the automations section, like every feature section
+   since. */
+.pager {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px 16px; flex-wrap: wrap;
+  padding: 12px 0 4px; border-top: 1px solid var(--border);
+}
+.pager-controls { display: flex; align-items: center; gap: 10px; }
