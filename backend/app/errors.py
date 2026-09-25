@@ -78,6 +78,22 @@ class MetaRateLimitError(MetaAPIError):
 class MetaTokenError(MetaAPIError):
     """Token expired or revoked. Never retried — the account must reconnect."""
 
+
+class MediaUnavailableError(MetaAPIError):
+    """A signed CDN URL that can never be fetched again.
+
+    Meta pins a media URL's expiry to the object rather than to the request, so
+    once `oe` has passed no re-fetch produces a working link (docs/meta-api.md
+    §2d). Never retryable, and distinct from a transient CDN failure: the caller
+    records it so the image is not attempted on every page render.
+    """
+
+    code = "media_unavailable"
+
+    def __init__(self, message: str = "", **kwargs: object) -> None:
+        kwargs["retryable"] = False
+        super().__init__(message, **kwargs)  # type: ignore[arg-type]
+
     code = "meta_token_error"
 
 

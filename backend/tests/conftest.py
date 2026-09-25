@@ -62,6 +62,27 @@ class FakeRedis:
 
 
 @pytest.fixture(autouse=True)
+def isolated_uploads(tmp_path, monkeypatch):
+    """Point `upload_dir` at a temp directory for every test.
+
+    Autouse, and not optional. `./uploads` is bind-mounted into the container
+    the suite runs in, so a test that stores a thumbnail or an attachment writes
+    into the developer's real uploads directory -- which is exactly what
+    happened the first time the image cache shipped: the suite left 11 stray
+    19-byte mock JPEGs in `uploads/media/`, referenced by nothing.
+
+    Both halves are needed, and patching only the first is the trap. Ten test
+    modules build their own `Settings(...)` rather than taking the shared
+    fixture, and those instances are born with the real `/app/uploads` default
+    -- so setting the env var is what actually covers the suite, and patching
+    the cached singleton covers everything already holding a reference to it.
+    """
+    monkeypatch.setenv("UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "upload_dir", str(tmp_path), raising=False)
+    return tmp_path
+
+
+@pytest.fixture(autouse=True)
 def redis(monkeypatch):
     """Every test gets a working Redis: login throttling touches it on each
     attempt, so an unpatched pool breaks tests unrelated to throttling."""

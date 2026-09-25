@@ -119,9 +119,7 @@ async def test_the_cron_sync_also_makes_exactly_one_request(database, account, s
 # --- the resync route -------------------------------------------------------
 
 
-async def test_the_resync_route_queues_the_job_once_per_account(
-    signed_in, account, queued
-):
+async def test_the_resync_route_queues_the_job_once_per_account(signed_in, account, queued):
     response = await signed_in.post("/api/posts/resync")
 
     assert response.status_code == 200
@@ -161,14 +159,14 @@ async def test_the_resync_route_is_gated_at_both_mounts(
 # --- the job ----------------------------------------------------------------
 
 
-async def test_the_job_walks_every_page_and_records_the_outcome(
-    database, account, settings
-):
+async def test_the_job_walks_every_page_and_records_the_outcome(database, account, settings):
     client = MockInstagramClient(media=[post(str(i)) for i in range(120)])
 
     result = await resync_all_media(ctx(database, settings, client), str(account["_id"]))
 
-    assert result == {"status": "done", "synced": 120, "pages": 3}
+    # `cached` is 0 because `post()` above carries neither image URL. What the
+    # walk downloads has its own test below.
+    assert result == {"status": "done", "synced": 120, "pages": 3, "cached": 0}
     assert len(client.calls_to("get_media")) == 3
     assert await database["media"].count_documents({}) == 120
 
@@ -312,3 +310,29 @@ async def test_the_resync_state_reaches_the_api(signed_in, database, account):
     assert listed[0]["media_resync_state"] == "done"
     assert listed[0]["media_resync_count"] == 30
     assert listed[0]["media_resync_pages"] == 1
+
+
+async def test_the_full_walk_caches_images_but_not_more_than_it_keeps(
+    database, account, settings, tmp_path, monkeypatch
+):
+    """The walk is the only path that ever sees an old post's URL, so it is the
+    only chance to copy those bytes -- but downloading all 10K would be brutal,
+    so it stops at what the prune job would keep anyway."""
+    monkeypatch.setattr(settings, "media_cache_keep_per_account", 5, raising=False)
+    media = [
+        MetaMedia(
+            instagram_media_id=str(i),
+            media_type="IMAGE",
+            media_product_type="FEED",
+            media_url=f"https://scontent.cdninstagram.com/v/t51/{i}.jpg?oe=7FFFFFFF",
+            published_at=datetime.now(UTC) - timedelta(days=i + 1),
+        )
+        for i in range(20)
+    ]
+    client = MockInstagramClient(media=media)
+
+    result = await resync_all_media(ctx(database, settings, client), str(account["_id"]))
+
+    assert result["cached"] == 5
+    assert len(client.calls_to("fetch_media_bytes")) == 5
+    assert len(list(tmp_path.rglob("*.jpg"))) == 5

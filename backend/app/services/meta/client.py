@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from app.errors import MetaAPIError, MetaRateLimitError, MetaTokenError
+from app.services.meta.cdn import MediaBytes
 
 # Fields Social Flow subscribes to. `messaging_postbacks` carries the button tap
 # that opens the 24-hour window for the follow-up DM (docs/meta-api.md §4b).
@@ -126,6 +127,17 @@ class InstagramClient(Protocol):
     async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
         """Currently active stories. Meta returns only live ones, which is what
         makes expiry observable rather than something to compute."""
+        ...
+
+    async def fetch_media_bytes(self, url: str) -> MediaBytes:
+        """Download one thumbnail from Meta's CDN.
+
+        Unauthenticated -- the signature is in the URL and no access token is
+        involved. Raises `MediaUnavailableError` when the signature has expired,
+        which is permanent: a re-fetch from `/me/media` returns a fresh URL
+        string with the same `oe` (docs/meta-api.md §2d). The caller records the
+        failure instead of retrying.
+        """
         ...
 
     async def subscribe_webhooks(

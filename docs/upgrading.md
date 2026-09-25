@@ -895,3 +895,69 @@ Two things worth doing once, in `docs/production-checklist.md`:
   moved to another role — a guard that stops you stranding the deployment, and one you will
   meet at an inconvenient moment if there is only ever one. `make bootstrap-admin` remains the
   recovery path if you manage it anyway.
+
+---
+
+## Cached post and story images
+
+Fixes older posts rendering a broken image, or nothing, where a thumbnail should be. Fetching
+one of those URLs directly returned:
+
+```
+HTTP/2 403
+URL signature expired
+```
+
+### What was wrong
+
+`media_url` and `thumbnail_url` are **signed, expiring links**, and nothing here ever treated
+them that way -- they were stored as fetched and rendered straight into an `<img>`. Measured on
+a live account: `media_url` lasts about 36 hours, `thumbnail_url` about 4.5 days.
+
+The part that decides the fix: re-fetching `/me/media` returns a *different* URL string
+carrying an **identical** expiry. So the expiry belongs to the media object, not to the
+request, and neither a more frequent sync nor *Resync all posts* can renew one. The bytes have
+to be copied while the link is alive. `docs/meta-api.md` §2d has the measurements.
+
+**Confirmed the hard way on a live account**: a full resync was run against a server whose
+older posts had been broken for days. Meta returned URLs that were *already expired* -- some by
+eleven days -- and the images stayed broken. So scheduling a more frequent resync is not an
+alternative to this change. It fixes nothing.
+
+A host that sleeps makes it bite sooner: the cron gaps observed on the development machine were
+21 and 37 hours, longer than a `media_url` lives.
+
+### What changes
+
+Thumbnails are downloaded once, at sync time, into `uploads/media/` and served from the
+dashboard's own host at `/api/posts/<id>/image`. The API no longer sends Meta CDN URLs to the
+browser at all.
+
+For **stories** this is the whole point. Meta stops listing a story after 24 hours and its URL
+dies with it, so the moment a story is synced is the only moment its picture can ever be kept.
+Both the hourly cron and the Refresh button now copy it inline.
+
+### What you need to do
+
+Nothing. There is no migration and no new setting to fill in. Existing rows have no cached
+image, so they fill themselves in on the next sync -- press *Refresh* on Posts & Reels, or wait
+up to 15 minutes.
+
+**One caveat, worth knowing before you report it as a bug.** Any image whose signature had
+*already* expired cannot be recovered, by this release or any other -- there is no request that
+brings it back. Those show the placeholder permanently. Everything still inside its window is
+captured on the first sync after upgrading and is then kept for good.
+
+### Disk
+
+`uploads/` grows. The newest 300 posts per account keep their bytes and a daily job prunes the
+rest, with a 512MB ceiling over the whole cache. Both are settings
+(`MEDIA_CACHE_KEEP_PER_ACCOUNT`, `MEDIA_CACHE_MAX_BYTES`), and `MEDIA_CACHE_ENABLED=false`
+turns the whole thing off. Story images are never pruned: they are irreplaceable and there are
+only ever a handful.
+
+### Rolling back
+
+Safe. The older code ignores the `image_cache` field and goes back to rendering Meta's URLs
+directly -- which is to say, back to the bug. The cached files under `uploads/media/` are inert
+to it; delete the directory if you are not coming back.

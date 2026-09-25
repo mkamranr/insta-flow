@@ -13,6 +13,7 @@ import httpx
 
 from app.config import Settings
 from app.errors import MetaAPIError
+from app.services.meta import cdn
 from app.services.meta.client import (
     DEFAULT_WEBHOOK_FIELDS,
     MetaAccount,
@@ -202,6 +203,11 @@ class MetaInstagramClient:
                 )
 
         return collected
+
+    async def fetch_media_bytes(self, url: str) -> cdn.MediaBytes:
+        """Download a thumbnail. Not routed through `_request`: that builds its
+        URL from a path and parses JSON (see `cdn`'s module docstring)."""
+        return await cdn.fetch(self._client, url)
 
     async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
         """GET /me/stories -- active stories only (docs/meta-api.md §4d).

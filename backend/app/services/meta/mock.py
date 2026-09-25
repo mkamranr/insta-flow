@@ -16,6 +16,7 @@ from typing import Any
 
 from app.constants import PRIVATE_REPLY_WINDOW_DAYS
 from app.errors import MetaAPIError
+from app.services.meta.cdn import MediaBytes
 from app.services.meta.client import (
     DEFAULT_WEBHOOK_FIELDS,
     MetaAccount,
@@ -24,6 +25,11 @@ from app.services.meta.client import (
     MetaUserProfile,
     error_for_status,
 )
+
+# The smallest thing `cdn.sniff_content_type` accepts as a JPEG: the SOI marker
+# plus enough of a header to be non-empty. Tests assert on the bytes, so it only
+# has to be stable and recognisable.
+DEFAULT_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + b"\x00" * 8
 
 # Every failure mode §77 requires the mock to simulate.
 SIMULATED_STATUSES = (400, 401, 403, 404, 429, 500)
@@ -84,6 +90,8 @@ class MockInstagramClient:
         # Empty by default: most tests have no stories, and "no active stories"
         # is the state a story rule must survive.
         self.stories: list[MetaMedia] = []
+        # Scripted image bodies, keyed by URL; anything else gets DEFAULT_JPEG.
+        self.media_bytes: dict[str, bytes] = {}
         self.calls: list[MockCall] = []
         self.sent_private_replies: list[dict[str, Any]] = []
         self.sent_direct_messages: list[dict[str, Any]] = []
@@ -170,6 +178,17 @@ class MockInstagramClient:
     async def get_stories(self, access_token: str, instagram_user_id: str) -> list[MetaMedia]:
         self._record("get_stories", instagram_user_id=instagram_user_id)
         return self.stories
+
+    async def fetch_media_bytes(self, url: str) -> MediaBytes:
+        """Serve scripted bytes for a URL, falling back to a one-pixel JPEG.
+
+        Not in `MUTATIONS`: downloading an image changes nothing at Meta, so
+        DRY_RUN must not suppress it. That matters more than it looks -- a story
+        URL is only alive for a few hours, and a dry run that skipped the fetch
+        would lose the only chance to keep the picture.
+        """
+        self._record("fetch_media_bytes", url=url)
+        return MediaBytes(data=self.media_bytes.get(url, DEFAULT_JPEG), content_type="image/jpeg")
 
     async def subscribe_webhooks(
         self,

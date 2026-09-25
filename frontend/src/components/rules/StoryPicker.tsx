@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listStories, mediaImage, syncStories, type Story } from '../../api/rules'
+import { MediaThumb } from '../common/MediaThumb'
 
 /**
  * Which stories a story-reply automation answers.
@@ -112,11 +113,10 @@ export function StoryPicker({
                   onClick={() => toggle(story.instagram_story_id)}
                 >
                   <span className="story-thumb">
-                    {mediaImage(story) ? (
-                      <img src={mediaImage(story)!} alt="" loading="lazy" />
-                    ) : (
-                      <span className="story-thumb-empty" aria-hidden="true" />
-                    )}
+                    <MediaThumb
+                      src={mediaImage(story)}
+                      empty={<span className="story-thumb-empty" aria-hidden="true" />}
+                    />
                     {on && <span className="story-tick" aria-hidden="true">✓</span>}
                   </span>
                   <span className="story-label">{label(story)}</span>

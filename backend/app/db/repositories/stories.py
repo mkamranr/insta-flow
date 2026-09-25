@@ -16,10 +16,12 @@ from typing import Any
 from pymongo import DESCENDING
 
 from .base import BaseRepository, Document, to_object_id, utcnow
+from .image_cache import ImageCacheMixin
 
 
-class StoriesRepository(BaseRepository[Any]):
+class StoriesRepository(ImageCacheMixin, BaseRepository[Any]):
     collection_name = "stories"
+    _image_key = "instagram_story_id"
 
     async def upsert(
         self, instagram_account_id: Any, instagram_story_id: str, values: Document

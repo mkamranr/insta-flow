@@ -1,3 +1,4 @@
+import { basename } from '../app/workspace'
 import { apiDelete, apiGet, apiPost, apiUpload } from './client'
 
 export interface LinkButton {
@@ -76,8 +77,8 @@ export interface Post {
   media_product_type: string | null
   caption: string | null
   permalink: string | null
-  thumbnail_url: string | null
-  media_url: string | null
+  /** Our own image route — see `mediaImage`. Null means there is none to show. */
+  image_path: string | null
   published_at: string | null
   like_count: number | null
   comments_count: number | null
@@ -92,8 +93,7 @@ export interface Story {
   media_type: string | null
   caption: string | null
   permalink: string | null
-  thumbnail_url: string | null
-  media_url: string | null
+  image_path: string | null
   published_at: string | null
   first_seen_at: string | null
   rule_count: number
@@ -102,18 +102,19 @@ export interface Story {
 /**
  * The image to show for a post or story.
  *
- * Meta returns `thumbnail_url` for VIDEO only; IMAGE and CAROUSEL_ALBUM carry
- * `media_url` instead, so reading `thumbnail_url` alone leaves every photo and
- * carousel blank. `media_url` on a video is the video file, not a still, so it
- * is never used as an <img> source.
+ * Always one of our own URLs, never Meta's. Their CDN links are signed and
+ * expire — roughly 36 hours for `media_url`, 4.5 days for `thumbnail_url` — and
+ * re-fetching returns a fresh URL string with the *same* expiry, so a resync
+ * cannot renew one (docs/meta-api.md §2d). Rendering them directly is what made
+ * older posts show `URL signature expired` instead of a picture.
+ *
+ * The server copies the bytes at sync time and serves them from `image_path`,
+ * which is why deciding *which* of the two URLs to use no longer happens here.
+ * The `?v=` it carries is the content digest, so the address changes when the
+ * picture does.
  */
-export function mediaImage(item: {
-  media_type?: string | null
-  thumbnail_url?: string | null
-  media_url?: string | null
-}): string | null {
-  if (item.thumbnail_url) return item.thumbnail_url
-  return item.media_type === 'VIDEO' ? null : (item.media_url ?? null)
+export function mediaImage(item: { image_path?: string | null }): string | null {
+  return item.image_path ? basename + item.image_path : null
 }
 
 /**

@@ -1,6 +1,6 @@
 # Meta Instagram API — Verified Reference
 
-**Verified on: 2026-08-31; §§2, 7, 10 re-verified and corrected 2026-09-02; app-creation steps 3-4 and the Tester-role ordering re-verified and corrected 2026-09-07; §2c media pagination verified 2026-09-08.** Every fact below was read from official Meta documentation on
+**Verified on: 2026-08-31; §§2, 7, 10 re-verified and corrected 2026-09-02; app-creation steps 3-4 and the Tester-role ordering re-verified and corrected 2026-09-07; §2c media pagination verified 2026-09-08; §2d media URL expiry verified live 2026-09-25, including that Meta does not re-mint an expired URL.** Every fact below was read from official Meta documentation on
 that date. Meta changes this platform frequently — before implementing anything not covered
 here, read the official docs and update this file with a new verification date.
 
@@ -111,6 +111,69 @@ legitimate is truncated and a cursor that never terminates cannot spin forever.
 
 Routine syncs — the 15-minute cron and every Refresh button — request **one
 page**. Only the manual *Resync all posts* action in Settings walks the edge.
+
+## 2d. Media URLs expire — verified live 2026-09-25
+
+`media_url` and `thumbnail_url` are **signed, expiring CDN links**, not stable
+addresses. Nothing in this file said so, and the dashboard stored them and
+rendered them directly for the whole life of the Posts page. The symptom is an
+image that silently fails to load; the body behind it is the giveaway.
+
+| Fact | Source |
+| --- | --- |
+| The URLs are `*.fbcdn.net` / `*.cdninstagram.com` and carry `&oe=<hex unix ts>` — the expiry | verified live |
+| An expired one returns **HTTP 403** with the body `URL signature expired` | verified live, 4 story URLs |
+| `media_url` had **≈36 hours** of life; `thumbnail_url` **≈4.5 days** | verified live, measured across 30 posts |
+| Expiry varies between objects by several hours and does **not** correlate with post age | verified live |
+| Re-fetching `/me/media` returns a **different URL string** — `_nc_gid` and `ccb` rotate | verified live |
+| …but with an **identical `oe`**. The expiry did not move. | verified live |
+
+The last two rows are the ones that matter:
+
+```
+17885757951580817 VIDEO  media_url  stored_oe=2026-09-26 18:45  fresh_oe=2026-09-26 18:45  identical=False
+```
+
+**Expiry is pinned to the media object, not to the request.** So re-syncing does
+not extend it, and neither a more frequent cron nor *Resync all posts* can
+rescue an image whose window has closed. The only durable fix is to stop
+depending on the lifetime at all: copy the bytes while the URL is alive and
+serve them ourselves. That is what `services/media_cache.py` and the
+`/api/posts/{id}/image` route do, and why the fetch happens at **sync** time —
+for a story that is the only moment its URL is ever alive.
+
+### Meta does not re-mint after expiry — verified live 2026-09-25
+
+This was written down first as untested, with the guess that Meta probably
+re-mints once a window passes, since Instagram itself keeps rendering the post.
+**The guess was wrong**, and it was worth measuring rather than assuming.
+
+Measured on a live account with 96 posts, on a server whose older rows had not
+been refreshed since 9 September. A full *Resync all posts* was run at
+**13:21**, rewriting every row with whatever `/me/media` returned. The dashboard
+was then reloaded and the image requests inspected:
+
+| Requests | `oe` on the URL Meta had just returned | Result |
+| --- | --- | --- |
+| 61 | 2026-09-29 — in the future | 200 |
+| 39 | 2026-09-14 … 2026-09-25 — **already in the past** | **403** |
+
+So a resync performed at 13:21 on the 25th was handed URLs that had expired
+eleven days earlier. **Meta serves an already-dead URL rather than signing a
+fresh one.** The expiry is frozen to the media object permanently, not merely
+for the life of one window.
+
+That makes copying the bytes the *only* available fix, and it puts a deadline on
+it: every image is on a clock from the moment it is first seen, and once that
+clock runs out no request of any kind brings it back.
+
+Two consequences worth stating out loud:
+
+- **Anything already past its `oe` is gone for good.** Confirmed above, not
+  assumed. A post or story whose window closed before its bytes were cached
+  shows a placeholder permanently. That is correct behaviour, not a bug.
+- **A host that sleeps makes this worse.** The observed cron gaps on the live
+  install were 21 and 37 hours — longer than a `media_url` lives.
 
 ## 3. OAuth
 

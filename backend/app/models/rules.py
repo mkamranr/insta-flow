@@ -263,6 +263,74 @@ class MessagePreviewRequest(BaseModel):
     post_caption: str = "5 AI tools every developer should know"
 
 
+def image_url_for(document: dict) -> str | None:
+    """Which of Meta's two URLs to copy the bytes from.
+
+    `thumbnail_url` first. Not only because `media_url` on a video is the video
+    file rather than a still: the thumbnail measured at roughly 4.5 days of life
+    against 36 hours for `media_url` (docs/meta-api.md §2d), so it is both the
+    right picture and the one more likely to still be alive when we reach it.
+
+    This is the same choice the dashboard used to make in `mediaImage()`. It
+    lives here now because the worker and the image route both need it, and the
+    two must not disagree about which picture a post has.
+    """
+    if document.get("thumbnail_url"):
+        return str(document["thumbnail_url"])
+    if document.get("media_type") == "VIDEO":
+        return None
+    return str(document["media_url"]) if document.get("media_url") else None
+
+
+def image_path_for(document: dict, kind: str = "posts") -> str | None:
+    """Where the dashboard should load this post's or story's picture from.
+
+    Ours, never Meta's. Their CDN URLs are signed and expire, and cannot be
+    renewed (docs/meta-api.md §2d), so `thumbnail_url` and `media_url` are
+    deliberately **not** in the payloads below -- leaving them there is what let
+    every page render a link that dies a day later.
+
+    Relative, so the client prepends its own `/u/<slug>` mount. The `?v=` is the
+    content digest, which is what makes the year-long `immutable` cache header
+    on the route safe: new bytes mean a new URL.
+    """
+    media_id = str(document.get("instagram_media_id") or document.get("instagram_story_id") or "")
+    if not media_id:
+        return None
+    cache = document.get("image_cache") or {}
+    if cache.get("storage_key"):
+        return f"/api/{kind}/{media_id}/image?v={str(cache.get('digest', ''))[:12]}"
+    # Not cached yet, but there is still a live URL to try: the route fetches it
+    # on demand. A recorded failure means there is nothing left to show.
+    if cache.get("failed_at"):
+        return None
+    if document.get("thumbnail_url") or document.get("media_url"):
+        return f"/api/{kind}/{media_id}/image"
+    return None
+
+
+def post_card(document: dict) -> dict:
+    """The post fields a thumbnail card needs, and nothing else.
+
+    Analytics used to spread the raw Mongo document, which shipped Meta's CDN
+    URLs to the browser -- and would now also ship the whole `image_cache`
+    sub-document, including the on-disk storage key. An explicit field list is
+    the only shape that cannot leak the next field somebody adds to the row.
+    """
+    return {
+        "id": str(document["_id"]),
+        "instagram_media_id": str(document.get("instagram_media_id", "")),
+        "media_type": document.get("media_type"),
+        "media_product_type": document.get("media_product_type"),
+        "caption": document.get("caption"),
+        "permalink": document.get("permalink"),
+        "image_path": image_path_for(document, "posts"),
+        "published_at": document.get("published_at"),
+        "like_count": document.get("like_count"),
+        "comments_count": document.get("comments_count"),
+    }
+
+
 class PostPublic(BaseModel):
     """A synced Instagram post, with how many rules are armed on it."""
 
@@ -272,9 +340,9 @@ class PostPublic(BaseModel):
     media_product_type: str | None = None
     caption: str | None = None
     permalink: str | None = None
-    # `thumbnail_url` is video-only; images and carousels use `media_url`.
-    thumbnail_url: str | None = None
-    media_url: str | None = None
+    # Our own route, not Meta's CDN -- see `image_path_for`. None means there is
+    # no picture to show and the client renders its placeholder.
+    image_path: str | None = None
     published_at: datetime | None = None
     like_count: int | None = None
     comments_count: int | None = None
@@ -289,8 +357,7 @@ class PostPublic(BaseModel):
             media_product_type=document.get("media_product_type"),
             caption=document.get("caption"),
             permalink=document.get("permalink"),
-            thumbnail_url=document.get("thumbnail_url"),
-            media_url=document.get("media_url"),
+            image_path=image_path_for(document, "posts"),
             published_at=document.get("published_at"),
             like_count=document.get("like_count"),
             comments_count=document.get("comments_count"),
@@ -311,8 +378,7 @@ class StoryPublic(BaseModel):
     media_type: str | None = None
     caption: str | None = None
     permalink: str | None = None
-    thumbnail_url: str | None = None
-    media_url: str | None = None
+    image_path: str | None = None
     published_at: datetime | None = None
     first_seen_at: datetime | None = None
     rule_count: int = 0
@@ -325,8 +391,7 @@ class StoryPublic(BaseModel):
             media_type=document.get("media_type"),
             caption=document.get("caption"),
             permalink=document.get("permalink"),
-            thumbnail_url=document.get("thumbnail_url"),
-            media_url=document.get("media_url"),
+            image_path=image_path_for(document, "stories"),
             published_at=document.get("published_at"),
             first_seen_at=document.get("first_seen_at"),
             rule_count=rule_count,

@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import { listPosts, mediaImage, STARTER_TEMPLATES, TEMPLATE_GROUPS, type Post, type Rule } from '../api/rules'
 import { Avatar } from '../components/common/Avatar'
 import { RuleEditor } from '../components/rules/RuleEditor'
+import { MediaThumb } from '../components/common/MediaThumb'
 
 const BLURB: Record<string, string> = {
   Popular: 'The templates most creators start with.',
@@ -121,7 +122,7 @@ export function Templates() {
                     onClick={() => setTarget(post)}
                   >
                     <span className="row-thumb" style={{ width: '100%', height: 90 }}>
-                      {mediaImage(post) && <img src={mediaImage(post)!} alt="" />}
+                      <MediaThumb src={mediaImage(post)} />
                     </span>
                     <span className="small">{post.caption?.slice(0, 60) ?? '(no caption)'}</span>
                   </button>

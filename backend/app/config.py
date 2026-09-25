@@ -31,6 +31,20 @@ class Settings(BaseSettings):
     upload_dir: str = "/app/uploads"
     # GeoLite2-City.mmdb lives beside the uploads so it survives a rebuild.
     geoip_dir: str = "/app/uploads/.geoip"
+
+    # Cached post and story thumbnails. Meta's CDN URLs expire and cannot be
+    # renewed (docs/meta-api.md §2d), so the bytes are copied at sync time and
+    # served from our own host. Off means the dashboard falls back to showing
+    # placeholders for anything not already cached.
+    media_cache_enabled: bool = True
+    # Newest N posts per account keep their bytes; older ones are pruned. A post
+    # nobody scrolls to is not worth the disk, and the row keeps its permalink.
+    media_cache_keep_per_account: int = 300
+    media_cache_max_bytes: int = 512 * 1024 * 1024
+    # Parallel CDN fetches inside one sync. `job_timeout` is class-wide at 60s,
+    # so this and the per-run cap below are what keep a cold account inside it.
+    media_cache_concurrency: int = 6
+    media_cache_per_run: int = 40
     redis_url: str = "redis://redis:6379/0"
 
     # Meta credentials. These are the *Instagram* App ID/Secret. See docs/meta-api.md.

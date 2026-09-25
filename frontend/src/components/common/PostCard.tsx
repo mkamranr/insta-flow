@@ -1,4 +1,5 @@
 import { mediaImage, type Post } from '../../api/rules'
+import { MediaThumb } from './MediaThumb'
 
 /** Instagram-style card: the post as it looks, with its automation state. */
 export function PostCard({
@@ -25,11 +26,10 @@ export function PostCard({
       </header>
 
       <div className="ig-media">
-        {mediaImage(post) ? (
-          <img src={mediaImage(post)!} alt="" loading="lazy" />
-        ) : (
-          <div className="ig-media-empty">{post.media_product_type ?? 'POST'}</div>
-        )}
+        <MediaThumb
+          src={mediaImage(post)}
+          empty={<div className="ig-media-empty">{post.media_product_type ?? 'POST'}</div>}
+        />
       </div>
 
       <div className="ig-body">

@@ -1,10 +1,13 @@
 from typing import Any
 
 from .base import BaseRepository, Document, to_object_id
+from .image_cache import FIELD as IMAGE_CACHE_FIELD
+from .image_cache import ImageCacheMixin
 
 
-class MediaRepository(BaseRepository[Any]):
+class MediaRepository(ImageCacheMixin, BaseRepository[Any]):
     collection_name = "media"
+    _image_key = "instagram_media_id"
 
     async def get_by_instagram_media_id(
         self, instagram_account_id: Any, instagram_media_id: str
@@ -43,6 +46,14 @@ class MediaRepository(BaseRepository[Any]):
     async def upsert(
         self, instagram_account_id: Any, instagram_media_id: str, values: Document
     ) -> Document | None:
+        """Write one post, overwriting whatever the caller passes.
+
+        A plain `$set` of an explicit field list, which is what keeps
+        `image_cache` intact across a resync -- so do **not** add that key to
+        the `values` dicts in `workers/tasks.py` or `api/rules.py`. Doing so
+        would throw away the only copy of a thumbnail whose CDN URL has since
+        expired, and nothing would fail loudly enough to notice.
+        """
         return await self.collection.find_one_and_update(
             {
                 "instagram_account_id": to_object_id(instagram_account_id),
@@ -52,6 +63,29 @@ class MediaRepository(BaseRepository[Any]):
             upsert=True,
             return_document=True,
         )
+
+    async def evictable_image_caches(
+        self, instagram_account_id: Any, keep_newest: int
+    ) -> list[Document]:
+        """Cached images beyond the newest `keep_newest` posts, oldest first.
+
+        Ordered by `published_at` rather than by last access: `atime` on the
+        macOS bind mount is unreliable, and touching a file per request would
+        put a write on the render path. "The newest posts keep their bytes" is
+        an honest description of what this cache is for.
+        """
+        cursor = (
+            self.collection.find(
+                {
+                    "instagram_account_id": to_object_id(instagram_account_id),
+                    f"{IMAGE_CACHE_FIELD}.storage_key": {"$exists": True},
+                },
+                {IMAGE_CACHE_FIELD: 1, "published_at": 1},
+            )
+            .sort("published_at", -1)
+            .skip(max(0, keep_newest))
+        )
+        return [document async for document in cursor]
 
     async def drop_orphaned(self, account_ids: list[Any]) -> int:
         """Delete media belonging to accounts that no longer exist.

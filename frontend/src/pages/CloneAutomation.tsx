@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { cloneRule, listPosts, listRules, mediaImage, type Post, type Rule } from '../api/rules'
 import type { ApiError } from '../api/client'
+import { MediaThumb } from '../components/common/MediaThumb'
 
 /** Meta's documented ceiling, mirrored from backend/app/constants.py. */
 const PRIVATE_REPLIES_PER_HOUR = 750
@@ -90,7 +91,7 @@ export function CloneAutomation() {
       <div className="card">
         <div className="post-row">
           <span className="row-thumb">
-            {mediaImage(source) ? <img src={mediaImage(source)!} alt="" loading="lazy" /> : null}
+            <MediaThumb src={mediaImage(source)} />
           </span>
           <span>
             <strong>Source post</strong>
@@ -148,11 +149,10 @@ export function CloneAutomation() {
                     onClick={() => toggle(post.instagram_media_id)}
                   >
                     <span className="story-thumb">
-                      {mediaImage(post) ? (
-                        <img src={mediaImage(post)!} alt="" loading="lazy" />
-                      ) : (
-                        <span className="story-thumb-empty" aria-hidden="true" />
-                      )}
+                      <MediaThumb
+                        src={mediaImage(post)}
+                        empty={<span className="story-thumb-empty" aria-hidden="true" />}
+                      />
                       {on && (
                         <span className="story-tick" aria-hidden="true">
                           ✓

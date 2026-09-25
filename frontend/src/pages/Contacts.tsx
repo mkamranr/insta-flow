@@ -5,6 +5,7 @@ import { captionLine, mediaImage, postKind } from '../api/rules'
 import { basename } from '../app/workspace'
 import { InviteDialog } from '../components/admin/InviteDialog'
 import { usePermissions } from '../hooks/usePermissions'
+import { MediaThumb } from '../components/common/MediaThumb'
 
 /**
  * The download is a plain anchor, not a fetch.
@@ -70,11 +71,11 @@ function GroupCard({
   return (
     <div className="auto-card">
       <button className="auto-head" onClick={onToggle} aria-expanded={open}>
-        {thumbnail ? (
-          <img className="auto-thumb" src={thumbnail} alt="" />
-        ) : (
-          <div className="auto-thumb auto-thumb-empty" aria-hidden="true" />
-        )}
+        <MediaThumb
+          className="auto-thumb"
+          src={thumbnail ?? null}
+          empty={<div className="auto-thumb auto-thumb-empty" aria-hidden="true" />}
+        />
 
         <div className="auto-id">
           <div className="auto-name">

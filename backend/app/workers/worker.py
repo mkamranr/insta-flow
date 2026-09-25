@@ -21,6 +21,7 @@ from app.workers.tasks import (
     process_comment_event,
     process_message_event,
     process_postback_event,
+    prune_media_cache,
     recheck_follow,
     refresh_expiring_tokens,
     refresh_geoip_database,
@@ -85,9 +86,15 @@ class WorkerSettings:
         refresh_expiring_tokens,
         refresh_geoip_database,
         snapshot_account_metrics,
-        sync_posts,
-        sync_stories,
+        # Its own timeout: `job_timeout` below is class-wide at 60s, and this
+        # job now downloads thumbnails as well as reading the media edge. A job
+        # ARQ cancels raises nothing to classify and leaves no status behind, so
+        # the cost of getting this wrong is a sync that fails invisibly.
+        func(sync_posts, timeout=180),
+        # Same reason: a story's image is fetched inline while it is still live.
+        func(sync_stories, timeout=180),
         send_email,
+        prune_media_cache,
         # Its own timeout, because `job_timeout` below is class-wide and 60s
         # cannot cover a full walk of the media edge -- 200 requests at worst.
         # `max_tries=1` because the walk is idempotent and operator-triggered:
@@ -114,6 +121,9 @@ class WorkerSettings:
         # without a scheduled sync a template would sit unapplied until someone
         # happened to press Refresh.
         cron(sync_posts, minute={0, 15, 30, 45}),
+        # Daily, well away from the other crons. Nothing depends on it running
+        # on time -- it only reclaims disk, and a day late costs nothing.
+        cron(prune_media_cache, hour=4, minute=15),
     ]
     on_startup = startup
     on_shutdown = shutdown

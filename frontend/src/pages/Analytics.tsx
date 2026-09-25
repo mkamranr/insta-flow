@@ -19,6 +19,7 @@ import { apiGet } from '../api/client'
 import { mediaImage } from '../api/rules'
 import { BarSeries } from '../components/analytics/BarSeries'
 import { ActivityLog } from './Activity'
+import { MediaThumb } from '../components/common/MediaThumb'
 
 const TABS = [
   { id: 'performance', label: 'Performance' },
@@ -146,9 +147,7 @@ function Performance({ days }: { days: number }) {
                   <tr key={post.id}>
                     <td>
                       <div className="media-cell">
-                        {mediaImage(post) && (
-                          <img className="media-thumb" src={mediaImage(post)!} alt="" />
-                        )}
+                        <MediaThumb className="media-thumb" src={mediaImage(post)} />
                         <span className="clamp">{post.caption || post.instagram_media_id}</span>
                       </div>
                     </td>
@@ -372,11 +371,11 @@ function AutomationCard({
   return (
     <div className="auto-card">
       <button className="auto-head" onClick={onToggle} aria-expanded={open}>
-        {thumbnail ? (
-          <img className="auto-thumb" src={thumbnail} alt="" />
-        ) : (
-          <div className="auto-thumb auto-thumb-empty" aria-hidden="true" />
-        )}
+        <MediaThumb
+          className="auto-thumb"
+          src={thumbnail ?? null}
+          empty={<div className="auto-thumb auto-thumb-empty" aria-hidden="true" />}
+        />
 
         <div className="auto-id">
           <div className="auto-name">

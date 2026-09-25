@@ -111,8 +111,10 @@
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
 		Referrer-Policy strict-origin-when-cross-origin
-		# The dashboard loads no third-party code. img-src allows https so
-		# Instagram post thumbnails render; they are served from Meta's CDN.
+		# The dashboard loads no third-party code. Post and story thumbnails are
+		# cached and served from 'self' (their CDN URLs expire -- docs/meta-api.md
+		# §2d), so https: remains only for the account's profile picture, which is
+		# still a raw Meta CDN link.
 		Content-Security-Policy "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 		# Tailscale terminates TLS, so HSTS is set here rather than by Caddy's
 		# own TLS handling.

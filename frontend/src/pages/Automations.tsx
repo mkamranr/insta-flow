@@ -17,6 +17,7 @@ import {
 } from '../api/rules'
 import { Pager } from '../components/common/Pager'
 import { RuleEditor } from '../components/rules/RuleEditor'
+import { MediaThumb } from '../components/common/MediaThumb'
 
 function describe(rule: Rule): string {
   const trigger = rule.keywords?.length ? rule.keywords.join(', ') : 'any word'
@@ -313,13 +314,16 @@ export function Automations() {
                       <td>
                         <div className="post-row">
                           <span className="row-thumb">
-                            {thumb ? (
-                              <img src={thumb} alt="" loading="lazy" />
-                            ) : label ? (
-                              <span className="row-thumb-label">{label}</span>
-                            ) : (
-                              <span className="row-thumb-empty" />
-                            )}
+                            <MediaThumb
+                              src={thumb ?? null}
+                              empty={
+                                label ? (
+                                  <span className="row-thumb-label">{label}</span>
+                                ) : (
+                                  <span className="row-thumb-empty" />
+                                )
+                              }
+                            />
                           </span>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontWeight: 650 }}>

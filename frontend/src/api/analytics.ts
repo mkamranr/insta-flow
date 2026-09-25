@@ -130,8 +130,7 @@ export interface PostPerformance {
   instagram_media_id: string
   caption?: string | null
   permalink?: string | null
-  thumbnail_url?: string | null
-  media_url?: string | null
+  image_path?: string | null
   media_type?: string | null
   media_product_type?: string | null
   comments: number

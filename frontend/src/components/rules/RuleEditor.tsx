@@ -20,6 +20,7 @@ import { DelayPicker } from './DelayPicker'
 import { DmPreview } from './DmPreview'
 import { KeywordInput } from './KeywordInput'
 import { StoryPicker } from './StoryPicker'
+import { MediaThumb } from '../common/MediaThumb'
 
 /**
  * Mirrors `FOLLOW_PROMPT_WITH_WINDOW` / `FOLLOW_PROMPT_NO_WINDOW` in
@@ -505,11 +506,10 @@ export function RuleEditor({
             {post && (
               <div className="editor-post">
                 <span className="row-thumb">
-                  {mediaImage(post) ? (
-                    <img src={mediaImage(post)!} alt="" loading="lazy" />
-                  ) : (
-                    <span className="row-thumb-empty" />
-                  )}
+                  <MediaThumb
+                    src={mediaImage(post)}
+                    empty={<span className="row-thumb-empty" />}
+                  />
                 </span>
                 <div style={{ minWidth: 0 }}>
                   <div className="small editor-post-kind">

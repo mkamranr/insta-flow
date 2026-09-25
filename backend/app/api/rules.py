@@ -5,9 +5,11 @@ message. One row, one screen, nothing to keep in sync.
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import FileResponse, Response
 from pymongo.errors import DuplicateKeyError
 
 from app import queue
@@ -27,7 +29,7 @@ from app.api.deps import (
 )
 from app.api.uploads import upload_root
 from app.db.repositories import serialise, serialise_required, to_object_id, utcnow
-from app.errors import MetaAPIError, NotFoundError, ValidationError
+from app.errors import MediaUnavailableError, MetaAPIError, NotFoundError, ValidationError
 from app.models.rules import (
     MessagePreviewRequest,
     PostPublic,
@@ -35,9 +37,13 @@ from app.models.rules import (
     RuleCreate,
     RuleUpdate,
     StoryPublic,
+    image_url_for,
 )
+from app.services import media_cache
 from app.services.attachments import delete as delete_attachment
 from app.services.campaigns import ALLOWED_VARIABLES, render, validate
+from app.services.media_cache import MediaCacheError
+from app.services.meta import cdn
 from app.services.meta.factory import build_client
 from app.services.security.encryption import decrypt
 
@@ -314,6 +320,17 @@ async def sync_stories_now(
             },
         )
 
+    # Before `mark_expired`, and inline rather than left to the hourly cron. A
+    # hand-pressed Refresh is very often the first time a story is seen at all,
+    # and its CDN URL cannot be re-obtained once Meta stops listing it -- so a
+    # story that arrives here and expires before the next tick would lose its
+    # picture permanently. `cache_pending_images` skips anything already stored.
+    from app.workers.tasks import cache_pending_images
+
+    await cache_pending_images(
+        build_client(settings, creds), settings, stories, account["_id"], len(fetched)
+    )
+
     gone = await stories.mark_expired(account["_id"], [item.instagram_media_id for item in fetched])
     disabled = await rules.disable_for_expired_stories(account["_id"], gone)
 
@@ -360,6 +377,153 @@ async def list_posts(
     return [
         PostPublic.from_document(p, counts.get(p.get("instagram_media_id", ""), 0)) for p in posts
     ]
+
+
+def _no_image() -> Response:
+    """No picture to serve, and saying so must not be cached.
+
+    A negative held for the year the hit path asks for would outlive the fill
+    that fixes it -- so `no-store`, deliberately, on the one response that says
+    "nothing here yet".
+    """
+    return Response(status_code=status.HTTP_404_NOT_FOUND, headers={"Cache-Control": "no-store"})
+
+
+async def _serve_cached_image(
+    *,
+    repository: Any,
+    document: dict[str, Any] | None,
+    account: dict[str, Any],
+    settings: Any,
+    creds: Any,
+    media_id: str,
+) -> Response:
+    """Serve one thumbnail from our own copy, filling the cache if it is cold.
+
+    The document is looked up account-scoped by the caller, so one workspace
+    cannot name another's media id.
+
+    Three outcomes. A hit is immutable for a year -- safe because the path the
+    client was given carries the content digest. A cold miss is fetched inline
+    and stored. Anything unrecoverable is a bare 404 with `no-store`, so a later
+    successful fill is not masked by a cached negative for the next twelve
+    months.
+
+    The 404 is a `Response`, not a raised `NotFoundError`: the caller is an
+    `<img>` tag, which cannot read a JSON error body and would only cache it.
+    """
+    if document is None:
+        return _no_image()
+
+    cache = document.get("image_cache") or {}
+    path = media_cache.path_for(Path(settings.upload_dir), cache.get("storage_key"))
+    if path is not None:
+        return FileResponse(
+            path,
+            media_type=str(cache.get("content_type") or "image/jpeg"),
+            # `private`, never `public`: the response is workspace-scoped and
+            # must never be held by a shared cache in front of us.
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    # A recorded failure is permanent -- do not spend a Meta round trip on every
+    # render discovering that again.
+    if cache.get("failed_at") or not settings.media_cache_enabled:
+        return _no_image()
+
+    url = image_url_for(document)
+    if not url:
+        return _no_image()
+
+    try:
+        fetched = await build_client(settings, creds).fetch_media_bytes(url)
+        digest = media_cache.digest_for(account["_id"], media_id)
+        stored = media_cache.store(
+            Path(settings.upload_dir), digest, fetched.data, fetched.content_type
+        )
+    except (MediaUnavailableError, MediaCacheError) as exc:
+        await repository.record_image_failure(account["_id"], media_id, str(exc))
+        return _no_image()
+    except MetaAPIError as exc:
+        # Transient. Left unrecorded so the next request tries again.
+        logger.warning("media_image_fetch_failed", extra={"error": str(exc)})
+        return _no_image()
+
+    await repository.set_image_cache(
+        account["_id"],
+        media_id,
+        {
+            "storage_key": stored.storage_key,
+            "content_type": stored.content_type,
+            "digest": stored.digest,
+            "bytes": stored.size_bytes,
+            "source_url": url,
+            "source_expires_at": cdn.expires_at(url),
+        },
+    )
+    served = media_cache.path_for(Path(settings.upload_dir), stored.storage_key)
+    if served is None:  # pragma: no cover -- just written
+        return _no_image()
+    # Not `immutable`: this response was reached without a digest in the URL.
+    return FileResponse(
+        served, media_type=stored.content_type, headers={"Cache-Control": "no-store"}
+    )
+
+
+@posts_router.get("/{instagram_media_id}/image", dependencies=[Depends(require("content.view"))])
+async def post_image(
+    instagram_media_id: str,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    media: MediaRepo,
+    settings: SettingsDep,
+    creds: WorkspaceCredentials,
+    v: str | None = Query(None),
+) -> Response:
+    """This workspace's copy of a post thumbnail.
+
+    `v` is the content digest. Declared so it is a documented part of the URL
+    and ignored here: it exists to change the address when the bytes change,
+    which is what lets the hit path claim `immutable`.
+    """
+    account = await _only_account(accounts, workspace)
+    document = await media.get_by_instagram_media_id(account["_id"], instagram_media_id)
+    return await _serve_cached_image(
+        repository=media,
+        document=document,
+        account=account,
+        settings=settings,
+        creds=creds,
+        media_id=instagram_media_id,
+    )
+
+
+@stories_router.get("/{instagram_story_id}/image", dependencies=[Depends(require("content.view"))])
+async def story_image(
+    instagram_story_id: str,
+    workspace: CurrentWorkspace,
+    accounts: AccountsRepo,
+    stories: StoriesRepo,
+    settings: SettingsDep,
+    creds: WorkspaceCredentials,
+    v: str | None = Query(None),
+) -> Response:
+    """This workspace's copy of a story thumbnail.
+
+    Expired stories are served too, deliberately. `list_active` will not offer
+    one in the picker, but an automation's card still names the story it was
+    built on, and the cached picture is the only thing that can still show it.
+    """
+    account = await _only_account(accounts, workspace)
+    document = await stories.get_by_instagram_story_id(account["_id"], instagram_story_id)
+    return await _serve_cached_image(
+        repository=stories,
+        document=document,
+        account=account,
+        settings=settings,
+        creds=creds,
+        media_id=instagram_story_id,
+    )
 
 
 @posts_router.post("/sync", dependencies=[Depends(require("content.edit"))])
@@ -420,9 +584,14 @@ async def sync_posts(
     # A hand-pressed Refresh must arm the waiting template too. Otherwise the
     # feature would only work on the cron, and pressing Refresh right after
     # posting -- the obvious thing to do -- would appear to do nothing.
-    from app.workers.tasks import apply_upcoming_post
+    from app.workers.tasks import apply_upcoming_post, cache_pending_images
 
     armed = await apply_upcoming_post(media.collection.database, account)
+    # Same reasoning as arming: a Refresh that left the grid blank until the
+    # next cron tick would look broken to the person who just pressed it.
+    await cache_pending_images(
+        build_client(settings, creds), settings, media, account["_id"], settings.media_cache_per_run
+    )
 
     logger.info("media_synced", extra={"count": len(fetched), "armed": armed})
     return {"synced": len(fetched), "armed": armed}

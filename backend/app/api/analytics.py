@@ -27,8 +27,8 @@ from app.api.deps import (
     Workspace,
     require,
 )
-from app.db.repositories import serialise_required
 from app.errors import NotFoundError
+from app.models.rules import post_card
 from app.services import exports
 from app.services.superfans import (
     MIN_COMMENTS_PER_WEEK,
@@ -570,7 +570,7 @@ async def post_performance(
         )
         out.append(
             {
-                **serialise_required(post),
+                **post_card(post),
                 "comments": total,
                 "keyword_comments": triggered,
                 "trigger_rate": round(triggered / total * 100, 1) if total else 0.0,
@@ -585,9 +585,7 @@ async def post_performance(
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-async def _invite_states(
-    rows: list[dict[str, Any]], users: Any, invites: Any
-) -> dict[str, str]:
+async def _invite_states(rows: list[dict[str, Any]], users: Any, invites: Any) -> dict[str, str]:
     """Which of these addresses already has an account or a live invitation.
 
     Computed here and returned inline rather than left to the Contacts page to
@@ -667,7 +665,7 @@ async def _contact_groups(
         groups.append(
             {
                 "instagram_media_id": media_id,
-                "post": serialise_required(post) if post else None,
+                "post": post_card(post) if post else None,
                 "count": len(rows),
                 "contacts": rows,
             }

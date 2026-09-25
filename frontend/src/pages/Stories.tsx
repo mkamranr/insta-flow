@@ -6,6 +6,7 @@ import { listAccounts } from '../api/instagram'
 import { listRules, listStories, mediaImage, syncStories, type Story } from '../api/rules'
 import { StoryCard } from '../components/common/StoryCard'
 import { RuleEditor } from '../components/rules/RuleEditor'
+import { MediaThumb } from '../components/common/MediaThumb'
 
 /**
  * Stories, and the automations that answer replies to them.
@@ -142,11 +143,10 @@ export function Stories() {
                       <td>
                         <div className="post-row">
                           <span className="row-thumb">
-                            {mediaImage(story) ? (
-                              <img src={mediaImage(story)!} alt="" loading="lazy" />
-                            ) : (
-                              <span className="row-thumb-empty" />
-                            )}
+                            <MediaThumb
+                              src={mediaImage(story)}
+                              empty={<span className="row-thumb-empty" />}
+                            />
                           </span>
                           <div style={{ minWidth: 0 }}>
                             <div className="row-caption">

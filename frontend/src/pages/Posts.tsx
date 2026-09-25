@@ -7,6 +7,7 @@ import { listAccounts } from '../api/instagram'
 import { STARTER_TEMPLATES, listPosts, mediaImage, syncPosts, type Post, type Rule } from '../api/rules'
 import { PostCard } from '../components/common/PostCard'
 import { RuleEditor } from '../components/rules/RuleEditor'
+import { MediaThumb } from '../components/common/MediaThumb'
 
 export function Posts() {
   const queryClient = useQueryClient()
@@ -149,11 +150,10 @@ export function Posts() {
                       <td>
                         <div className="post-row">
                           <span className="row-thumb">
-                            {mediaImage(post) ? (
-                              <img src={mediaImage(post)!} alt="" loading="lazy" />
-                            ) : (
-                              <span className="row-thumb-empty" />
-                            )}
+                            <MediaThumb
+                              src={mediaImage(post)}
+                              empty={<span className="row-thumb-empty" />}
+                            />
                           </span>
                           <div style={{ minWidth: 0 }}>
                             <div className="row-caption">{post.caption ?? '(no caption)'}</div>

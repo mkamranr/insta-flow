@@ -1,4 +1,5 @@
 import { mediaImage, type Story } from '../../api/rules'
+import { MediaThumb } from './MediaThumb'
 
 /**
  * A story, as Instagram shows it: 9:16, with the automation state underneath.
@@ -36,11 +37,7 @@ export function StoryCard({
       </header>
 
       <div className="ig-media story-media">
-        {image ? (
-          <img src={image} alt="" loading="lazy" />
-        ) : (
-          <div className="ig-media-empty">STORY</div>
-        )}
+        <MediaThumb src={image} empty={<div className="ig-media-empty">STORY</div>} />
         {/* Videos get a still, so the play badge is the only thing saying this
             is not a photo. */}
         {isVideo && (

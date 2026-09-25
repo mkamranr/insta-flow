@@ -5,10 +5,12 @@ rule -> policy -> execution reservation -> render -> Meta. It is the only
 place a private reply is ever sent.
 """
 
+import asyncio
 import logging
 import random
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from arq.worker import Retry
@@ -28,13 +30,14 @@ from app.db.repositories import (
     UpcomingPostsRepository,
     WebhookEventsRepository,
 )
-from app.errors import MetaAPIError, MetaTokenError, TemplateError
+from app.errors import MediaUnavailableError, MetaAPIError, MetaTokenError, TemplateError
 from app.models.rules import (
     EMAIL_PROMPT_DEFAULT,
     FOLLOW_PROMPT_NO_WINDOW,
     FOLLOW_PROMPT_WITH_WINDOW,
+    image_url_for,
 )
-from app.services import origins
+from app.services import media_cache, origins
 from app.services.ai.classifier import classify
 from app.services.campaigns import (
     ACTION_DIRECT_MESSAGE,
@@ -52,7 +55,9 @@ from app.services.campaigns import (
 from app.services.campaigns.policy import AUTOMATION_PAUSED, DRY_RUN, NOT_FOLLOWING, pause_active
 from app.services.contacts import extract_email
 from app.services.links import is_safe_target, new_token, tracking_url
+from app.services.media_cache import MediaCacheError
 from app.services.meta import auth as meta_auth
+from app.services.meta import cdn
 from app.services.meta.credentials import origin_for
 from app.services.meta.http_client import MEDIA_MAX_PAGES, MEDIA_PAGE_SIZE
 from app.services.meta.messages import postback_button, web_url_button
@@ -853,6 +858,131 @@ async def refresh_expiring_tokens(ctx: dict[str, Any]) -> dict[str, int]:
     return {"refreshed": refreshed, "failed": failed}
 
 
+# -- thumbnail caching -----------------------------------------------------
+
+
+async def cache_media_image(
+    client: Any, settings: Any, repository: Any, account_id: Any, document: dict[str, Any]
+) -> bool:
+    """Copy one thumbnail to disk. True if bytes were stored.
+
+    Every failure is swallowed and recorded rather than raised: this runs inside
+    a sync whose real job is posts and stories, and one dead image must not cost
+    the caller the rest of its work.
+    """
+    media_id = str(document.get(repository._image_key, ""))
+    url = image_url_for(document)
+    if not media_id or not url:
+        return False
+
+    try:
+        fetched = await client.fetch_media_bytes(url)
+        digest = media_cache.digest_for(account_id, media_id)
+        stored = media_cache.store(
+            Path(settings.upload_dir), digest, fetched.data, fetched.content_type
+        )
+    except MediaUnavailableError as exc:
+        # Permanent. Recorded so the request-time backstop stops trying.
+        await repository.record_image_failure(account_id, media_id, str(exc))
+        logger.info("media_image_unavailable", extra={"media_id": media_id, "error": str(exc)})
+        return False
+    except MetaAPIError as exc:
+        # Transient: leave the row untouched so the next pass picks it up again.
+        logger.warning("media_image_fetch_failed", extra={"media_id": media_id, "error": str(exc)})
+        return False
+    except (MediaCacheError, OSError) as exc:
+        await repository.record_image_failure(account_id, media_id, str(exc))
+        logger.warning("media_image_store_failed", extra={"media_id": media_id, "error": str(exc)})
+        return False
+
+    await repository.set_image_cache(
+        account_id,
+        media_id,
+        {
+            "storage_key": stored.storage_key,
+            "content_type": stored.content_type,
+            "digest": stored.digest,
+            "bytes": stored.size_bytes,
+            "source_url": url,
+            "source_expires_at": cdn.expires_at(url),
+        },
+    )
+    return True
+
+
+async def cache_pending_images(
+    client: Any, settings: Any, repository: Any, account_id: Any, limit: int
+) -> int:
+    """Fill the cache for rows that have no image yet, in parallel and bounded.
+
+    Both bounds matter. `job_timeout` is class-wide at 60s, and a job cancelled
+    by ARQ raises nothing to classify and leaves no status behind -- the failure
+    that looks like nothing at all. `sync_posts` gets its own longer timeout for
+    the same reason, but a cap still keeps a cold account's first run sane.
+    """
+    if not settings.media_cache_enabled:
+        return 0
+
+    pending = await repository.needing_image_cache(account_id, limit)
+    if not pending:
+        return 0
+
+    gate = asyncio.Semaphore(max(1, settings.media_cache_concurrency))
+
+    async def one(document: dict[str, Any]) -> bool:
+        async with gate:
+            return await cache_media_image(client, settings, repository, account_id, document)
+
+    return sum(await asyncio.gather(*(one(document) for document in pending)))
+
+
+async def prune_media_cache(ctx: dict[str, Any]) -> dict[str, int]:
+    """Keep the thumbnail cache inside its two bounds.
+
+    Newest-N-per-account first, then a whole-cache byte ceiling. Both passes
+    delete the file and then forget the row, in that order: a row pointing at a
+    missing file degrades to a placeholder, while a file no row points at is
+    invisible and never reclaimed.
+
+    Not LRU. `atime` on the macOS bind mount is unreliable, and touching a file
+    on every request would put a write on the render path.
+    """
+    db = ctx["db"]
+    settings = ctx["settings"]
+    if not settings.media_cache_enabled:
+        return {"pruned": 0, "bytes_freed": 0}
+
+    media = MediaRepository(db)
+    upload_dir = Path(settings.upload_dir)
+    pruned = freed = 0
+
+    for account in await InstagramAccountsRepository(db).list({}):
+        for document in await media.evictable_image_caches(
+            account["_id"], settings.media_cache_keep_per_account
+        ):
+            cache = document.get("image_cache") or {}
+            if media_cache.delete(upload_dir, cache.get("storage_key")):
+                freed += int(cache.get("bytes") or 0)
+            await media.clear_image_cache(document["_id"])
+            pruned += 1
+
+    # Second pass: a few hundred full-resolution photos can still overrun the
+    # ceiling, so oldest-first eviction continues until the directory fits.
+    if media_cache.directory_bytes(upload_dir) > settings.media_cache_max_bytes:
+        for account in await InstagramAccountsRepository(db).list({}):
+            for document in reversed(await media.evictable_image_caches(account["_id"], 0)):
+                if media_cache.directory_bytes(upload_dir) <= settings.media_cache_max_bytes:
+                    break
+                cache = document.get("image_cache") or {}
+                if media_cache.delete(upload_dir, cache.get("storage_key")):
+                    freed += int(cache.get("bytes") or 0)
+                await media.clear_image_cache(document["_id"])
+                pruned += 1
+
+    logger.info("media_cache_pruned", extra={"pruned": pruned, "bytes_freed": freed})
+    return {"pruned": pruned, "bytes_freed": freed}
+
+
 async def sync_posts(ctx: dict[str, Any]) -> dict[str, int]:
     """Pull recent posts, then arm the waiting automation on the first new one.
 
@@ -868,7 +998,7 @@ async def sync_posts(ctx: dict[str, Any]) -> dict[str, int]:
     client = ctx["client"]
     media = MediaRepository(db)
 
-    synced = armed = 0
+    synced = armed = cached = 0
     for account in await InstagramAccountsRepository(db).list({"status": "connected"}):
         try:
             token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
@@ -902,8 +1032,11 @@ async def sync_posts(ctx: dict[str, Any]) -> dict[str, int]:
             )
         synced += len(fetched)
         armed += await apply_upcoming_post(db, account)
+        cached += await cache_pending_images(
+            client, settings, media, account["_id"], settings.media_cache_per_run
+        )
 
-    return {"synced": synced, "armed": armed}
+    return {"synced": synced, "armed": armed, "cached": cached}
 
 
 async def resync_all_media(ctx: dict[str, Any], account_id: str) -> dict[str, Any]:
@@ -974,12 +1107,21 @@ async def resync_all_media(ctx: dict[str, Any], account_id: str) -> dict[str, An
             },
         )
 
+    # Bounded by what the prune job would keep anyway: caching 10K images inline
+    # would be brutal, and an image nobody will scroll to is not worth the disk.
+    cached = await cache_pending_images(
+        ctx["client"], settings, media, account["_id"], settings.media_cache_keep_per_account
+    )
+
     # Ceiling division: the page count is what tells an operator whether the walk
     # actually reached the end or stopped at MEDIA_MAX_PAGES.
     pages = -(-len(fetched) // MEDIA_PAGE_SIZE) if fetched else 0
     await accounts.finish_media_resync(account["_id"], count=len(fetched), pages=pages)
-    logger.info("media_resync_finished", extra={**log, "synced": len(fetched), "pages": pages})
-    return {"status": "done", "synced": len(fetched), "pages": pages}
+    logger.info(
+        "media_resync_finished",
+        extra={**log, "synced": len(fetched), "pages": pages, "cached": cached},
+    )
+    return {"status": "done", "synced": len(fetched), "pages": pages, "cached": cached}
 
 
 async def apply_upcoming_post(db: Any, account: dict[str, Any]) -> int:
@@ -1065,7 +1207,7 @@ async def sync_stories(ctx: dict[str, Any]) -> dict[str, int]:
     stories = StoriesRepository(db)
     rules = RulesRepository(db)
 
-    seen = expired = disabled = 0
+    seen = expired = disabled = cached = 0
     for account in await InstagramAccountsRepository(db).list({"status": "connected"}):
         try:
             token = decrypt(account.get("access_token_encrypted", ""), settings.encryption_key)
@@ -1081,7 +1223,7 @@ async def sync_stories(ctx: dict[str, Any]) -> dict[str, int]:
             continue
 
         for story in active:
-            await stories.upsert(
+            stored = await stories.upsert(
                 account["_id"],
                 story.instagram_media_id,
                 {
@@ -1093,6 +1235,15 @@ async def sync_stories(ctx: dict[str, Any]) -> dict[str, int]:
                     "published_at": story.published_at,
                 },
             )
+            # Eagerly, inline, while the story is still live. This is the whole
+            # reason the cache exists: a story's CDN URL cannot be re-obtained
+            # once Meta stops listing it, so an image not copied now is lost for
+            # good. The observed cron gaps on the live install were 21 and 37
+            # hours -- long enough for a story to appear and die unseen -- so
+            # hourly is already the coarsest this can safely be.
+            already_cached = bool((stored or {}).get("image_cache", {}).get("storage_key"))
+            if stored is not None and settings.media_cache_enabled and not already_cached:
+                cached += await cache_media_image(client, settings, stories, account["_id"], stored)
         seen += len(active)
 
         gone = await stories.mark_expired(account["_id"], [s.instagram_media_id for s in active])
@@ -1107,7 +1258,7 @@ async def sync_stories(ctx: dict[str, Any]) -> dict[str, int]:
                 extra={"rule_id": str(rule["_id"]), "rule_name": rule.get("name", "")},
             )
 
-    return {"active": seen, "expired": expired, "rules_disabled": disabled}
+    return {"active": seen, "expired": expired, "rules_disabled": disabled, "cached": cached}
 
 
 async def send_attachment_if_any(
